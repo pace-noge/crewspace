@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block title %}{{ board.name }} — Crewspace{% endblock %}
+{% block nav_board %}active{% endblock %}
+{% block topbar %}{{ board.name }}{% endblock %}
+
+{% block content %}
+  <div id="board-wrap">
+    <div class="board" style="display:flex; gap:12px; padding:16px; align-items:flex-start; overflow-x:auto;">
+      {% set board_id = board.id %}
+      {% for column in board.columns %}
+        {% include "column.html" with context %}
+      {% endfor %}
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    // Drag-and-drop: move a card to another column by dropping on a column body.
+    // The move endpoint re-renders the WHOLE board; we swap #board-wrap so both
+    // the source and destination columns update (no out-of-band ambiguity).
+    function wireDnD() {
+      document.querySelectorAll(".card").forEach(c => {
+        if (c.dataset.dnd) return;            // wire each card only once
+        c.dataset.dnd = "1";
+        c.setAttribute("draggable", "true");
+        c.addEventListener("dragstart", e => {
+          e.dataTransfer.setData("text/plain", c.id.replace("card-", ""));
+          c.style.opacity = "0.4";
+        });
+        c.addEventListener("dragend", () => { c.style.opacity = "1"; });
+      });
+      document.querySelectorAll(".column").forEach(col => {
+        if (col.dataset.dnd) return;          // wire each column only once
+        col.dataset.dnd = "1";
+        col.addEventListener("dragover", e => { e.preventDefault(); col.style.outline = "2px dashed var(--accent)"; });
+        col.addEventListener("dragleave", () => { col.style.outline = ""; });
+        col.addEventListener("drop", e => {
+          e.preventDefault();
+          col.style.outline = "";
+          const cardId = e.dataTransfer.getData("text/plain");
+          const columnId = col.id.replace("col-", "");
+          // NOTE: htmx.ajax's `source` must be a DOM element, not a FormData.
+          // Send the new column via `values` so the POST body is correct.
+          htmx.ajax("POST", `/cards/${cardId}/move`, { target: "#board-wrap", swap: "innerHTML", values: { column_id: columnId } });
+        });
+      });
+    }
+    document.addEventListener("DOMContentLoaded", wireDnD);
+    // Re-wire after every HTMX swap (cards/columns are re-created on move/create).
+    document.body.addEventListener("htmx:afterSwap", wireDnD);
+  </script>
+{% endblock %}

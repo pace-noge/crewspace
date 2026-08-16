@@ -1,0 +1,73 @@
+"""Application entrypoint (Web API).
+
+Assembles the FastAPI app: lifespan opens the Database and stores it on
+app.state.db; routers are mounted; dependency injection bridges the web layer to
+the application/infrastructure layers. No business logic lives here.
+"""
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from .config import get_settings
+from .infrastructure.db import Database
+from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools
+from .application.scheduling import SchedulerLoop
+from .security import is_same_origin
+
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    app.state.settings = settings
+    # Allow tests to inject a pre-configured Database (e.g., against a temp file)
+    if not hasattr(app.state, "db"):
+        db = await Database.create(settings)
+        app.state.db = db
+    else:
+        db = app.state.db
+    scheduler = SchedulerLoop(db, settings)
+    scheduler.start()
+    try:
+        yield
+    finally:
+        await scheduler.stop()
+        await db.close()
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="Crewspace", version="0.2.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def enforce_same_origin(request: Request, call_next):
+        if request.method not in {"GET", "HEAD", "OPTIONS", "TRACE"}:
+            origin = request.headers.get("origin")
+            has_session = "crewspace_session" in request.cookies
+            if (origin and not is_same_origin(origin, str(request.base_url))) or (
+                has_session and not origin
+            ):
+                return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
+        return await call_next(request)
+
+    # Vendor HTMX locally so the UI works without external CDN access
+    # (corporate networks / offline UAT often block unpkg.com).
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    app.include_router(agents.router)
+    app.include_router(auth.router)
+    app.include_router(chat.router)
+    app.include_router(boards.router)
+    app.include_router(cards.router)
+    app.include_router(pages.router)
+    app.include_router(teams.router)
+    app.include_router(cronjobs.router)
+    app.include_router(tools.router)
+    return app
+
+
+app = create_app()

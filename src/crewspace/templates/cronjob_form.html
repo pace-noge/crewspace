@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block title %}{{ form_title }} — Crewspace{% endblock %}
+{% block topbar %}{{ form_title }}{% endblock %}
+{% block head %}
+<style>
+  .page{padding:28px;overflow:auto}.card{max-width:720px;background:var(--bg-elev);border:1px solid var(--border);border-radius:12px;padding:22px}
+  .stack{display:grid;gap:16px}.stack label{display:grid;gap:6px}.hint{color:var(--muted);font-size:13px}.row{display:flex;gap:10px;align-items:end}.row label{flex:1}
+  textarea,select,input{width:100%;font:inherit;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);padding:8px}.actions{display:flex;gap:8px}.hidden{display:none}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page"><section class="card">
+  <h1>{{ form_title }}</h1>
+  <p class="hint">The instruction will be posted into the channel. Mention a person, or mention an agent such as <code>@planner</code> to let it execute its normal tools.</p>
+  <form class="stack" method="post" action="{{ form_action }}">
+    <label>Name<input name="name" required placeholder="Daily stand-up reminder" value="{{ job.name if job else '' }}"></label>
+    <label>Description (optional)<textarea name="description" rows="2" placeholder="What this schedule is for">{% if job %}{{ job.description or '' }}{% endif %}</textarea></label>
+    <label>Channel<select name="channel_id" required>{% for item in cronjob_channels %}<option value="{{ item.channel.id }}" {% if job and job.channel_id == item.channel.id %}selected{% endif %}>{{ item.team.name }} / {{ item.workspace.name }} / #{{ item.channel.name }}</option>{% endfor %}</select></label>
+    <label>Instruction<textarea name="instruction" rows="5" required placeholder='Example: @planner move "Launch checklist" to Done'>{{ job.instruction if job else '' }}</textarea></label>
+    <label>When<select id="schedule-kind" name="schedule_kind"><option value="interval" {% if not job or job.schedule_kind.value == 'interval' %}selected{% endif %}>Every...</option><option value="daily" {% if job and job.schedule_kind.value == 'daily' %}selected{% endif %}>Daily</option><option value="once" {% if job and job.schedule_kind.value == 'once' %}selected{% endif %}>Once</option></select></label>
+    <div id="interval-fields" class="row"><label>Every<input name="interval_value" type="number" min="1" value="{{ job.interval_value if job and job.interval_value else 1 }}"></label><label>Unit<select name="interval_unit"><option value="minutes" {% if job and job.interval_unit == 'minutes' %}selected{% endif %}>minutes</option><option value="hours" {% if not job or job.interval_unit == 'hours' %}selected{% endif %}>hours</option><option value="days" {% if job and job.interval_unit == 'days' %}selected{% endif %}>days</option></select></label></div>
+    <label id="daily-field" class="hidden">Daily time (UTC)<input name="daily_time" type="time" value="{{ job.daily_time if job and job.daily_time else '09:00' }}"></label>
+    <label id="once-field" class="hidden">Run once at (UTC)<input name="run_at" type="datetime-local" value="{% if job and job.schedule_kind.value == 'once' %}{{ job.next_run_at.strftime('%Y-%m-%dT%H:%M') }}{% endif %}"></label>
+    <div class="actions"><button class="primary" type="submit">{{ 'Save changes' if job else 'Create schedule' }}</button><a class="button" href="/cronjobs">Cancel</a></div>
+  </form>
+</section></div>
+{% endblock %}
+{% block scripts %}<script>
+const kind=document.getElementById('schedule-kind'); function sync(){document.getElementById('interval-fields').classList.toggle('hidden',kind.value!=='interval');document.getElementById('daily-field').classList.toggle('hidden',kind.value!=='daily');document.getElementById('once-field').classList.toggle('hidden',kind.value!=='once')} kind.addEventListener('change',sync);sync();
+</script>{% endblock %}

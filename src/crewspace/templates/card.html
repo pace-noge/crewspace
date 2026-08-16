@@ -1,0 +1,38 @@
+{# Card fragment — rendered standalone (after create/move) and inside column.html #}
+<div class="card" id="card-{{ card.id }}" style="background:var(--surface); border-radius:6px; padding:8px; margin-bottom:8px;">
+  <div class="title" style="font-weight:600;">{{ card.title }}</div>
+  {% if card.assignee_name %}
+    <div class="meta" style="font-size:12px; opacity:.7; margin-top:4px;">{{ card.assignee_avatar }} {{ card.assignee_name }}</div>
+  {% endif %}
+  {# Who last touched this card (Buzz-style attribution). Prefer the mover, else the creator. #}
+  {% set actor = card.updated_by_name or card.created_by_name %}
+  {% if actor %}
+    <div class="meta" style="font-size:11px; opacity:.55; margin-top:2px;">· by {{ actor }}</div>
+  {% endif %}
+
+  <select name="column_id"
+          hx-post="/cards/{{ card.id }}/move"
+          hx-target="#board-wrap"
+          hx-swap="innerHTML"
+          hx-trigger="change"
+          style="margin-top:6px;">
+    <option value="col_todo" {% if card.column_id == "col_todo" %}selected{% endif %}>To Do</option>
+    <option value="col_doing" {% if card.column_id == "col_doing" %}selected{% endif %}>In Progress</option>
+    <option value="col_done" {% if card.column_id == "col_done" %}selected{% endif %}>Done</option>
+  </select>
+
+  <form hx-post="/cards/{{ card.id }}/comments"
+        hx-target="#comments-{{ card.id }}"
+        hx-swap="beforeend"
+        style="margin-top:6px; display:flex; gap:6px;">
+    <input name="body" type="text" placeholder="Comment…" style="flex:1;" />
+    <input type="hidden" name="author_id" value="user_bilal" />
+    <button type="submit">💬</button>
+  </form>
+
+  <div class="comments" id="comments-{{ card.id }}" style="margin-top:6px; border-top:1px solid var(--border); padding-top:6px;">
+    {% for comment in card.comments %}
+      {% include "comment.html" %}
+    {% endfor %}
+  </div>
+</div>

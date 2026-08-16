@@ -1,0 +1,256 @@
+"""Domain entities — pure data, no framework or database imports.
+
+These are the in-memory model of the problem space. Nothing here knows about
+FastAPI, sqlite, or pydantic. Repositories (infrastructure) are responsible for
+turning DB rows into these; services (application) orchestrate them; the API
+never sees a raw row.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+
+
+class MemberKind(str, Enum):
+    HUMAN = "human"
+    AGENT = "agent"
+
+
+class TeamRole(str, Enum):
+    """Roles within a team."""
+    LEADER = "leader"
+    MEMBER = "member"
+
+
+class WorkspaceRole(str, Enum):
+    """Roles within a workspace."""
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class ChannelRole(str, Enum):
+    """Roles within a channel."""
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class ChannelType(str, Enum):
+    """Channel types."""
+    PERMANENT = "permanent"
+    TEMPORARY = "temporary"
+
+
+class ScheduleKind(str, Enum):
+    ONCE = "once"
+    INTERVAL = "interval"
+    DAILY = "daily"
+
+
+@dataclass
+class Member:
+    id: str
+    kind: MemberKind
+    name: str
+    avatar: str | None = None
+
+
+@dataclass
+class Channel:
+    id: str
+    workspace_id: str
+    name: str
+    topic: str | None = None
+    channel_type: ChannelType = ChannelType.PERMANENT
+    mention_policy: str = "channel_members"
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+@dataclass
+class Team:
+    id: str
+    name: str
+    created_by: str
+    created_at: datetime
+
+
+@dataclass
+class Workspace:
+    id: str
+    team_id: str
+    name: str
+    created_by: str
+    created_at: datetime
+
+
+@dataclass
+class TeamMembership:
+    team_id: str
+    member_id: str
+    role: TeamRole = TeamRole.MEMBER
+    joined_at: datetime | None = None
+
+
+@dataclass
+class WorkspaceMembership:
+    workspace_id: str
+    member_id: str
+    role: WorkspaceRole = WorkspaceRole.MEMBER
+    joined_at: datetime | None = None
+
+
+@dataclass
+class ChannelMembership:
+    channel_id: str
+    member_id: str
+    role: ChannelRole = ChannelRole.MEMBER
+    joined_at: datetime | None = None
+    invited_by: str | None = None
+    is_invitation_pending: bool = False
+
+
+@dataclass
+class ScheduledJob:
+    id: str
+    name: str
+    channel_id: str
+    instruction: str
+    schedule_kind: ScheduleKind
+    creator_id: str
+    next_run_at: datetime
+    interval_value: int | None = None
+    interval_unit: str | None = None
+    daily_time: str | None = None
+    enabled: bool = True
+    created_at: datetime | None = None
+    last_run_at: datetime | None = None
+    last_status: str | None = None
+    last_error: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class ScheduledJobRun:
+    id: str
+    job_id: str
+    trigger: str
+    instruction: str
+    channel_id: str
+    scheduled_for: datetime
+    started_at: datetime
+    status: str = "running"
+    initiated_by: str | None = None
+    finished_at: datetime | None = None
+    duration_ms: int | None = None
+    message_ids: list[str] = field(default_factory=list)
+    error: str | None = None
+    next_run_at: datetime | None = None
+
+
+@dataclass
+class Message:
+    id: str
+    channel_id: str
+    author_id: str
+    body: str
+    created_at: datetime
+
+
+@dataclass
+class Board:
+    id: str
+    workspace_id: str
+    name: str
+
+
+@dataclass
+class Column:
+    id: str
+    board_id: str
+    name: str
+    position: int
+
+
+@dataclass
+class Card:
+    id: str
+    column_id: str
+    title: str
+    description: str | None = None
+    assignee_id: str | None = None
+    position: int = 0
+
+
+@dataclass
+class Comment:
+    id: str
+    card_id: str
+    author_id: str
+    body: str
+    created_at: datetime
+
+
+# --- Composed read models (projections the UI needs) -----------------------
+# Composition over inheritance: these carry the joined author/child data the
+# templates render, without polluting the base entities.
+
+
+@dataclass
+class CommentView:
+    id: str
+    card_id: str
+    author_id: str
+    body: str
+    created_at: datetime
+    author_name: str
+    author_kind: MemberKind
+    author_avatar: str | None = None
+
+
+@dataclass
+class CardView:
+    id: str
+    column_id: str
+    title: str
+    description: str | None
+    assignee_id: str | None
+    position: int
+    assignee_name: str | None = None
+    assignee_avatar: str | None = None
+    created_by: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+    created_by_name: str | None = None
+    updated_by_name: str | None = None
+    comments: list[CommentView] = field(default_factory=list)
+
+
+@dataclass
+class ColumnView:
+    id: str
+    board_id: str
+    name: str
+    position: int
+    cards: list[CardView] = field(default_factory=list)
+
+
+@dataclass
+class BoardView:
+    id: str
+    workspace_id: str
+    name: str
+    columns: list[ColumnView] = field(default_factory=list)
+
+
+@dataclass
+class MessageView:
+    id: str
+    channel_id: str
+    author_id: str
+    body: str
+    created_at: datetime
+    author_name: str
+    author_kind: MemberKind
+    thread_id: str | None = None
+    author_avatar: str | None = None

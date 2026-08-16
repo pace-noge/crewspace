@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+{% block title %}Add human — Crewspace{% endblock %}
+{% block topbar %}Add human{% endblock %}
+{% block head %}
+<style>
+  .form-page{padding:28px}.form-card{max-width:520px;padding:22px;border:1px solid var(--border);border-radius:12px;background:var(--bg-elev)}
+  .form-card h1{margin:0 0 5px;font-size:22px}.form-card>p{margin:0 0 18px;color:var(--muted)}
+  .form-card form{display:grid;gap:13px}.form-card label{display:grid;gap:5px;color:var(--muted);font-size:12px}.form-card input{width:100%}
+  .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:5px}.cancel{padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="form-page"><section class="form-card">
+  <h1>Add human</h1>
+  <p>Create a human account with the team-member role.</p>
+  <form method="post" action="/management/humans">
+    <label>Human name<input name="name" required autocomplete="off" placeholder="Aisha"></label>
+    <label>Temporary password<input name="password" type="password" required minlength="8" autocomplete="new-password"></label>
+    {% if choose_team %}
+    <label>Choose team<select name="team_id" required>{% for team in teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select></label>
+    {% else %}
+    <p>Will be added to {{ automatic_team.name }}.</p>
+    {% endif %}
+    <div class="actions"><a class="cancel" href="/management">Cancel</a><button class="primary" type="submit">Add human</button></div>
+  </form>
+</section></div>
+{% endblock %}

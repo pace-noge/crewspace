@@ -1,0 +1,204 @@
+# Crewspace — Roadmap & Milestones
+
+Goal: grow the learning slice into a real, multi-tenant "Slack-meets-Trello with
+agents" where (1) agents run on a real LLM with tool use, (2) the app is itself
+exposable to other agents via MCP, (3) there are multiple channels/threads, and
+(4) persistence is Postgres.
+
+Guiding principle (carried from the slice): **one Tool Registry, many fronts.**
+Every capability (create card, move card, comment, post message, list board…) is
+a single registered `Tool`. It is called by:
+  - the LLM agent (function calling),
+  - the MCP server (same definitions),
+  - eventually the HTMX UI (already does this directly today).
+This avoids the usual fork where the UI, the agent, and the API drift apart.
+
+Legend: S ≈ <0.5 day · M ≈ 0.5–1.5 days · L ≈ 2+ days (solo, learning pace)
+
+------------------------------------------------------------------------------
+M0 — Tool Registry (keystone)                                  [S–M]
+------------------------------------------------------------------------------
+Why first: both the real LLM agent (M1) and MCP exposure (M2) need a stable,
+typed set of callable tools. Build it once, use it everywhere.
+
+Scope:
+  - Define `Tool` = name + description + JSON-Schema input + async handler(ctx, **args) -> dict.
+  - Register tools: create_card, move_card, comment_card, list_board,
+    post_message, list_messages. Handlers wrap existing db.py functions.
+  - `ToolRegistry` holds them; `agent.py` and `mcp_server.py` both consume it.
+  - Keep `StubAgent` working by routing its regex commands to the same tools
+    (proves the registry end-to-end before any LLM).
+
+Acceptance:
+  - `GET /tools` (dev/debug) lists all tools with their JSON schemas.
+  - StubAgent `@planner new card "X" in Todo` still works, now via the registry.
+  - A unit test asserts each tool handler runs against the test DB.
+
+Files: new `tools.py`, `tools_registry.py`; extend `agent.py`; tests.
+
+------------------------------------------------------------------------------
+M1 — Real LLM Agent (tool use)                                [M–L]  DONE
+------------------------------------------------------------------------------
+Scope:
+  - Implement `LLMAgent` satisfying `AgentProvider` (same interface as StubAgent).
+  - Provider injected by `get_agent()` (env switch: CREWSPACE_AGENT=stub|llm).
+  - On chat message: build prompt with available tools (from registry), call
+    LLM with function-calling; execute returned tool calls via the registry;
+    stream/return the agent's natural-language reply to chat (broadcast over WS).
+  - On card created: LLM optionally summarizes/auto-assigns (replaces stub note).
+  - Use an OpenAI-compatible client (litellm or openai SDK) so any model works.
+  - Keep API key in env (CREWSPACE_LLM_API_KEY, CREWSPACE_LLM_BASE_URL, CREWSPACE_LLM_MODEL).
+    Stub remains default so the app runs with zero keys.
+
+Implemented notes (2026-08-15):
+  - LLMAgent lives in infrastructure/agents/llm.py; OpenAI SDK v3 (`AsyncOpenAI`)
+    with `tool_choice="auto"`. Tool definitions are sourced verbatim from the
+    Tool Registry (now full JSON Schema in application/tools.py). Multi-round
+    tool-calling loop (max_tool_rounds=5) feeds results back as `role:"tool"`
+    messages; final assistant text is returned as the reply. Client is injectable
+    via `client_factory` for tests (mocked, no network/key).
+  - `build_agent()` in infrastructure/agents/__init__.py selects stub vs llm and
+    builds the registry for the agent's tool surface.
+  - Acceptance: covered by tests/test_llm_agent.py (mocked tool-call execution,
+    reply broadcast, function-definition shape, mention gating) + a full-stack
+    integration test exercising ChatService -> LLMAgent -> real create_card.
+    The `/tools` debug endpoint (M0 optional) is also added: `GET /tools`.
+
+Files: `agent.py` (add LLMAgent) -> infrastructure/agents/llm.py; config additions
+(sb already had CREWSPACE_LLM_* / CREWSPACE_AGENT); deps tweak; tests. Deps on M0 (done).
+
+------------------------------------------------------------------------------
+M2 — MCP Exposure                                              [M]  DONE
+------------------------------------------------------------------------------
+Scope:
+  - Wrap the Tool Registry as an MCP server (official `mcp` SDK / FastMCP).
+  - Expose: tools = registry tools; resources = board snapshot, channel history.
+  - Run MCP alongside HTTP (separate ASGI app or `mcp.run(transport="sse")`),
+    or as a standalone `uv run crewspace-mcp` entrypoint.
+  - This lets an external LLM agent (Claude Desktop, another agent) discover and
+    call YOUR board/chat as if it were one of its own tools.
+
+Implemented notes (2026-08-15):
+  - infrastructure/mcp_server.py wraps the SAME `build_registry()` as M0/M1 --
+    no duplicated tool definitions. Uses mcp v2 `MCPServer` (FastMCP of v2).
+  - Each registry tool becomes an MCP tool. Because the MCP framework derives a
+    tool's *call* schema from the handler signature, handlers are generated
+    dynamically with explicit named params (from each tool's JSON Schema) via
+    exec, then the richer registry schema is re-attached as the advertised
+    `parameters`. The handler body routes through `registry.bind(uow)` -- the
+    agent's exact path -- committing on success, rolling back on error.
+  - Resources: `board://{board_id}` (columns+cards) and
+    `channel://{channel_id}` (messages), both JSON.
+  - The server is a standalone process: it opens its own `Database` handle (the
+    same `Database.create` seam) once per lifetime via the MCP `lifespan`, so
+    there is a single storage seam with the rest of the app.
+  - Console script `crewspace-mcp` (stdio/sse/streamable-http). Works with
+    any MCP client. Configure DB via the same CREWSPACE_DB_PATH env var.
+
+Acceptance (met):
+  - An MCP client (mcp.Client over the in-process transport) lists the 6 tools
+    and can call `create_card`/`find_card`, seeing effects in the same DB the
+    web app uses. `board://` resource resolves. Covered by tests/test_mcp_server.py.
+
+Files: new infrastructure/mcp_server.py; console script in pyproject
+(`crewspace-mcp`); tests. Deps on M0+M1 (reuses the canonical tools).
+
+------------------------------------------------------------------------------
+M3 — Multi-channel / Multi-tenant                             [L]
+------------------------------------------------------------------------------
+Scope (schema changes in db.py):
+  - Multiple workspaces (seeded one exists).
+  - Multiple channels per workspace; channel kinds: 'channel' | 'dm'.
+  - Channel membership table (already seeded for #general) → real membership.
+  - Message threads: `parent_message_id` on message; UI + WS support replies.
+  - Agent routing: `@planner` mention → that agent responds; DMs to an agent.
+  - Pages: workspace/channel switcher; per-channel boards optional.
+  - Auth-lite: a `current_user` concept (already KB current_user_id) → real
+    member sessions later.
+
+Acceptance:
+  - Create 2 channels; post in each; WS isolates per channel.
+  - Thread a reply under a message; it shows nested.
+  - `@planner` in #general triggers the agent only there.
+  - Existing tests updated; new tests for channel isolation + threads.
+
+Files: db.py schema+migrations, ws.py (per-channel manager already keyed),
+board.py/main.py pages, agent routing, tests. Independent of M1/M2 but touches
+db.py (so do M4 — sequence M3 before M4).
+
+------------------------------------------------------------------------------
+M4 — Postgres persistence                                      [M–L]
+------------------------------------------------------------------------------
+Scope:
+  - Replace aiosqlite with async Postgres (asyncpg + SQLAlchemy 2.0 / SQLModel,
+    or raw asyncpg). Keep `db.py` as the ONLY seam that changes.
+  - Connection pooling; env: CREWSPACE_DB_URL=postgresql+async://...
+  - Schema migration: Alembic (or a simple `CREATE TABLE IF NOT EXISTS` init
+    like today, upgraded for M3 columns). Seed script idempotent.
+  - aiosqlite remains a dev fallback (CREWSPACE_DB_URL unset → sqlite) if desired.
+
+Acceptance:
+  - `CREWSPACE_DB_URL=postgres... uv run uvicorn ...` runs the full app; all M0–M3
+    tests pass against Postgres (run suite against PG in CI or locally).
+  - No route/agent/MCP code references sqlite specifics.
+
+Files: db.py rewrite (engine + sessions), config, seed, tests. Deps on M3 schema.
+
+------------------------------------------------------------------------------
+M5 — Polish & Hardening (optional, ongoing)                   [S–M]
+------------------------------------------------------------------------------
+  - Multi-worker WS: Redis pub/sub for ConnectionManager.
+  - Streaming agent replies (SSE/WS token stream) instead of one blob.
+  - Auth: real login, workspace membership, agent permissions.
+  - Observability: log tool calls, agent decisions; replay.
+  - React SPA replacing HTMX (keep HTMX as the lightweight default).
+
+------------------------------------------------------------------------------
+UI POLISH (2026-08-15)
+------------------------------------------------------------------------------
+The HTMX UI had four user-visible bugs, all fixed:
+  - Chat avatar: rendered as a separate text node (was `who.textContent =
+    (m.avatar||"")+name+":"`, which silently dropped the avatar on null). Now an
+    avatar span + a name text node, so the 🤖 shows for agents and null is safe.
+  - New card position: create re-renders the WHOLE column sorted by `position`,
+    so a new card lands at the bottom (no longer appears "out of order").
+  - Move between columns: re-renders the WHOLE board (`board_fragment.html`) and
+    swaps `#board-wrap` innerHTML — the bulletproof HTMX pattern (no OOB
+    ambiguity, so a moved card never lingers in its old column). The dropdown
+    uses `hx-trigger="change"` on the `<select>`; drag-and-drop POSTs via
+    `htmx.ajax(... target:'#board-wrap', swap:'innerHTML')`.
+  - CRITICAL: HTMX is vendored locally (`src/crewspace/static/htmx.min.js`,
+    served at `/static/htmx.min.js`). Do NOT load it from a CDN — corporate/
+    offline networks block unpkg.com, which made `window.htmx` undefined and
+    broke ALL interactivity (move, create, drag-drop) during UAT.
+  - Drag-and-drop: implemented (cards are `draggable`; dropping on a column POSTs
+    `/cards/{id}/move` via `htmx.ajax(... target:'#board-wrap', swap:'innerHTML')`,
+    the same whole-board re-render as the dropdown).
+  - Nav: moved from a top bar to a LEFT SIDEBAR (layout.html), with Chat/Board
+    links and a member-avatar strip.
+
+Files: templates/layout.html (new), board.html, card.html, column.html (new),
+       chat.html, comment.html; api/routers/boards.py + cards.py;
+       application/services.py (move_card returns old+new column ids).
+
+------------------------------------------------------------------------------
+Suggested order & dependencies
+------------------------------------------------------------------------------
+  M0 (tool registry)
+    ├─► M1 (LLM agent)        ──┐
+    ├─► M2 (MCP exposure)     ──┤── both consume M0 tools
+    └─► M3 (multi-channel) ──► M4 (Postgres)   (schema changes sequenced)
+  M5 anytime after M1/M3.
+
+Fastest path to "impressive demo": M0 → M1 → M2 (one agent that both thinks
+and is callable by other agents). Add M3+M4 for production realism.
+
+------------------------------------------------------------------------------
+Risks / notes
+------------------------------------------------------------------------------
+  - LLM tool-calling format differs per provider; use litellm or openai SDK to
+    normalize. Validate tool args against JSON Schema before execution.
+  - MCP SDK maturity: pin versions; SSE transport is simplest to co-host.
+  - Postgres migration is mechanical ONLY because db.py already isolates SQL;
+    do not let routes import the driver directly (enforce in review).
+  - Keep StubAgent as the default so the project always runs keyless.

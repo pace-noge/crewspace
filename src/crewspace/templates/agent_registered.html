@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <title>Agent registered — Crewspace</title>
+  <style>
+    body { font: 14px/1.6 system-ui,sans-serif; background: #1e1e2e; color: #cdd6f4; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #313244; padding: 28px 32px; border-radius: 12px; width: 560px; }
+    code { display: block; background: #181825; padding: 10px; border-radius: 7px; margin: 8px 0; word-break: break-all; font: 13px ui-monospace,monospace; }
+    .key { color: #f9e2af; }
+    .warn { color: #fab387; }
+    .btn { display: inline-block; margin-top: 12px; background: #89b4fa; color: #11111b; padding: 9px 14px; border-radius: 7px; text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Agent “{{ name }}” registered</h2>
+    <p><b>Agent id:</b> <code>{{ agent_id }}</code></p>
+    <p class="warn">⚠️ Copy the <b>private key</b> now — it is shown only once and is never stored on the server. Put it in the agent process's config.</p>
+    <p><b>Private key (Ed25519):</b></p><code class="key">{{ private_key }}</code>
+    <p><b>Connect the agent to:</b></p><code>{{ ws_url }}</code>
+    <p><b>In-app fallback backend:</b> {{ backend }}</p>
+    <p>The agent must send a signed bearer claim on connect and sign every reply/tool frame with this key.</p>
+    <a class="btn" href="/">Back to board</a>
+  </div>
+</body>
+</html>

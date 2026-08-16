@@ -1,0 +1,139 @@
+"""Infrastructure: agent registry + multi-agent facade.
+
+Slice D, corrected to the Buzz model: an agent is a *separate process on its own
+machine that dials INTO the app* over WebSocket (it does NOT wait for the app to
+call it). So:
+
+  * ``AgentRegistry``  builds one ``AgentProvider`` per registered agent member.
+     A member with no live WebSocket is a LOCAL agent (the in-process Stub/LLM
+     logic). A member that is currently connected lives behind ``agent_manager``
+     and is reached by pushing frames DOWN its socket.
+  * ``MultiAgentProvider`` routes a chat message to the agent that was *mentioned*
+     (``@coder``, ``@reviewer`` …) and fans board events out to every connected
+     agent — each under its own identity/audit trail, exactly like Buzz.
+
+Local vs remote is resolved at call time by checking ``agent_manager`` liveness,
+so an agent can come and go without any app restart or schema change.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from ...config import Settings
+from ...domain.identifiers import PLANNER_AGENT_ID
+from ...domain.ports import AgentProvider, ToolRunner, UnitOfWork
+from ...api.connection import agent_manager
+from .stub import StubAgent
+
+MemberLike = Any
+
+
+def _build_local_agent(member: MemberLike, settings: Settings) -> AgentProvider:
+    """A local agent runs in this process (Stub or LLM logic).
+
+    The agent's ``backend`` column selects stub vs LLM. LLM agents use the
+    server's LLM credentials from the environment (``CREWSPACE_LLM_API_KEY`` / ``CREWSPACE_LLM_BASE_URL``)
+    — those are never stored in the database, so a DB/backup leak can't expose a key.
+    """
+    backend = member["backend"] if "backend" in member.keys() else "stub"
+    if backend == "llm" or settings.agent == "llm":
+        from .llm import LLMAgent
+
+        from ...application.tools import build_registry
+
+        registry = build_registry()
+        return LLMAgent.from_registry(
+            registry,
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            agent_id=member["id"],
+            name=member["name"],
+        )
+    return StubAgent(agent_id=member["id"], name=member["name"], mention=member["name"])
+
+
+class AgentRegistry:
+    """Builds providers for registered agent members.
+
+    ``local`` maps id -> in-process provider (used when the agent isn't dialed
+    in). Remote/connected agents are handled by the facade via ``agent_manager``.
+    """
+
+    @staticmethod
+    async def build(settings: Settings, uow: UnitOfWork) -> "MultiAgentProvider":
+        members = await uow.auth.list_members(kind="agent")
+        local: dict[str, AgentProvider] = {}
+        for m in members:
+            local[m["id"]] = _build_local_agent(m, settings)
+        return MultiAgentProvider(local, default_agent_id=PLANNER_AGENT_ID)
+
+
+class MultiAgentProvider:
+    """Facade: routes chat to the mentioned agent (WS if connected, else local);
+    fans board events to every connected agent."""
+
+    def __init__(self, local: dict[str, AgentProvider], default_agent_id: str = PLANNER_AGENT_ID) -> None:
+        # id -> local in-process provider (fallback when the agent isn't connected)
+        self._local = local
+        # mention name (lower) -> agent id
+        self._by_mention: dict[str, str] = {}
+        for aid, prov in local.items():
+            name = getattr(prov, "name", aid)
+            self._by_mention[name.strip().lstrip("@").lower()] = aid
+        self._default_agent_id = default_agent_id if default_agent_id in local else next(iter(local), "")
+
+    def _resolve(self, text: str) -> str | None:
+        low = text.lower()
+        for mention, aid in self._by_mention.items():
+            if f"@{mention}" in low:
+                return aid
+        return None
+
+    async def on_chat_message(self, text: str, runner: ToolRunner) -> tuple[str, list[str]]:
+        aid = self._resolve(text)
+        if not aid:
+            return ("", [])
+        # Connected agent -> push the message DOWN its WebSocket and await its reply.
+        if agent_manager.is_connected(aid):
+            try:
+                reply = await agent_manager.send_and_wait(
+                    aid, {"type": "chat", "agent_id": aid, "text": text}
+                )
+                return (aid, [reply] if reply else [])
+            except Exception as exc:
+                return (aid, [f"⚠️ Agent {aid} did not respond: {exc}"])
+        # Not connected -> use the local in-process provider (if any).
+        local = self._local.get(aid)
+        if local is None:
+            return (aid, [f"⚠️ Agent {aid} is offline."])
+        return await local.on_chat_message(text, runner)
+
+    async def on_card_created(self, card: Any, runner: ToolRunner) -> None:
+        # Push the new-card event to every CONNECTED agent (Buzz-style fan-out);
+        # each reacts under its own identity. Local-only agents also get the
+        # in-process callback so the seeded planner still drops its note.
+        payload = {"type": "card_created", "card": _card_dict(card)}
+        connected = agent_manager.connected_agent_ids()
+        for aid in connected:
+            try:
+                await agent_manager.send(aid, payload)
+            except Exception:
+                continue
+        for aid, agent in self._local.items():
+            if aid in connected:
+                continue
+            try:
+                await agent.on_card_created(card, runner)
+            except Exception:
+                continue
+
+
+def _card_dict(card: Any) -> dict[str, Any]:
+    return {
+        "id": card.id,
+        "column_id": card.column_id,
+        "title": card.title,
+        "description": card.description,
+        "assignee_id": card.assignee_id,
+    }

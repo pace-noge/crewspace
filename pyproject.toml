@@ -1,0 +1,40 @@
+[project]
+name = "crewspace"
+version = "0.1.0"
+description = "A shared operational workspace for humans and AI agents"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.16.0",
+    "aiosqlite>=0.22.1",
+    "asyncpg>=0.30.0",
+    "fastapi>=0.141.1",
+    "jinja2>=3.1.6",
+    "mistune>=3.3.4",
+    "openai>=3.1.0",
+    "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
+    "sqlalchemy[asyncio]>=2.0.41",
+    "uvicorn[standard]>=0.52.3",
+]
+
+[project.scripts]
+crewspace = "crewspace:main"
+crewspace-mcp = "crewspace.infrastructure.mcp_server:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mcp[cli]>=2.0.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"

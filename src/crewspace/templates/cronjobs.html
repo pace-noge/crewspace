@@ -1,0 +1,86 @@
+{% extends "layout.html" %}
+{% block title %}Scheduled instructions — Crewspace{% endblock %}
+{% block topbar %}Scheduled instructions{% endblock %}
+{% block head %}
+<style>
+  .page{padding:28px;overflow:auto}.page-shell{max-width:1100px}.header{display:flex;justify-content:space-between;align-items:center;gap:20px}.header h1{margin-bottom:4px}.header p{margin:0;color:var(--muted)}
+  .toolbar{display:grid;grid-template-columns:minmax(240px,1fr) 180px;gap:10px;margin:22px 0 14px}.toolbar input,.toolbar select{width:100%}.result-count{color:var(--muted);font-size:12px;margin-bottom:10px}
+  .jobs{display:grid;gap:10px}.job{background:var(--bg-elev);border:1px solid var(--border);border-radius:10px;padding:15px 16px}.job.focused{border-color:var(--accent)}.job-main{display:grid;grid-template-columns:minmax(220px,1.4fr) minmax(180px,1fr) auto;gap:18px;align-items:center}.job-title{min-width:0}.job-title h2{font-size:16px;margin:0 0 3px}.description,.instruction-preview{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule{font-size:13px}.next-run{color:var(--muted);font-size:12px;margin-top:3px}
+  .status{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:650}.status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted)}.status.enabled::before,.status.succeeded::before{background:#a6e3a1}.status.paused::before{background:#f9e2af}.status.failed::before{background:#f38ba8}.status.completed::before{background:#89b4fa}
+  .actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.actions form{margin:0}.danger{color:#f38ba8}.empty{color:var(--muted);padding:32px;text-align:center;border:1px dashed var(--border);border-radius:10px}
+  .history{border-top:1px solid var(--border);margin-top:15px;padding-top:15px}.history-header{display:flex;align-items:center;justify-content:space-between}.history-header h3{margin:0}.run-list{display:grid;gap:7px;margin-top:12px}.run-row{display:grid;grid-template-columns:170px 90px 90px 1fr auto;gap:12px;align-items:center;background:var(--bg);border-radius:7px;padding:9px 11px;font-size:12px}.run-meta{color:var(--muted)}
+  @media(max-width:850px){.job-main{grid-template-columns:1fr}.actions{justify-content:flex-start}.toolbar{grid-template-columns:1fr}.run-row{grid-template-columns:1fr 1fr}.run-row .run-meta{grid-column:1/-1}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page"><div class="page-shell">
+  <div class="header">
+    <div><h1>Scheduled instructions</h1><p>Automated channel instructions and their execution status.</p></div>
+    <a class="button primary" href="/cronjobs/new">New schedule</a>
+  </div>
+
+  <div class="toolbar">
+    <input id="schedule-search" type="search" placeholder="Search schedules or instructions…" aria-label="Search scheduled instructions">
+    <select id="schedule-status" aria-label="Filter by status"><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="paused">Paused</option><option value="completed">Completed</option><option value="failed">Last run failed</option></select>
+  </div>
+  <div id="schedule-count" class="result-count"></div>
+
+  <div class="jobs" id="schedule-list">
+  {% for item in jobs %}{% set job=item.job %}{% set display_status = 'enabled' if job.enabled else ('completed' if job.schedule_kind.value == 'once' and job.last_status == 'succeeded' else 'paused') %}
+    <article class="job {% if focused_id == job.id %}focused{% endif %}" data-status="{{ 'failed' if job.last_status == 'failed' else display_status }}" data-search="{{ (job.name ~ ' ' ~ (job.description or '') ~ ' ' ~ job.instruction)|lower }}">
+      <div class="job-main">
+        <div class="job-title"><h2>{{ job.name }}</h2>{% if job.description %}<div class="description">{{ job.description }}</div>{% endif %}<div class="instruction-preview">{{ job.instruction }}</div></div>
+        <div><div class="schedule">{{ item.schedule_label }}</div><div class="next-run">Next {{ job.next_run_at.strftime('%Y-%m-%d %H:%M') }} UTC{% if job.last_status == 'succeeded' %} · Last run succeeded{% elif job.last_status == 'failed' %} · Last run failed{% endif %}</div></div>
+        <div class="actions">
+          <span class="status {{ 'failed' if job.last_status == 'failed' else display_status }}">{{ 'Last run failed' if job.last_status == 'failed' else display_status|title }}</span>
+          <a class="button" href="/cronjobs/{{ job.id }}/history">History</a>
+          <form method="post" action="/cronjobs/{{ job.id }}/run"><button type="submit">Run now</button></form>
+          <a class="button" href="/cronjobs/{{ job.id }}/edit">Edit</a>
+          {% if job.enabled %}<form method="post" action="/cronjobs/{{ job.id }}/pause"><button type="submit">Pause</button></form>{% else %}<form method="post" action="/cronjobs/{{ job.id }}/resume"><button type="submit">Resume</button></form>{% endif %}
+          <form method="post" action="/cronjobs/{{ job.id }}/delete" onsubmit="return confirm('Delete this scheduled instruction and its run history?')"><button class="danger" type="submit">Delete</button></form>
+        </div>
+      </div>
+      {% if focused_id == job.id %}
+      <section class="history">
+        <div class="history-header"><h3>Run history</h3><a href="/cronjobs">Hide history</a></div>
+        <div class="run-list">
+        {% for run in run_history %}
+          <a class="run-row" href="/cronjobs/{{ job.id }}/runs/{{ run.id }}">
+            <span>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span><span>{{ run.trigger|title }}</span><span class="status {{ run.status }}">{{ run.status|title }}</span><span class="run-meta">Duration: {{ run.duration_ms or 0 }} ms · Posted message{% if run.message_ids|length != 1 %}s{% endif %}: {{ run.message_ids|length }}{% if run.next_run_at %} · Next run: {{ run.next_run_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</span><span>Details →</span>
+          </a>
+        {% else %}<p class="run-meta">No runs yet.</p>{% endfor %}
+        </div>
+      </section>
+      {% endif %}
+    </article>
+  {% else %}<p class="empty">No scheduled instructions yet.</p>{% endfor %}
+  </div>
+  <p id="no-filter-results" class="empty" hidden>No schedules match this filter.</p>
+</div></div>
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const search = document.getElementById('schedule-search');
+  const status = document.getElementById('schedule-status');
+  const jobs = [...document.querySelectorAll('.job')];
+  const count = document.getElementById('schedule-count');
+  const empty = document.getElementById('no-filter-results');
+  function filterSchedules() {
+    const query = search.value.trim().toLowerCase();
+    let visible = 0;
+    jobs.forEach(job => {
+      const matchesText = !query || job.dataset.search.includes(query);
+      const matchesStatus = status.value === 'all' || job.dataset.status === status.value;
+      job.hidden = !(matchesText && matchesStatus);
+      if (!job.hidden) visible += 1;
+    });
+    count.textContent = `${visible} of ${jobs.length} schedule${jobs.length === 1 ? '' : 's'}`;
+    empty.hidden = visible !== 0 || jobs.length === 0;
+  }
+  search.addEventListener('input', filterSchedules);
+  status.addEventListener('change', filterSchedules);
+  filterSchedules();
+})();
+</script>
+{% endblock %}

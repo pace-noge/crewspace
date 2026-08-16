@@ -1,0 +1,126 @@
+{% extends "layout.html" %}
+{% block title %}Team management — Crewspace{% endblock %}
+{% block nav_management %}active{% endblock %}
+{% block topbar %}Team management{% endblock %}
+{% block head %}
+<style>
+  .management { padding: 22px; overflow-y: auto; }
+  .management h1 { margin: 0; font-size: 24px; }
+  .management h2 { margin: 0; font-size: 18px; }
+  .management h3 { margin: 0; font-size: 15px; }
+  .page-intro { color: var(--muted); margin: 4px 0 20px; }
+  .management-grid { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; align-items: start; }
+  .panel { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .stack { display: grid; gap: 10px; }
+  .management label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+  .management input, .management select { width: 100%; }
+  .team { margin-bottom: 18px; }
+  .team-head, .workspace-head, .channel-head, .member-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+  .badge { display: inline-flex; padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 11px; text-transform: capitalize; }
+  .badge.agent { color: var(--agent); }
+  .workspace { border-left: 2px solid var(--accent); margin: 14px 0 0; padding-left: 14px; }
+  .channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 12px; margin-top: 12px; }
+  .channel { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .channel .topic { color: var(--muted); min-height: 21px; }
+  .member-row { padding: 7px 0; border-bottom: 1px solid var(--border); }
+  .member-row:last-child { border: 0; }
+  .inline-form { display: flex; gap: 7px; margin-top: 10px; }
+  .inline-form select, .inline-form input { flex: 1; min-width: 0; }
+  .danger { color: #f38ba8; background: transparent; }
+  .empty { color: var(--muted); font-style: italic; }
+  @media (max-width: 850px) { .management-grid { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="management">
+  <h1>Team management</h1>
+  <p class="page-intro">Manage teams, workspaces, channels, people, agents, channel lifetime, and mention scope.</p>
+  <div class="management-grid">
+    <aside class="stack">
+      <section class="panel">
+        <h2>Your role</h2>
+        <p><span class="badge">{{ current_user.role|replace('_', ' ') }}</span></p>
+        <p class="page-intro">Superadmins create teams. Team leaders manage their team's workspaces, channels, and access.</p>
+      </section>
+      {% if current_user.role == "superadmin" %}
+      <section class="panel">
+        <h2>Create team</h2>
+        <form class="stack" method="post" action="/management/teams">
+          <label>Team name<input name="name" required placeholder="Platform engineering"></label>
+          <label>Team leader
+            <select name="leader_id" required>
+              {% for human in humans %}<option value="{{ human.id }}">{{ human.name }}</option>{% endfor %}
+            </select>
+          </label>
+          <button class="primary" type="submit">Create team</button>
+        </form>
+      </section>
+      {% endif %}
+    </aside>
+
+    <main>
+      {% for item in hierarchy %}
+      <section class="panel team">
+        <div class="team-head">
+          <div><h2>{{ item.team.name }}</h2><span class="badge">team</span></div><div class="inline-form"><form method="post" action="/management/teams/{{ item.team.id }}/archive"><button type="submit">Archive</button></form>{% if current_user.role == "superadmin" %}<a class="danger" href="/management/teams/{{ item.team.id }}/delete">Delete permanently</a>{% endif %}</div>
+        </div>
+        <h3 style="margin-top:14px">Team members</h3>
+        {% for entry in item.members %}
+          <div class="member-row">
+            <span>{{ entry.member.avatar or ("🤖" if entry.member.kind == "agent" else "🧑") }} {{ entry.member.name }}</span>
+            <span class="badge {% if entry.member.kind == 'agent' %}agent{% endif %}">{% if entry.member.kind == "agent" %}Agent{% elif entry.membership.role.value == "leader" %}Team leader{% else %}Team member{% endif %}</span>
+          </div>
+        {% endfor %}
+        <form class="inline-form" method="post" action="/management/teams/{{ item.team.id }}/members">
+          <select name="member_id">{% for member in all_members %}<option value="{{ member.id }}">{{ member.name }} · {{ member.kind }}</option>{% endfor %}</select>
+          <button type="submit">Add to team</button>
+        </form>
+        <form class="inline-form" method="post" action="/management/teams/{{ item.team.id }}/workspaces">
+          <input name="name" required placeholder="New workspace">
+          <button class="primary" type="submit">Create workspace</button>
+        </form>
+
+        {% for workspace_item in item.workspaces %}
+        <div class="workspace" id="workspace-{{ workspace_item.workspace.id }}">
+          <div class="workspace-head"><h3>{{ workspace_item.workspace.name }}</h3><span class="badge">workspace</span></div>
+          <form class="inline-form" method="post" action="/management/workspaces/{{ workspace_item.workspace.id }}/channels">
+            <input name="name" required placeholder="Channel name">
+            <input name="topic" placeholder="Topic">
+            <select name="channel_type"><option value="permanent">Permanent</option><option value="temporary">Temporary</option></select>
+            <select name="mention_policy">
+              {% for value, label in mention_policies.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select>
+            <button type="submit">Create</button>
+          </form>
+          <div class="channels">
+            {% for channel_item in workspace_item.channels %}
+            <article class="channel" id="channel-{{ channel_item.channel.id }}">
+              <div class="channel-head">
+                <h3># {{ channel_item.channel.name }}</h3>
+                <span class="badge">{{ channel_item.channel.channel_type.value }}</span>
+              </div>
+              <div class="topic">{{ channel_item.channel.topic or "No topic" }}</div>
+              <p><span class="badge">Mentions: {{ mention_policies[channel_item.channel.mention_policy] }}</span></p>
+              {% for entry in channel_item.members %}
+              <div class="member-row">
+                <span>{{ entry.member.avatar or ("🤖" if entry.member.kind == "agent" else "🧑") }} {{ entry.member.name }}</span>
+                <span class="badge {% if entry.member.kind == 'agent' %}agent{% endif %}">{{ "Agent" if entry.member.kind == "agent" else "Team member" }}</span>
+                <form method="post" action="/management/channels/{{ channel_item.channel.id }}/members/{{ entry.member.id }}/remove"><button class="danger" type="submit">Remove</button></form>
+              </div>
+              {% endfor %}
+              <form class="inline-form" method="post" action="/management/channels/{{ channel_item.channel.id }}/members">
+                <select name="member_id">{% for member in all_members %}<option value="{{ member.id }}">{{ member.name }} · {{ member.kind }}</option>{% endfor %}</select>
+                <button type="submit">Assign</button>
+              </form>
+            </article>
+            {% else %}<p class="empty">No channels yet.</p>{% endfor %}
+          </div>
+        </div>
+        {% else %}<p class="empty">No workspaces yet.</p>{% endfor %}
+      </section>
+      {% else %}<section class="panel empty">You do not belong to a team yet.</section>{% endfor %}
+      {% if archived_items %}<section class="panel team"><h2>Archived items</h2><p class="page-intro">Archived items keep their history and can be restored.</p>{% for item in archived_items %}<div class="member-row"><span>{{ item.name }} <span class="badge">{{ item.kind }}</span></span><span class="inline-form"><form method="post" action="/management/{{ item.collection }}/{{ item.id }}/restore"><button type="submit">Restore</button></form>{% if current_user.role == "superadmin" %}<a class="danger" href="/management/{{ item.collection }}/{{ item.id }}/delete">Delete permanently</a>{% endif %}</span></div>{% endfor %}</section>{% endif %}
+    </main>
+  </div>
+</div>
+{% endblock %}

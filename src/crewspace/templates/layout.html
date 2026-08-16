@@ -1,0 +1,144 @@
+{# Shared app shell with a left sidebar (chat + board navigation). #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Crewspace{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #1e1e2e; --bg-elev: #181825; --surface: #313244; --border: #45475a;
+      --text: #cdd6f4; --muted: #a6adc8; --accent: #89b4fa; --agent: #f9e2af;
+    }
+    * { box-sizing: border-box; }
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+    a { color: var(--accent); text-decoration: none; }
+
+    /* Sidebar */
+    .sidebar { width: 220px; flex: 0 0 220px; background: var(--bg-elev); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+    .sidebar .brand { font-weight: 700; letter-spacing: .02em; margin: 4px 8px 14px; font-size: 15px; }
+    .sidebar .brand small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+    .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 12px 8px 4px; }
+    .nav-link { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; color: var(--text); }
+    .nav-link:hover { background: var(--surface); }
+    .nav-link.active { background: var(--surface); color: #fff; font-weight: 600; }
+    .nav-link .ico { font-size: 16px; width: 18px; text-align: center; }
+    .workspace-nav { margin-top: 6px; }
+    .workspace-row, .channel-row { display: flex; align-items: center; gap: 4px; }
+    .workspace-name { flex: 1; padding: 7px 8px; font-weight: 650; color: var(--text); }
+    .channel-row .nav-link { flex: 1; padding: 6px 10px 6px 18px; }
+    details.action-menu { position: relative; }
+    details.action-menu > summary { list-style: none; cursor: pointer; border-radius: 6px; padding: 3px 7px; color: var(--muted); }
+    details.action-menu > summary::-webkit-details-marker, .user-menu > summary::-webkit-details-marker { display: none; }
+    details.action-menu > summary:hover { background: var(--surface); color: var(--text); }
+    .menu-popover { position: absolute; z-index: 20; right: 0; top: 28px; min-width: 180px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 28px #0008; }
+    .menu-popover a { display: block; padding: 7px 9px; border-radius: 6px; color: var(--text); white-space: nowrap; }
+    .menu-popover a:hover { background: var(--border); }
+    .user-menu { position: relative; margin-top: 5px; }
+    .user-menu > summary { list-style: none; }
+    .user-menu .me { cursor: pointer; }
+    .sidebar .spacer { flex: 1; }
+    .sidebar .me { display: flex; align-items: center; gap: 8px; padding: 8px; border-top: 1px solid var(--border); color: var(--muted); }
+    .sidebar .me .ava { font-size: 18px; }
+
+    /* Main */
+    .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .topbar { padding: 12px 16px; background: var(--bg-elev); border-bottom: 1px solid var(--border); font-weight: 600; }
+    .content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+    button, a.button { font: inherit; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 6px 10px; cursor: pointer; display: inline-block; line-height: 1.5; }
+    button.primary, a.button.primary { background: var(--accent); color: #11111b; border: 0; font-weight: 600; }
+    select, input[type=text], input:not([type]) { font: inherit; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); padding: 6px 8px; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <nav class="sidebar">
+    <div class="brand">🧩 Crewspace<small>Humans and agents, working together</small></div>
+
+    <div class="workspace-row">
+      <div class="nav-group" style="flex:1">Workspaces & channels</div>
+      {% if can_manage %}<details class="action-menu">
+        <summary aria-label="Workspaces and channels actions">•••</summary>
+        <div class="menu-popover"><a href="/management/workspaces">Manage workspaces</a></div>
+      </details>{% endif %}
+    </div>
+    {% for team_item in workspace_navigation or [] %}
+      {% for workspace_item in team_item.workspaces %}
+      <div class="workspace-nav">
+        <div class="workspace-row">
+          <div class="workspace-name">▾ {{ workspace_item.workspace.name }}</div>
+          {% if can_manage %}<details class="action-menu"><summary aria-label="Workspace actions">•••</summary><div class="menu-popover"><a href="/management/workspaces/{{ workspace_item.workspace.id }}">Manage workspace</a><a href="/management/workspaces/{{ workspace_item.workspace.id }}/channels/new">Add channel</a><form method="post" action="/management/workspaces/{{ workspace_item.workspace.id }}/archive"><button type="submit">Archive workspace</button></form></div></details>{% endif %}
+        </div>
+        {% for nav_channel in workspace_item.channels %}
+        <div class="channel-row">
+          <a class="nav-link {% if channel_id is defined and channel_id == nav_channel.id %}active{% endif %}" href="/channels/{{ nav_channel.id }}"># {{ nav_channel.name }}</a>
+          {% if can_manage %}<details class="action-menu"><summary aria-label="Channel actions">•••</summary><div class="menu-popover"><a href="/channels/{{ nav_channel.id }}">Open channel</a><a href="/management/channels/{{ nav_channel.id }}">Manage channel</a><a href="/management/channels/{{ nav_channel.id }}/members">Manage members</a><form method="post" action="/management/channels/{{ nav_channel.id }}/archive"><button type="submit">Archive channel</button></form></div></details>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    {% endfor %}
+    {% if not workspace_navigation %}<a class="nav-link" href="/management">No channels assigned</a>{% endif %}
+
+    <div class="nav-group">Direct messages</div>
+    {% for direct in direct_messages or [] %}
+      <a class="nav-link {% if channel_id is defined and channel_id == direct.channel_id %}active{% endif %}" href="/channels/{{ direct.channel_id }}"><span class="ico">{{ direct.avatar or ("🤖" if direct.kind == "agent" else "🧑") }}</span> {{ direct.name }}</a>
+    {% endfor %}
+
+    <div class="nav-group">Tools</div>
+    <a class="nav-link {% block nav_board %}{% endblock %}" href="/board/board_main"><span class="ico">📋</span> Board</a>
+    <a class="nav-link" href="/cronjobs"><span class="ico">⏱</span> Scheduled instructions</a>
+
+    <div class="workspace-row">
+      <div class="nav-group" style="flex:1">Agents</div>
+      {% if current_user and current_user.role == "superadmin" %}
+      <details class="action-menu">
+        <summary aria-label="Agents actions">•••</summary>
+        <div class="menu-popover"><a href="/auth/agents/register">Register agent</a></div>
+      </details>
+      {% endif %}
+    </div>
+    {% for agent in agents or [] %}
+      <div class="channel-row"><a class="nav-link" href="/direct/{{ agent.id }}"><span class="ico">{{ agent.avatar or "🤖" }}</span>{{ agent.name }}{% if agent.base_url %}<span class="role" title="{{ agent.base_url }}">remote</span>{% endif %}</a>{% if current_user.role == "superadmin" %}<details class="action-menu"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a><form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a></div></details>{% endif %}</div>
+    {% endfor %}
+
+    <div class="spacer"></div>
+    {% if current_user %}
+      <details class="user-menu">
+        <summary><div class="me"><span class="ava">{{ current_user.avatar or "🧑" }}</span> {{ current_user.name }}<span class="role">{{ current_user.role|replace('_', ' ') }}</span><span style="margin-left:auto">•••</span></div></summary>
+        <div class="menu-popover" style="bottom:46px;top:auto;right:8px;">{% if can_manage %}<a href="/management">Management</a>{% endif %}{% if can_add_human %}<a href="/management/humans/new">Add human</a>{% endif %}{% if current_user.role == "superadmin" %}<a href="/auth/agents/register">Register agent</a>{% endif %}</div>
+      </details>
+      <form method="post" action="/auth/logout" style="margin:0 8px 12px;">
+        <button type="submit" style="width:100%;">Log out</button>
+      </form>
+    {% else %}
+      <a class="nav-link" href="/auth/login" style="margin:0 8px 12px;"><span class="ico">🔐</span> Log in</a>
+    {% endif %}
+  </nav>
+
+  <div class="main">
+    <div class="topbar">{% block topbar %}{% endblock %}</div>
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+
+  <script src="/static/htmx.min.js"></script>
+  <script>
+    document.addEventListener("click", (event) => {
+      document.querySelectorAll("details[open].action-menu, details[open].user-menu").forEach((menu) => {
+        if (!menu.contains(event.target)) menu.removeAttribute("open");
+      });
+    });
+    document.addEventListener("toggle", (event) => {
+      const opened = event.target;
+      if (!(opened instanceof HTMLDetailsElement) || !opened.open) return;
+      document.querySelectorAll("details[open].action-menu, details[open].user-menu").forEach((menu) => {
+        if (menu !== opened) menu.removeAttribute("open");
+      });
+    }, true);
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+{% block title %}Register agent — Crewspace{% endblock %}
+{% block topbar %}Register agent{% endblock %}
+{% block head %}
+<style>
+  .form-page{padding:28px}.form-card{max-width:520px;padding:22px;border:1px solid var(--border);border-radius:12px;background:var(--bg-elev)}
+  .form-card h1{margin:0 0 5px;font-size:22px}.form-card>p{margin:0 0 18px;color:var(--muted)}
+  .form-card form{display:grid;gap:13px}.form-card label{display:grid;gap:5px;color:var(--muted);font-size:12px}.form-card input,.form-card select{width:100%}
+  .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:5px}.cancel{padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="form-page"><section class="form-card">
+  <h1>Register agent</h1>
+  <p>Create an agent identity. Assign it to teams and channels from member management after registration.</p>
+  <form method="post" action="/auth/agents/register">
+    <label>Agent name<input name="name" required placeholder="Coder"></label>
+    <label>Avatar<input name="avatar" value="🤖" placeholder="🤖"></label>
+    <label>Remote base URL<input name="base_url" placeholder="Leave blank for local"></label>
+    <label>Fallback backend<select name="backend"><option value="stub">Stub · canned replies</option><option value="llm">LLM · server credentials</option></select></label>
+    <div class="actions"><a class="cancel" href="/management">Cancel</a><button class="primary" type="submit">Register agent</button></div>
+  </form>
+</section></div>
+{% endblock %}

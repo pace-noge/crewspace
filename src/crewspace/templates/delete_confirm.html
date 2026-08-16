@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+{% block title %}Permanently delete {{ kind }} — Crewspace{% endblock %}
+{% block topbar %}Permanent deletion{% endblock %}
+{% block head %}
+<style>
+  .delete-page{padding:28px;overflow-y:auto}.delete-card{max-width:560px;padding:22px;border:1px solid #f38ba866;border-radius:12px;background:var(--bg-elev)}
+  .delete-card h1{margin:0 0 6px;font-size:22px;color:#f38ba8}.delete-card p{color:var(--muted)}.impact{display:grid;gap:7px;padding:12px;margin:16px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+  .impact-row{display:flex;justify-content:space-between}.delete-card label{display:grid;gap:6px;color:var(--muted);font-size:12px}.delete-card input{width:100%}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.danger{background:#f38ba8;color:#11111b;border-color:#f38ba8;font-weight:700}.cancel{padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="delete-page"><section class="delete-card">
+  <h1>Permanently delete {{ kind }}</h1>
+  <p>This cannot be undone. Archive is the recommended reversible action.</p>
+  <div class="impact" aria-label="Dependent data">
+    {% for label,count in counts.items() %}<div class="impact-row"><span>{{ label }}</span><strong>{{ count }}</strong></div>{% endfor %}
+  </div>
+  <p>Type <strong>{{ entity.name }}</strong> to confirm.</p>
+  <form method="post" action="/management/{{ collection }}/{{ entity.id }}/delete">
+    <label>Confirmation name<input name="confirmation" required autocomplete="off"></label>
+    <div class="actions"><a class="cancel" href="/management">Cancel</a><button class="danger" type="submit">Permanently delete</button></div>
+  </form>
+</section></div>
+{% endblock %}

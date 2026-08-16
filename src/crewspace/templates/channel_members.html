@@ -1,0 +1,24 @@
+{% extends "layout.html" %}
+{% block title %}Manage members — Crewspace{% endblock %}
+{% block topbar %}Manage members{% endblock %}
+{% block head %}
+<style>
+  .form-page{padding:28px}.form-card{max-width:620px;padding:22px;border:1px solid var(--border);border-radius:12px;background:var(--bg-elev)}
+  .form-card h1{margin:0 0 5px;font-size:22px}.form-card>p{margin:0 0 18px;color:var(--muted)}
+  .member-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}.member-row .name{flex:1}.badge{padding:2px 8px;border-radius:999px;background:var(--surface);font-size:11px;text-transform:capitalize}
+  .assign{display:flex;gap:8px;margin-top:18px}.assign select{flex:1}.actions{margin-top:18px}.cancel{display:inline-block;padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)}.danger{color:#f38ba8;background:transparent}
+</style>
+{% endblock %}
+{% block content %}
+<div class="form-page"><section class="form-card">
+  <h1>Manage members</h1><p># {{ channel.name }} · assign humans and agents who may enter this channel.</p>
+  {% for entry in channel_members %}
+  <div class="member-row"><span>{{ entry.member.avatar or ('🤖' if entry.member.kind == 'agent' else '🧑') }}</span><span class="name">{{ entry.member.name }}</span><span class="badge">{{ 'Agent' if entry.member.kind == 'agent' else 'Human' }}</span><form method="post" action="/management/channels/{{ channel.id }}/members/{{ entry.member.id }}/remove"><button class="danger" type="submit">Remove</button></form></div>
+  {% else %}<p>No members assigned.</p>{% endfor %}
+  <form class="assign" method="post" action="/management/channels/{{ channel.id }}/members">
+    <select name="member_id" aria-label="Assign member or agent">{% for member in all_members %}<option value="{{ member.id }}">{{ member.name }} · {{ member.kind }}</option>{% endfor %}</select>
+    <button class="primary" type="submit">Assign member or agent</button>
+  </form>
+  <div class="actions"><a class="cancel" href="/channels/{{ channel.id }}">Done</a></div>
+</section></div>
+{% endblock %}

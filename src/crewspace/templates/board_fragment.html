@@ -1,0 +1,11 @@
+{# Board fragment — re-rendered wholesale and swapped into #board-wrap on
+   create / move / drop. Wrapping the .board in #board-wrap (in board.html)
+   lets HTMX replace the entire board with a single innerHTML swap, so a moved
+   card is removed from its old column and appears in the new one with no
+   out-of-band ambiguity. #}
+<div class="board" style="display:flex; gap:12px; padding:16px; align-items:flex-start; overflow-x:auto;">
+  {% set board_id = board.id %}
+  {% for column in board.columns %}
+    {% include "column.html" with context %}
+  {% endfor %}
+</div>

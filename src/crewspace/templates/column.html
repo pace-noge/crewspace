@@ -1,0 +1,16 @@
+{# Column fragment — rendered inside board.html and board_fragment.html #}
+<div class="column" id="col-{{ column.id }}" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; width:280px; padding:10px; min-height:120px;">
+  <h3 style="margin:4px 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; opacity:.8;">{{ column.name }}</h3>
+
+  {% for card in column.cards %}
+    {% include "card.html" %}
+  {% endfor %}
+
+  <form class="add" hx-post="/boards/{{ board_id }}/cards"
+        hx-target="#board-wrap" hx-swap="innerHTML"
+        style="margin-top:8px; display:flex; gap:6px;">
+    <input name="title" type="text" placeholder="New card…" style="flex:1;" />
+    <input type="hidden" name="column_id" value="{{ column.id }}" />
+    <button class="primary" type="submit">＋</button>
+  </form>
+</div>

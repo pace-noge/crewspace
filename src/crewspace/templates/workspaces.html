@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block title %}Manage workspaces — Crewspace{% endblock %}
+{% block topbar %}Manage workspaces{% endblock %}
+{% block head %}
+<style>
+  .page{padding:28px;overflow-y:auto}.page h1{margin:0;font-size:24px}.intro{color:var(--muted);margin:4px 0 20px}
+  .team{max-width:760px;margin-bottom:18px;padding:18px;border:1px solid var(--border);border-radius:12px;background:var(--bg-elev)}
+  .team h2{margin:0 0 12px;font-size:17px}.workspace{display:flex;align-items:center;gap:12px;padding:12px;border-top:1px solid var(--border)}
+  .workspace:first-of-type{border-top:0}.workspace-info{flex:1}.workspace-name{font-weight:650}.meta{color:var(--muted);font-size:12px}
+  .actions{display:flex;gap:8px}.btn{padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)}.btn.primary{background:var(--accent);border-color:var(--accent);color:#11111b;font-weight:600}
+  .empty{color:var(--muted);font-style:italic}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page">
+  <h1>Manage workspaces</h1>
+  <p class="intro">Rename workspaces or create channels inside them. Team administration is managed separately.</p>
+  {% for item in workspace_groups %}
+  <section class="team">
+    <h2>{{ item.team.name }}</h2>
+    {% for workspace in item.workspaces %}
+    <div class="workspace">
+      <div class="workspace-info"><div class="workspace-name">{{ workspace.name }}</div><div class="meta">{{ workspace.id }}</div></div>
+      <div class="actions"><a class="btn" href="/management/workspaces/{{ workspace.id }}">Manage</a><a class="btn primary" href="/management/workspaces/{{ workspace.id }}/channels/new">Add channel</a></div>
+    </div>
+    {% else %}<p class="empty">No workspaces in this team.</p>{% endfor %}
+  </section>
+  {% else %}<p class="empty">No teams or workspaces available.</p>{% endfor %}
+</div>
+{% endblock %}
