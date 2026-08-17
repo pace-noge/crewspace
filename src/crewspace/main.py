@@ -18,6 +18,7 @@ from .infrastructure.db import Database
 from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools
 from .application.scheduling import SchedulerLoop
 from .security import is_same_origin
+from .infrastructure.db import logger as db_logger
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
         app.state.db = db
     else:
         db = app.state.db
+    db_logger.info("Crewspace database ready (bound to %s).", settings.database_url)
     scheduler = SchedulerLoop(db, settings)
     scheduler.start()
     try:

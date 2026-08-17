@@ -101,14 +101,15 @@ async def logout(request: Request, uow: UowDep):
 async def agent_register_page(
     request: Request, current_user: CurrentUserDep, uow: UowDep
 ):
-    if current_user is None or current_user["role"] != "superadmin":
-        raise HTTPException(status_code=403, detail="Only superadmins can register agents")
+    if current_user is None:
+        raise HTTPException(status_code=403, detail="You must be logged in to register an agent")
     return templates.TemplateResponse(
         request=request,
-        name="agent_register.html",
+        name="agent_register_form.html",
         context={
             "request": request,
             "current_user": current_user,
+            "is_superadmin": current_user["role"] == "superadmin",
             "agents": await uow.auth.list_members(kind="agent"),
             **await navigation_context(uow, current_user),
         },
@@ -123,44 +124,72 @@ async def agent_register(
     name: str = Form(...),
     avatar: str = Form("🤖"),
     base_url: str = Form(""),
-    backend: str = Form("stub"),
+    uses_app_llm: str = Form(""),
 ):
-    """Register a bot/agent member (admin only).
+    """Register an agent member.
 
-    Generates an Ed25519 keypair for the agent: the PUBLIC key is stored with the
-    member (server-side, used to verify the agent's connect claim + signed
-    actions); the PRIVATE key is shown to the registering admin exactly once and
-    must be copied into the agent process's config. The agent uses it to sign its
-    connect claim and every action it takes. This is the Buzz model: each agent
-    has its own identity and a verifiable, non-repudiable audit trail.
+    Two kinds of agents:
 
-    ``backend`` selects how the *in-app* fallback agent behaves when this agent is
-    not connected over WebSocket: ``stub`` (canned) or ``llm`` (uses the server's
-    CREWSPACE_LLM_* credentials, which live in the environment — never in the DB). A
-    remote (connected) agent runs its own logic/LLM in its own process, so its key
-    is never shared with the app at all.
+    * **Remote (WebSocket) agent** — any logged-in user may create one. The app
+      generates an Ed25519 keypair; the PUBLIC key is stored and the PRIVATE key
+      is shown once for the agent process to connect with. The agent runs as its
+      own process and uses its own LLM.
+    * **Builtin app-LLM agent** — only a superadmin may create one
+      (``uses_app_llm=1``). It runs inside the main app using the server's
+      ``CREWSPACE_LLM_*`` credentials, has no keypair, and is never WS-connected.
     """
-    if current_user is None or current_user["role"] != "superadmin":
-        raise HTTPException(status_code=403, detail="Only superadmins can register agents")
+    if current_user is None:
+        raise HTTPException(status_code=403, detail="You must be logged in to register an agent")
+
+    wants_app_llm = (uses_app_llm or "").strip().lower() in ("1", "on", "true", "yes")
+    if wants_app_llm and current_user["role"] != "superadmin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only superadmins can create a builtin agent that uses the main app LLM",
+        )
 
     from ...security import generate_agent_keypair
 
-    backend = backend if backend in ("stub", "llm") else "stub"
-    priv_b64u, pub_b64u = generate_agent_keypair()
     slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_") or uuid.uuid4().hex[:6]
     member_id = f"agent_{slug}"
     if await uow.auth.get_member(member_id):
         member_id = f"agent_{uuid.uuid4().hex[:8]}"
+
+    if wants_app_llm:
+        # Builtin agent: runs in-process with the server's LLM; no keypair.
+        await uow.auth.register_member(
+            member_id, name.strip(), "agent", avatar or "🤖", "agent",
+            base_url.strip() or None, pubkey=None, backend="llm", uses_app_llm=1,
+        )
+        await uow.commit()
+        return templates.TemplateResponse(
+            request=request,
+            name="agent_registered.html",
+            context={
+                "name": name.strip(), "agent_id": member_id, "private_key": None,
+                "ws_url": "", "backend": "llm", "uses_app_llm": True,
+            },
+            headers={
+                "Cache-Control": "no-store", "Pragma": "no-cache",
+                "Referrer-Policy": "no-referrer",
+                "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
+            },
+        )
+
+    # Remote agent: generate a keypair; the private key is shown exactly once.
+    priv_b64u, pub_b64u = generate_agent_keypair()
     await uow.auth.register_member(
-        member_id, name.strip(), "agent", avatar or "🤖", "agent", base_url.strip() or None, pub_b64u, backend
+        member_id, name.strip(), "agent", avatar or "🤖", "agent",
+        base_url.strip() or None, pub_b64u, backend="stub", uses_app_llm=0,
     )
+    await uow.commit()
     ws_url = f"ws://{_settings(request).host}:{_settings(request).port}/agents/ws"
     return templates.TemplateResponse(
         request=request,
         name="agent_registered.html",
         context={
             "name": name.strip(), "agent_id": member_id, "private_key": priv_b64u,
-            "ws_url": ws_url, "backend": backend,
+            "ws_url": ws_url, "backend": "remote", "uses_app_llm": False,
         },
         headers={
             "Cache-Control": "no-store",

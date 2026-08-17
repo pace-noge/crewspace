@@ -65,3 +65,10 @@ def test_agent_request_ids_are_not_sequential():
     assert first != "m1"
     assert second != "m2"
     assert first != second
+
+
+def test_agent_status_distinguishes_builtin_and_remote_agents():
+    manager = AgentConnectionManager()
+
+    assert manager.status("agent_builtin", is_local=True) == "local"
+    assert manager.status("agent_remote", is_local=False) == "disconnected"

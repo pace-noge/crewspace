@@ -11,7 +11,7 @@ from crewspace.config import Settings
 from crewspace.infrastructure.models import Base
 
 config = context.config
-if config.config_file_name is not None:
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 if not config.get_main_option("sqlalchemy.url"):
     database_url = Settings().database_url
@@ -35,11 +35,19 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
+    dialect_name = connection.dialect.name
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        compare_type=True,
-        render_as_batch=connection.dialect.name == "sqlite",
+        # SQLite can't reliably introspect these (unbounded String == TEXT,
+        # NOT NULL / check constraints / FK ondelete aren't reflected back), so
+        # comparing them only produces false-positive drift. PostgreSQL keeps
+        # the strict checks.
+        compare_type=dialect_name != "sqlite",
+        compare_nullable=dialect_name != "sqlite",
+        compare_constraints=dialect_name != "sqlite",
+        compare_server_default=False,
+        render_as_batch=dialect_name == "sqlite",
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -1,6 +1,8 @@
 """End-to-end management UI and authorization behavior."""
 from __future__ import annotations
 
+import asyncio
+
 
 def test_superadmin_sees_management_navigation(client):
     response = client.get("/")
@@ -328,7 +330,8 @@ def test_team_member_sees_no_management_actions_and_direct_requests_are_forbidde
     assert 'href="/management"' not in home.text
     assert 'aria-label="Workspace actions"' not in home.text
     assert 'aria-label="Channel actions"' not in home.text
-    assert 'aria-label="Agents actions"' not in home.text
+    assert 'aria-label="Agents actions"' in home.text
+    assert 'href="/auth/agents/register"' in home.text
     assert "Add human" not in home.text
     assert client.get("/management").status_code == 403
     assert client.get("/management/workspaces").status_code == 403
@@ -336,8 +339,13 @@ def test_team_member_sees_no_management_actions_and_direct_requests_are_forbidde
     assert client.get("/management/channels/chan_general").status_code == 403
     assert client.get("/management/channels/chan_general/members").status_code == 403
     assert client.get("/management/humans/new").status_code == 403
-    assert client.get("/auth/agents/register").status_code == 403
-    assert client.post("/auth/agents/register", data={"name": "Forbidden"}).status_code == 403
+    # Any logged-in user may register a remote (WebSocket) agent; the superadmin-only
+    # path is creating a builtin agent that uses the main app LLM.
+    assert client.get("/auth/agents/register").status_code == 200
+    assert client.post("/auth/agents/register", data={"name": "Forbidden"}).status_code == 200
+    assert client.post(
+        "/auth/agents/register", data={"name": "Forbidden", "uses_app_llm": "1"}
+    ).status_code == 403
     assert client.post("/management/humans", data={"name": "No", "password": "password123", "team_id": "team_acme"}).status_code == 403
     assert client.post("/management/teams", data={"name": "No", "leader_id": "user_bilal"}).status_code == 403
     assert client.post("/management/teams/team_acme/members", data={"member_id": "agent_planner"}).status_code == 403
@@ -365,7 +373,8 @@ def test_engineering_manager_can_manage_assigned_team_but_not_other_team(client,
     assert 'aria-label="Workspace actions"' in home.text
     assert 'aria-label="Channel actions"' in home.text
     assert "Add human" in home.text
-    assert 'aria-label="Agents actions"' not in home.text
+    assert 'aria-label="Agents actions"' in home.text
+    assert 'href="/auth/agents/register"' in home.text
     assert client.get("/management/workspaces/ws_default").status_code == 200
     assert client.get("/management/channels/chan_general").status_code == 200
     assert client.post("/management/teams/team_acme/workspaces", data={"name": "Managed"}).status_code == 200
@@ -373,7 +382,11 @@ def test_engineering_manager_can_manage_assigned_team_but_not_other_team(client,
     assert client.get("/management/channels/chan_other").status_code == 403
     assert client.post("/management/teams/team_other/workspaces", data={"name": "Forbidden"}).status_code == 403
     assert client.post("/management/teams", data={"name": "Forbidden", "leader_id": "user_bilal"}).status_code == 403
-    assert client.get("/auth/agents/register").status_code == 403
+    # Any logged-in user (incl. engineering manager) may register a remote agent.
+    assert client.get("/auth/agents/register").status_code == 200
+    assert client.post(
+        "/auth/agents/register", data={"name": "Forbidden", "uses_app_llm": "1"}
+    ).status_code == 403
 
 
 def test_manager_can_archive_and_restore_channel(client):
@@ -547,3 +560,51 @@ def test_superadmin_can_delete_agent_and_keep_cards(client):
     assert response.status_code == 303
     assert 'href="/direct/agent_planner"' not in client.get("/").text
     assert client.get("/board/board_main").status_code == 200
+
+
+def test_superadmin_can_create_builtin_app_llm_agent(client, app):
+    response = client.post(
+        "/auth/agents/register",
+        data={"name": "Researcher", "avatar": "🔬", "backend": "stub", "uses_app_llm": "1"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 200
+    assert "builtin agent" in response.text
+
+    async def fetch():
+        async with app.state.db.uow() as uow:
+            return await uow.auth.get_member("agent_researcher")
+
+    member = asyncio.run(fetch())
+    assert member is not None
+    assert member["kind"] == "agent"
+    assert member["backend"] == "llm"
+    assert member["uses_app_llm"] == 1
+    # No keypair: a builtin agent never connects over WebSocket.
+    assert member["pubkey"] is None
+
+
+def test_non_superadmin_cannot_create_builtin_app_llm_agent(client, app):
+    # Superadmin (the `client` fixture) creates a plain team member via the UI.
+    created = client.post(
+        "/management/humans",
+        data={"name": "Intern", "password": "intern123", "team_id": "team_acme"},
+    )
+    assert created.status_code == 200
+
+    # Switch the same test client from the superadmin session to the new member.
+    assert client.post("/auth/logout").status_code == 200
+    login = client.post(
+        "/auth/login",
+        data={"username": "Intern", "password": "intern123"},
+        follow_redirects=False,
+    )
+    assert login.status_code == 303
+    # A non-superadmin may register a remote (WebSocket) agent...
+    ok = client.post("/auth/agents/register", data={"name": "Sidekick"})
+    assert ok.status_code == 200
+    # ...but not a builtin app-LLM agent.
+    blocked = client.post(
+        "/auth/agents/register", data={"name": "Cheater", "uses_app_llm": "1"}
+    )
+    assert blocked.status_code == 403

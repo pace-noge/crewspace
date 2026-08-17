@@ -23,6 +23,12 @@
     .nav-link:hover { background: var(--surface); }
     .nav-link.active { background: var(--surface); color: #fff; font-weight: 600; }
     .nav-link .ico { font-size: 16px; width: 18px; text-align: center; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; vertical-align: middle; background: var(--muted); }
+    .dot-connected { background: #a6e3a1; }
+    .dot-local { background: #89b4fa; }
+    .dot-disconnected { background: #f38ba8; }
+    .badge { display: inline-flex; padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 11px; text-transform: capitalize; }
+    .badge.agent { color: var(--agent); }
     .workspace-nav { margin-top: 6px; }
     .workspace-row, .channel-row { display: flex; align-items: center; gap: 4px; }
     .workspace-name { flex: 1; padding: 7px 8px; font-weight: 650; color: var(--text); }
@@ -92,7 +98,7 @@
 
     <div class="workspace-row">
       <div class="nav-group" style="flex:1">Agents</div>
-      {% if current_user and current_user.role == "superadmin" %}
+      {% if current_user %}
       <details class="action-menu">
         <summary aria-label="Agents actions">•••</summary>
         <div class="menu-popover"><a href="/auth/agents/register">Register agent</a></div>
@@ -100,14 +106,23 @@
       {% endif %}
     </div>
     {% for agent in agents or [] %}
-      <div class="channel-row"><a class="nav-link" href="/direct/{{ agent.id }}"><span class="ico">{{ agent.avatar or "🤖" }}</span>{{ agent.name }}{% if agent.base_url %}<span class="role" title="{{ agent.base_url }}">remote</span>{% endif %}</a>{% if current_user.role == "superadmin" %}<details class="action-menu"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a><form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a></div></details>{% endif %}</div>
+      {% set st = agent_statuses.get(agent.id, 'disconnected') %}
+      <div class="channel-row">
+        <a class="nav-link" href="/direct/{{ agent.id }}">
+          <span class="ico">{{ agent.avatar or "🤖" }}</span>
+          {{ agent.name }}
+          <span class="dot dot-{{ st }}" title="{{ st }}"></span>
+          {% if agent.uses_app_llm %}<span class="badge agent">app-llm</span>{% endif %}
+        </a>
+        {% if current_user.role == "superadmin" %}<details class="action-menu"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a><form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a></div></details>{% endif %}
+      </div>
     {% endfor %}
 
     <div class="spacer"></div>
     {% if current_user %}
       <details class="user-menu">
         <summary><div class="me"><span class="ava">{{ current_user.avatar or "🧑" }}</span> {{ current_user.name }}<span class="role">{{ current_user.role|replace('_', ' ') }}</span><span style="margin-left:auto">•••</span></div></summary>
-        <div class="menu-popover" style="bottom:46px;top:auto;right:8px;">{% if can_manage %}<a href="/management">Management</a>{% endif %}{% if can_add_human %}<a href="/management/humans/new">Add human</a>{% endif %}{% if current_user.role == "superadmin" %}<a href="/auth/agents/register">Register agent</a>{% endif %}</div>
+        <div class="menu-popover" style="bottom:46px;top:auto;right:8px;">{% if can_manage %}<a href="/management">Management</a>{% endif %}{% if can_add_human %}<a href="/management/humans/new">Add human</a>{% endif %}<a href="/auth/agents/register">Register agent</a></div>
       </details>
       <form method="post" action="/auth/logout" style="margin:0 8px 12px;">
         <button type="submit" style="width:100%;">Log out</button>

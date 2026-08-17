@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 crewspace = "crewspace:main"
 crewspace-mcp = "crewspace.infrastructure.mcp_server:main"
+crewspace-manage = "crewspace.management.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]

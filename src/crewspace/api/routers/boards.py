@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from ...domain.identifiers import DEFAULT_CHANNEL_ID, DEFAULT_BOARD_ID
 from ...domain.ports import UnitOfWork
 from ..connection import manager
-from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, UowDep
+from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import templates
 from ...application.services import BoardService, ChatService
 from ...application.access import require_board_access
@@ -17,8 +17,12 @@ router = APIRouter(prefix="/boards", tags=["board"])
 
 @router.get("/{board_id}", response_class=HTMLResponse)
 async def board_page(
-    request: Request, board_id: str, svc: BoardServiceDep, uow: UowDep, current_user: CurrentUserDep
-) -> HTMLResponse:
+    request: Request, board_id: str, svc: BoardServiceDep, uow: UowDep, current_user: CurrentUserOptionalDep
+) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     await require_board_access(current_user, board_id, uow)
     board = await svc.get_board(board_id, uow)
     if board is None:
@@ -32,9 +36,13 @@ async def board_page(
 @router.get("/{board_id}/columns/{column_id}", response_class=HTMLResponse)
 async def column_fragment(
     request: Request, board_id: str, column_id: str, svc: BoardServiceDep,
-    uow: UowDep, current_user: CurrentUserDep,
-) -> HTMLResponse:
+    uow: UowDep, current_user: CurrentUserOptionalDep,
+) -> Response:
     """Standalone single-column fragment (debug / inspection)."""
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     await require_board_access(current_user, board_id, uow)
     column = await svc.get_column(board_id, column_id, uow)
     if column is None:

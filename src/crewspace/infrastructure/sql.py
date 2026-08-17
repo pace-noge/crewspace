@@ -88,6 +88,24 @@ class SqlAlchemyConnection:
     async def rollback(self) -> None:
         await self._connection.rollback()
 
+    async def run_sync(self, fn) -> Any:
+        """Run a blocking callable with the underlying DBAPI connection.
+
+        Used by schema tooling (e.g. Alembic autogenerate) that needs raw
+        dialect access on the same connection. Some async drivers (aiosqlite)
+        do not propagate the callable's return value through ``run_sync``, so
+        we capture it via a container.
+        """
+        from typing import Any
+
+        result: dict[str, Any] = {}
+
+        def _wrap(connection):
+            result["value"] = fn(connection)
+
+        await self._connection.run_sync(_wrap)
+        return result.get("value")
+
 
 def _bind(
     statement: str, params: Sequence[Any] | Mapping[str, Any]

@@ -191,7 +191,8 @@ class SqlAlchemyAuthRepository:
         return (
             "id, kind, name, avatar, password_hash, "
             "CASE role WHEN 'admin' THEN 'superadmin' "
-            "WHEN 'member' THEN 'team_member' ELSE role END AS role"
+            "WHEN 'member' THEN 'team_member' ELSE role END AS role, "
+            "base_url, pubkey, backend, uses_app_llm"
         )
 
     async def _storage_role(self, role: str) -> str:
@@ -218,14 +219,15 @@ class SqlAlchemyAuthRepository:
         password: str | None,
         role: str,
         avatar: str | None = None,
+        uses_app_llm: int = 0,
     ) -> None:
         from ..security import hash_password
 
         phash = hash_password(password) if password else None
         role = await self._storage_role(role)
         await self._conn.execute(
-            "INSERT INTO member (id, kind, name, avatar, password_hash, role) VALUES (?, ?, ?, ?, ?, ?)",
-            (member_id, kind, name, avatar, phash, role),
+            "INSERT INTO member (id, kind, name, avatar, password_hash, role, uses_app_llm) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (member_id, kind, name, avatar, phash, role, uses_app_llm),
         )
 
     async def verify_password(self, member_id: str, password: str) -> bool:
@@ -258,11 +260,11 @@ class SqlAlchemyAuthRepository:
         await self._conn.execute("DELETE FROM session WHERE id = ?", (session_id,))
 
     async def register_member(
-        self, member_id: str, name: str, kind: str, avatar: str | None, role: str, base_url: str | None, pubkey: str | None = None, backend: str = "stub"
+        self, member_id: str, name: str, kind: str, avatar: str | None, role: str, base_url: str | None, pubkey: str | None = None, backend: str = "stub", uses_app_llm: int = 0
     ) -> None:
         await self._conn.execute(
-            "INSERT INTO member (id, kind, name, avatar, role, base_url, pubkey, backend) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (member_id, kind, name, avatar, role, base_url, pubkey, backend),
+            "INSERT INTO member (id, kind, name, avatar, role, base_url, pubkey, backend, uses_app_llm) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (member_id, kind, name, avatar, role, base_url, pubkey, backend, uses_app_llm),
         )
 
     async def get_pubkey(self, member_id: str) -> str | None:
@@ -275,7 +277,7 @@ class SqlAlchemyAuthRepository:
             "id, kind, name, avatar, "
             "CASE role WHEN 'admin' THEN 'superadmin' "
             "WHEN 'member' THEN 'team_member' ELSE role END AS role, "
-            "base_url, pubkey, backend"
+            "base_url, pubkey, backend, uses_app_llm"
         )
         if kind:
             cur = await self._conn.execute(

@@ -62,6 +62,20 @@ async def test_unmentioned_chat_does_not_route_to_connected_default_agent():
 
 
 @pytest.mark.asyncio
+async def test_disconnected_remote_agent_does_not_use_local_fallback():
+    provider = MultiAgentProvider(
+        {}, mentions={"remote": "agent_remote"}
+    )
+
+    agent_id, replies = await provider.on_chat_message(
+        "@remote please help", NullRunner()
+    )
+
+    assert agent_id == "agent_remote"
+    assert replies == ["⚠️ Agent agent_remote is offline."]
+
+
+@pytest.mark.asyncio
 async def test_connected_agent_receives_card_event_only_once():
     local = RecordingAgent()
     provider = MultiAgentProvider({"agent_planner": local})

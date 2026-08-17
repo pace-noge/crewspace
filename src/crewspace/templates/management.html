@@ -119,6 +119,20 @@
         {% else %}<p class="empty">No workspaces yet.</p>{% endfor %}
       </section>
       {% else %}<section class="panel empty">You do not belong to a team yet.</section>{% endfor %}
+      <section class="panel agents">
+        <h2>Agents</h2>
+        <p class="page-intro">Status shows whether each agent is connected over WebSocket, runs as a builtin app-LLM agent, or is a registered remote agent that is currently offline.</p>
+        {% if agents %}
+          {% for agent in agents %}
+          <div class="member-row">
+            <span>{{ agent.avatar or "🤖" }} {{ agent.name }}{% if agent.uses_app_llm %} <span class="badge agent">app-llm</span>{% endif %}</span>
+            <span class="inline-form">
+              <span class="badge">{% if agent_statuses.get(agent.id) == 'connected' %}🟢 connected{% elif agent_statuses.get(agent.id) == 'local' %}🔵 builtin (app-llm){% else %}🔴 disconnected{% endif %}</span>
+            </span>
+          </div>
+          {% endfor %}
+        {% else %}<p class="empty">No agents registered yet.</p>{% endif %}
+      </section>
       {% if archived_items %}<section class="panel team"><h2>Archived items</h2><p class="page-intro">Archived items keep their history and can be restored.</p>{% for item in archived_items %}<div class="member-row"><span>{{ item.name }} <span class="badge">{{ item.kind }}</span></span><span class="inline-form"><form method="post" action="/management/{{ item.collection }}/{{ item.id }}/restore"><button type="submit">Restore</button></form>{% if current_user.role == "superadmin" %}<a class="danger" href="/management/{{ item.collection }}/{{ item.id }}/delete">Delete permanently</a>{% endif %}</span></div>{% endfor %}</section>{% endif %}
     </main>
   </div>

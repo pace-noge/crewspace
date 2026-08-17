@@ -69,6 +69,17 @@ class AgentConnectionManager:
     def is_connected(self, agent_id: str) -> bool:
         return agent_id in self._conns
 
+    def status(self, agent_id: str, *, is_local: bool = False) -> str:
+        """Return ``connected``, ``local``, or ``disconnected`` for the UI.
+
+        Local/builtin agents have no public key and run in the main process.
+        Remote agents have a public key and are connected only while their live
+        WebSocket is present.
+        """
+        if self.is_connected(agent_id):
+            return "connected"
+        return "local" if is_local else "disconnected"
+
     def connected_agent_ids(self) -> set[str]:
         return set(self._conns)
 

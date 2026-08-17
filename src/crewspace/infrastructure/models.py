@@ -34,6 +34,12 @@ class MemberModel(Base):
     backend: Mapped[str] = mapped_column(
         String, nullable=False, default="stub", server_default="stub"
     )
+    # 1 marks a builtin agent that uses the main app's CREWSPACE_LLM_*
+    # credentials. Agent transport is identified separately: pubkey NULL means
+    # builtin/local; a non-NULL pubkey means a remote WebSocket agent.
+    uses_app_llm: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     archived_at: Mapped[str | None] = mapped_column(String)
 
 

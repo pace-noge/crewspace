@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 
 from ..application.services import BoardService, ChatService
 from ..application.tools import ToolRegistry, build_registry
@@ -83,3 +84,21 @@ async def get_current_user(request: Request, uow: UowDep) -> dict:
 
 
 CurrentUserDep = Annotated[dict, Depends(get_current_user)]
+
+# Optional variant for page routes: lets them redirect anonymous browsers to
+# the login page instead of raising a raw 401 JSON body.
+CurrentUserOptionalDep = Annotated[dict | None, Depends(get_current_member)]
+
+LOGIN_REDIRECT = "/auth/login"
+
+
+def require_member_redirect(current_user: dict | None) -> RedirectResponse | None:
+    """For HTML page routes: return a redirect to login if anonymous, else None.
+
+    Unauthenticated browsers hitting a page route should be sent to the login
+    page, not shown a ``401 {"detail":"Authentication required"}`` JSON body.
+    API/JSON endpoints keep using ``CurrentUserDep`` and continue to 401.
+    """
+    if current_user is None:
+        return RedirectResponse(LOGIN_REDIRECT, status_code=303)
+    return None

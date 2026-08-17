@@ -36,7 +36,7 @@ def _build_local_agent(member: MemberLike, settings: Settings) -> AgentProvider:
     — those are never stored in the database, so a DB/backup leak can't expose a key.
     """
     backend = member["backend"] if "backend" in member.keys() else "stub"
-    if backend == "llm" or settings.agent == "llm":
+    if backend == "llm":
         from .llm import LLMAgent
 
         from ...application.tools import build_registry
@@ -54,34 +54,51 @@ def _build_local_agent(member: MemberLike, settings: Settings) -> AgentProvider:
 
 
 class AgentRegistry:
-    """Builds providers for registered agent members.
+    """Build local providers and mention routing for registered agents.
 
-    ``local`` maps id -> in-process provider (used when the agent isn't dialed
-    in). Remote/connected agents are handled by the facade via ``agent_manager``.
+    Members without a public key are builtin/local and get an in-process
+    provider. Members with a public key are remote-only: they are routed over
+    WebSocket while connected and reported offline while disconnected.
     """
 
     @staticmethod
     async def build(settings: Settings, uow: UnitOfWork) -> "MultiAgentProvider":
         members = await uow.auth.list_members(kind="agent")
         local: dict[str, AgentProvider] = {}
-        for m in members:
-            local[m["id"]] = _build_local_agent(m, settings)
-        return MultiAgentProvider(local, default_agent_id=PLANNER_AGENT_ID)
+        mentions: dict[str, str] = {}
+        for member in members:
+            agent_id = member["id"]
+            mentions[member["name"].strip().lstrip("@").lower()] = agent_id
+            if not member["pubkey"]:
+                local[agent_id] = _build_local_agent(member, settings)
+        return MultiAgentProvider(
+            local, default_agent_id=PLANNER_AGENT_ID, mentions=mentions
+        )
 
 
 class MultiAgentProvider:
-    """Facade: routes chat to the mentioned agent (WS if connected, else local);
-    fans board events to every connected agent."""
+    """Route mentions to live remote agents or explicit builtin providers."""
 
-    def __init__(self, local: dict[str, AgentProvider], default_agent_id: str = PLANNER_AGENT_ID) -> None:
-        # id -> local in-process provider (fallback when the agent isn't connected)
+    def __init__(
+        self,
+        local: dict[str, AgentProvider],
+        default_agent_id: str = PLANNER_AGENT_ID,
+        mentions: dict[str, str] | None = None,
+    ) -> None:
+        # id -> explicit in-process provider (builtin/local agents only)
         self._local = local
-        # mention name (lower) -> agent id
-        self._by_mention: dict[str, str] = {}
-        for aid, prov in local.items():
-            name = getattr(prov, "name", aid)
-            self._by_mention[name.strip().lstrip("@").lower()] = aid
-        self._default_agent_id = default_agent_id if default_agent_id in local else next(iter(local), "")
+        # mention name (lower) -> agent id; includes disconnected remote agents.
+        if mentions is not None:
+            self._by_mention = dict(mentions)
+        else:
+            self._by_mention = {}
+            for aid, prov in local.items():
+                name = getattr(prov, "name", aid)
+                self._by_mention[name.strip().lstrip("@").lower()] = aid
+        all_ids = set(self._by_mention.values()) | set(local)
+        self._default_agent_id = (
+            default_agent_id if default_agent_id in all_ids else next(iter(all_ids), "")
+        )
 
     def _resolve(self, text: str) -> str | None:
         low = text.lower()

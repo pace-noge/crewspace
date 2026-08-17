@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ...application.access import manageable_teams
 from ...application.scheduling import (
@@ -13,7 +13,7 @@ from ...application.scheduling import (
     schedule_label,
 )
 from ..connection import manager
-from ..deps import CurrentUserDep, UowDep
+from ..deps import CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import navigation_context, templates
 
 router = APIRouter(prefix="/cronjobs", tags=["cronjobs"])
@@ -58,7 +58,11 @@ async def _context(request: Request, user: dict, uow, focused_id: str | None = N
 
 
 @router.get("", response_class=HTMLResponse)
-async def list_jobs(request: Request, current_user: CurrentUserDep, uow: UowDep):
+async def list_jobs(request: Request, current_user: CurrentUserOptionalDep, uow: UowDep) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     return templates.TemplateResponse(
         request=request, name="cronjobs.html",
         context=await _context(request, current_user, uow),
@@ -66,7 +70,11 @@ async def list_jobs(request: Request, current_user: CurrentUserDep, uow: UowDep)
 
 
 @router.get("/new", response_class=HTMLResponse)
-async def new_job(request: Request, current_user: CurrentUserDep, uow: UowDep):
+async def new_job(request: Request, current_user: CurrentUserOptionalDep, uow: UowDep) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     context = await _context(request, current_user, uow)
     context.update({"job": None, "form_title": "New scheduled instruction", "form_action": "/cronjobs"})
     return templates.TemplateResponse(request=request, name="cronjob_form.html", context=context)
@@ -119,7 +127,11 @@ async def _authorized_job(job_id: str, user: dict, uow, action: str):
 
 
 @router.get("/{job_id}/edit", response_class=HTMLResponse)
-async def edit_job(job_id: str, request: Request, current_user: CurrentUserDep, uow: UowDep):
+async def edit_job(job_id: str, request: Request, current_user: CurrentUserOptionalDep, uow: UowDep) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     job = await _authorized_job(job_id, current_user, uow, "edit")
     context = await _context(request, current_user, uow)
     context.update({"job": job, "form_title": "Edit scheduled instruction", "form_action": f"/cronjobs/{job.id}"})
@@ -176,8 +188,12 @@ async def delete_job(job_id: str, request: Request, current_user: CurrentUserDep
 
 @router.get("/{job_id}/history", response_class=HTMLResponse)
 async def job_history(
-    job_id: str, request: Request, current_user: CurrentUserDep, uow: UowDep
-):
+    job_id: str, request: Request, current_user: CurrentUserOptionalDep, uow: UowDep
+) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     job = await uow.scheduled_jobs.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Scheduled instruction not found")
@@ -190,7 +206,11 @@ async def job_history(
 
 
 @router.get("/{job_id}")
-async def legacy_job_detail(job_id: str, current_user: CurrentUserDep, uow: UowDep):
+async def legacy_job_detail(job_id: str, current_user: CurrentUserOptionalDep, uow: UowDep) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     await _authorized_job(job_id, current_user, uow, "view")
     return RedirectResponse(f"/cronjobs/{job_id}/history", status_code=307)
 
@@ -198,8 +218,12 @@ async def legacy_job_detail(job_id: str, current_user: CurrentUserDep, uow: UowD
 @router.get("/{job_id}/runs/{run_id}", response_class=HTMLResponse)
 async def run_detail(
     job_id: str, run_id: str, request: Request,
-    current_user: CurrentUserDep, uow: UowDep,
-):
+    current_user: CurrentUserOptionalDep, uow: UowDep,
+) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
     job = await uow.scheduled_jobs.get(job_id)
     run = await uow.scheduled_jobs.get_run(run_id)
     if job is None or run is None or run.job_id != job.id:

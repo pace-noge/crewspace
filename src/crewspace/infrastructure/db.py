@@ -7,6 +7,7 @@ protocols and remain backend-neutral.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from ..config import Settings
@@ -31,6 +33,9 @@ from .repositories import (
 )
 from .lifecycle import SqlAlchemyLifecycleRepository
 from .sql import SqlAlchemyConnection
+
+
+logger = logging.getLogger("crewspace.db")
 
 
 class SqlAlchemyUnitOfWork:
@@ -82,12 +87,19 @@ class Database:
         return db
 
     @staticmethod
-    def _upgrade_schema(database_url: str) -> None:
+    def _upgrade_schema(database_url: str) -> str:
         root = Path(__file__).resolve().parents[3]
         config = Config(str(root / "alembic.ini"))
         config.set_main_option("script_location", str(root / "migrations"))
         config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+        # The application owns logging when Alembic is invoked programmatically;
+        # direct ``alembic`` CLI invocations still use alembic.ini.
+        config.attributes["configure_logger"] = False
+        logger.info("Running database migrations (Alembic head)...")
         command.upgrade(config, "head")
+        revision = ScriptDirectory.from_config(config).get_current_head() or "(unknown)"
+        logger.info("Database migration finished; schema is at revision %s.", revision)
+        return revision
 
     @classmethod
     async def _normalize_legacy_sqlite(cls, settings: Settings) -> None:
@@ -138,16 +150,17 @@ class Database:
                     CHECK (role IN ('superadmin','engineering_manager','team_member','agent')),
                 base_url TEXT, pubkey TEXT,
                 backend TEXT NOT NULL DEFAULT 'stub' CHECK (backend IN ('stub','llm')),
+                uses_app_llm INTEGER NOT NULL DEFAULT 0,
                 archived_at TEXT
                 )"""
             )
             await conn.execute(
                 """INSERT INTO member_new
-                (id,kind,name,avatar,password_hash,role,base_url,pubkey,backend,archived_at)
+                (id,kind,name,avatar,password_hash,role,base_url,pubkey,backend,uses_app_llm,archived_at)
                 SELECT id,kind,name,avatar,password_hash,
                     CASE role WHEN 'admin' THEN 'superadmin'
                               WHEN 'member' THEN 'team_member' ELSE role END,
-                    base_url,pubkey,backend,archived_at FROM member"""
+                    base_url,pubkey,backend,0,archived_at FROM member"""
             )
             await conn.execute("DROP TABLE member")
             await conn.execute("ALTER TABLE member_new RENAME TO member")
@@ -321,10 +334,10 @@ async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") ->
 
     # Members must precede creator-owned rows because PostgreSQL enforces FKs.
     await conn.executemany(
-        "INSERT INTO member (id, kind, name, avatar, password_hash, role) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO member (id, kind, name, avatar, password_hash, role, uses_app_llm) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [
-            (user_id, "human", "Bilal", "🧑", hash_password(admin_password), "superadmin"),
-            (agent_id, "agent", "Planner", "🤖", None, "agent"),
+            (user_id, "human", "Bilal", "🧑", hash_password(admin_password), "superadmin", 0),
+            (agent_id, "agent", "Planner", "🤖", None, "agent", 0),
         ],
     )
     await conn.execute(

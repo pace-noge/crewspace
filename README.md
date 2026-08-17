@@ -59,12 +59,20 @@ export CREWSPACE_DATABASE_URL="postgresql+asyncpg://user:password@localhost:5432
 uv run crewspace
 ```
 
-Alembic owns schema evolution:
+Alembic owns schema evolution; the Django-style management CLI wraps the common workflows:
 
 ```bash
-uv run alembic -c alembic.ini upgrade head   # apply migrations
-uv run alembic -c alembic.ini revision --autogenerate -m "change"
+uv run alembic -c alembic.ini upgrade head         # apply migrations
+uv run crewspace-manage makemigrations --check     # CI: fail on model/DB drift
+uv run crewspace-manage makemigrations --name change  # generate a revision
+
+uv run crewspace-manage createsuperuser             # interactive superadmin
+uv run crewspace-manage changepassword Bilal --password new-secret --no-input
 ```
+
+`makemigrations --check` is strict on PostgreSQL. On SQLite it checks structural
+changes (tables/columns) while ignoring SQLite reflection noise for text types,
+nullability, checks, and FK options.
 
 Existing SQLite databases keep their data: on startup the legacy schema is
 normalized, then Alembic stamps the baseline revision. The repository contracts
