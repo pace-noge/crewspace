@@ -76,3 +76,52 @@ async def _tool_registry():
     from crewspace.application.tools import build_registry
 
     return build_registry()
+
+
+@pytest.mark.asyncio
+async def test_builtin_assistant_uses_thread_context():
+    """The builtin agent must see prior conversation and ground its answer in it.
+
+    We seed a short thread, then ask the agent to summarize it. A real app-LLM
+    reply should reference the seeded content (proving context was supplied),
+    and must NOT be the stub fallback or an error.
+    """
+    from crewspace.domain.identifiers import DEFAULT_CHANNEL_ID
+
+    settings = Settings(db_path=str(Path(tempfile.mkdtemp()) / "ctx.db"))
+    assert settings.llm_api_key, "llm_api_key should come from CREWSPACE_LLM_API_KEY"
+
+    database = await Database.create(settings)
+    try:
+        async with database.uow() as uow:
+            # Seed a thread root + one reply so there is history to summarize.
+            root = await uow.chat.add_message(DEFAULT_CHANNEL_ID, "user_bilal", "Plan the launch", None)
+            await uow.chat.add_message(DEFAULT_CHANNEL_ID, "user_bilal", "Email the team", root.id)
+            await uow.commit()
+
+            runner = (await _tool_registry()).bind(uow)
+            registry = await AgentRegistry.build(settings, uow)
+
+            # Agent replies live in a thread under the human message; build the
+            # same context the live service would (whole thread) and ask to summarize.
+            history = await uow.chat.list_thread(root.id)
+            context = [
+                {"role": "assistant" if m.author_kind == "agent" else "user",
+                 "name": m.author_name, "content": m.body}
+                for m in history
+            ]
+            agent_id, replies = await registry.on_chat_message(
+                f"@crewspace summarize this thread", runner, context=context
+            )
+    finally:
+        await database.close()
+
+    assert agent_id == BUILTIN_ASSISTANT_ID
+    assert replies, "builtin assistant returned no reply"
+    body = " ".join(replies)
+    assert "Mention `@crewspace help`" not in body, "stub provider used, not app LLM"
+    assert not body.startswith("⚠️"), f"builtin assistant errored: {body}"
+    # Context flowed: the reply should echo at least one seeded phrase.
+    assert "launch" in body.lower() or "email" in body.lower(), (
+        f"agent reply did not reference the thread context: {body!r}"
+    )

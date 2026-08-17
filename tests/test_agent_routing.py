@@ -97,7 +97,7 @@ async def test_chat_commits_human_message_before_waiting_for_agent(app, monkeypa
     observed: dict[str, bool] = {}
 
     class Provider:
-        async def on_chat_message(self, text, runner):
+        async def on_chat_message(self, text, runner, context=None):
             async with app.state.db.uow() as other:
                 row = await (
                     await other._conn.execute(

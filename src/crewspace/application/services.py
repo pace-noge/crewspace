@@ -68,8 +68,13 @@ class ChatService:
             await on_human_persisted(human_dto)
         runner = self._registry.bind(uow)
         provider = await AgentRegistry.build(self._settings, uow)
+        # Build conversation context so the agent can reason over history
+        # (e.g. summarize a thread or pull action items). A thread reply sees
+        # the whole thread; a channel message sees recent channel history.
+        context = await self._build_context(uow, channel_id, thread_id, human.id)
         agent_id, replies = await provider.on_chat_message(
-            agent_routable_text(routing_text if routing_text is not None else body), runner
+            agent_routable_text(routing_text if routing_text is not None else body), runner,
+            context=context,
         )
         # Agent answers live in a thread under the human message so the main
         # timeline stays uncluttered (the prior decision: agents reply in thread).
@@ -83,6 +88,30 @@ class ChatService:
             for r in replies if agent_id
         ]
         return [human_dto, *[to_message(a) for a in agent_msgs]]
+
+    async def _build_context(
+        self, uow: UnitOfWork, channel_id: str, thread_id: str | None, current_id: str
+    ) -> list[dict[str, str]]:
+        """Recent conversation the agent should be able to reference.
+
+        Returns up to ~20 prior messages as {"role", "name", "content"} dicts,
+        newest first is NOT required — the LLM agent reorders them. The just
+        sent message (current_id) is excluded since it is the user's prompt.
+        """
+        history: list
+        if thread_id:
+            history = await uow.chat.list_thread(thread_id)
+        else:
+            history = await uow.chat.list_messages(channel_id, limit=20)
+        context: list[dict[str, str]] = []
+        for m in history:
+            if m.id == current_id:
+                continue
+            role = "assistant" if m.author_kind == "agent" else "user"
+            context.append(
+                {"role": role, "name": m.author_name, "content": m.body}
+            )
+        return context
 
 
 class BoardService:

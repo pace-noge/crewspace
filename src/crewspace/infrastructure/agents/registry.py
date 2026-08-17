@@ -112,7 +112,9 @@ class MultiAgentProvider:
         a typing indicator before the (possibly slow) agent response arrives."""
         return self._resolve(text)
 
-    async def on_chat_message(self, text: str, runner: ToolRunner) -> tuple[str, list[str]]:
+    async def on_chat_message(
+        self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None
+    ) -> tuple[str, list[str]]:
         aid = self._resolve(text)
         if not aid:
             return ("", [])
@@ -120,7 +122,7 @@ class MultiAgentProvider:
         if agent_manager.is_connected(aid):
             try:
                 reply = await agent_manager.send_and_wait(
-                    aid, {"type": "chat", "agent_id": aid, "text": text}
+                    aid, {"type": "chat", "agent_id": aid, "text": text, "context": context or []}
                 )
                 return (aid, [reply] if reply else [])
             except Exception as exc:
@@ -129,7 +131,7 @@ class MultiAgentProvider:
         local = self._local.get(aid)
         if local is None:
             return (aid, [f"⚠️ Agent {aid} is offline."])
-        return await local.on_chat_message(text, runner)
+        return await local.on_chat_message(text, runner, context=context)
 
     async def on_card_created(self, card: Any, runner: ToolRunner) -> None:
         # Push the new-card event to every CONNECTED agent (Buzz-style fan-out);

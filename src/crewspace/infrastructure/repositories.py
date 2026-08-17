@@ -56,16 +56,29 @@ class SqlAlchemyChatRepository:
     def __init__(self, conn: SqlAlchemyConnection) -> None:
         self._conn = conn
 
-    async def list_messages(self, channel_id: str) -> list[MessageView]:
-        cur = await self._conn.execute(
-            """
-            SELECT m.id, m.channel_id, m.author_id, m.body, m.created_at, m.thread_id,
-                   mem.name AS author_name, mem.kind AS author_kind, mem.avatar
-            FROM message m JOIN member mem ON mem.id = m.author_id
-            WHERE m.channel_id = ? AND m.thread_id IS NULL ORDER BY m.created_at ASC
-            """,
-            (channel_id,),
-        )
+    async def list_messages(self, channel_id: str, limit: int | None = None) -> list[MessageView]:
+        if limit is None:
+            cur = await self._conn.execute(
+                """
+                SELECT m.id, m.channel_id, m.author_id, m.body, m.created_at, m.thread_id,
+                       mem.name AS author_name, mem.kind AS author_kind, mem.avatar
+                FROM message m JOIN member mem ON mem.id = m.author_id
+                WHERE m.channel_id = ? AND m.thread_id IS NULL ORDER BY m.created_at ASC
+                """,
+                (channel_id,),
+            )
+        else:
+            cur = await self._conn.execute(
+                """
+                SELECT * FROM (
+                    SELECT m.id, m.channel_id, m.author_id, m.body, m.created_at, m.thread_id,
+                           mem.name AS author_name, mem.kind AS author_kind, mem.avatar
+                    FROM message m JOIN member mem ON mem.id = m.author_id
+                    WHERE m.channel_id = ? AND m.thread_id IS NULL ORDER BY m.created_at DESC LIMIT ?
+                ) ORDER BY created_at ASC
+                """,
+                (channel_id, limit),
+            )
         return [
             MessageView(
                 id=r["id"],
