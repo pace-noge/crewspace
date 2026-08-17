@@ -198,6 +198,55 @@ def test_tools_endpoint_lists_registry(client):
         assert "properties" in t["input_schema"]
 
 
+def test_mentioning_agent_replies_in_a_thread(client):
+    with client.websocket_connect("/channels/chan_general/ws") as ws:
+        ws.send_json({"body": "@planner help"})
+        # A typing frame may arrive first; read past it to the real messages.
+        human = agent = None
+        for _ in range(6):
+            msg = ws.receive_json()
+            if msg.get("type") == "typing":
+                continue
+            if human is None:
+                human = msg
+            else:
+                agent = msg
+                break
+        assert human is not None and agent is not None
+        assert human["body"] == "@planner help"
+        assert human["thread_id"] is None
+
+        # Agent's answer is threaded under the human message (keeps the main
+        # timeline uncluttered) rather than landing inline in the channel.
+        assert agent["author_kind"] == "agent"
+        assert agent["thread_id"] == human["id"]
+
+    # The threaded agent reply is excluded from the main timeline...
+    timeline = client.get("/channels/chan_general/messages").json()
+    assert any(m["id"] == human["id"] for m in timeline)
+    assert not any(m["id"] == agent["id"] for m in timeline)
+    # ...but it shows up as a reply in the human message's thread.
+    thread = client.get(f"/channels/chan_general/threads/{human['id']}").json()
+    assert any(m["id"] == agent["id"] for m in thread)
+
+
+def test_typing_indicator_frame_is_emitted_before_agent_reply(client):
+    with client.websocket_connect("/channels/chan_general/ws") as ws:
+        ws.send_json({"body": "@planner help"})
+        seen = []
+        for _ in range(10):
+            msg = ws.receive_json()
+            seen.append(msg)
+            if msg.get("author_kind") == "agent":
+                break
+        types = [m.get("type") for m in seen]
+        # A typing frame (author_id set, no body) precedes the agent's message.
+        assert "typing" in types
+        typing = next(m for m in seen if m.get("type") == "typing")
+        assert typing["author_id"] == "agent_planner"
+        assert any(m.get("author_kind") == "agent" for m in seen)
+
+
 def test_websocket_agent_new_card(client):
     with client.websocket_connect("/channels/chan_general/ws") as ws:
         ws.send_json({"author_id": "user_bilal", "body": '@planner new card "WS test card" in Todo'})
@@ -207,7 +256,7 @@ def test_websocket_agent_new_card(client):
             seen.append(msg)
             if "Created card" in msg.get("body", ""):
                 break
-        bodies = [m["body"] for m in seen]
+        bodies = [m["body"] for m in seen if "body" in m]
         assert any("Created card" in b for b in bodies)
         board = client.get("/board/board_main").text
         assert "WS test card" in board
@@ -224,11 +273,20 @@ def test_can_open_direct_message_with_agent_and_send_without_mention(client):
     assert "Direct message" in page.text
     assert "Planner" in page.text
 
-    channel_id = channel_url.rsplit("/", 1)[-1]
+    channel_id = channel_url.rsplit("/")[-1]
     with client.websocket_connect(f"/channels/{channel_id}/ws") as ws:
         ws.send_json({"body": "help"})
-        human = ws.receive_json()
-        agent = ws.receive_json()
+        # A typing frame may arrive first; read past it to the real messages.
+        human = agent = None
+        for _ in range(6):
+            msg = ws.receive_json()
+            if msg.get("type") == "typing":
+                continue
+            if human is None:
+                human = msg
+            else:
+                agent = msg
+                break
 
     assert human["body"] == "help"
     assert agent["author_id"] == "agent_planner"

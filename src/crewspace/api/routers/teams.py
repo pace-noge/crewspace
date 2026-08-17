@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...domain.entities import ChannelType, TeamMembership, TeamRole
 from ...application.access import can_manage_team, manageable_teams
+from ...domain.identifiers import BUILTIN_ASSISTANT_ID
 from ..deps import CurrentUserDep, UowDep, WorkspaceServiceDep
 from ..rendering import navigation_context, templates
 from ..connection import agent_manager
@@ -121,6 +122,8 @@ async def archive_entity(
     collection: str, entity_id: str, current_user: CurrentUserDep, uow: UowDep
 ) -> RedirectResponse:
     kind, _ = await _lifecycle_entity(collection, entity_id, current_user, uow)
+    if kind == "agent" and entity_id == BUILTIN_ASSISTANT_ID:
+        raise HTTPException(status_code=403, detail="The builtin assistant cannot be archived or deleted")
     if kind == "agent":
         await agent_manager.close(entity_id)
     await uow.lifecycle.set_archived(kind, entity_id, True)
@@ -133,6 +136,8 @@ async def restore_entity(
     collection: str, entity_id: str, current_user: CurrentUserDep, uow: UowDep
 ) -> RedirectResponse:
     kind, _ = await _lifecycle_entity(collection, entity_id, current_user, uow)
+    if kind == "agent" and entity_id == BUILTIN_ASSISTANT_ID:
+        raise HTTPException(status_code=403, detail="The builtin assistant cannot be archived or deleted")
     await uow.lifecycle.set_archived(kind, entity_id, False)
     await uow.commit()
     return RedirectResponse("/management", status_code=303)
@@ -146,6 +151,12 @@ async def delete_entity_page(
     if current_user["role"] != "superadmin":
         raise HTTPException(status_code=403, detail="Only superadmins can permanently delete")
     kind, entity = await _lifecycle_entity(collection, entity_id, current_user, uow)
+    if kind == "agent" and entity_id == BUILTIN_ASSISTANT_ID:
+        raise HTTPException(status_code=403, detail="The builtin assistant cannot be deleted")
+    # Return the user to the page they came from when they cancel, rather than
+    # always landing on Team Management. Only trust same-origin paths.
+    referer = request.headers.get("referer")
+    back = referer if referer and referer.startswith("/") else "/management"
     return templates.TemplateResponse(
         request=request, name="delete_confirm.html",
         context={
@@ -153,6 +164,7 @@ async def delete_entity_page(
             "agents": await uow.auth.list_members(kind="agent"),
             "kind": kind, "collection": collection, "entity": entity,
             "counts": await uow.lifecycle.dependency_counts(kind, entity_id),
+            "back": back,
             **await navigation_context(uow, current_user),
         },
     )
@@ -161,18 +173,21 @@ async def delete_entity_page(
 @router.post("/{collection}/{entity_id}/delete")
 async def delete_entity(
     collection: str, entity_id: str, current_user: CurrentUserDep, uow: UowDep,
-    confirmation: str = Form(...),
+    confirmation: str = Form(...), back: str = Form(None),
 ) -> RedirectResponse:
     if current_user["role"] != "superadmin":
         raise HTTPException(status_code=403, detail="Only superadmins can permanently delete")
     kind, entity = await _lifecycle_entity(collection, entity_id, current_user, uow)
+    if kind == "agent" and entity_id == BUILTIN_ASSISTANT_ID:
+        raise HTTPException(status_code=403, detail="The builtin assistant cannot be deleted")
     if confirmation.strip() != entity["name"]:
         raise HTTPException(status_code=422, detail="Confirmation name does not match")
     if kind == "agent":
         await agent_manager.close(entity_id)
     await uow.lifecycle.delete_permanently(kind, entity_id)
     await uow.commit()
-    return RedirectResponse("/management", status_code=303)
+    redirect_to = back if back and back.startswith("/") else "/management"
+    return RedirectResponse(redirect_to, status_code=303)
 
 
 async def _workspace_form_context(

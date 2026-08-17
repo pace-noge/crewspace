@@ -59,8 +59,12 @@ def test_run_now_posts_instruction_and_executes_mentioned_agent(client, app):
     assert "Last run succeeded" in run.text
 
     messages = client.get("/channels/chan_general/messages").json()
-    assert any(m["body"] == '@planner new card "Scheduled card" in Todo' for m in messages)
-    assert any("Created card" in m["body"] and "Scheduled card" in m["body"] for m in messages)
+    instruction = next(
+        m for m in messages if m["body"] == '@planner new card "Scheduled card" in Todo'
+    )
+    # The agent's answer is threaded under the instruction message.
+    thread = client.get(f"/channels/chan_general/threads/{instruction['id']}").json()
+    assert any("Created card" in m["body"] and "Scheduled card" in m["body"] for m in thread)
 
     async def card_exists():
         async with app.state.db.uow() as uow:

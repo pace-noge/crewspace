@@ -11,6 +11,9 @@ depend only on the domain ports + DTO boundary — no agent class is imported he
 """
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, PLANNER_AGENT_ID
 from ..domain.ports import UnitOfWork
 from ..dto.board import BoardDTO, CardDTO, ColumnDTO, CommentDTO
@@ -50,21 +53,36 @@ class ChatService:
     async def post_and_respond(
         self, channel_id: str, author_id: str, body: str, uow: UnitOfWork,
         thread_id: str | None = None, routing_text: str | None = None,
+        on_agent_resolved: "Callable[[str], Awaitable[None]] | None" = None,
+        on_human_persisted: "Callable[[MessageDTO], Awaitable[None]] | None" = None,
     ) -> list[MessageDTO]:
         """Persist the human message, route to the mentioned agent, persist its replies."""
         human = await uow.chat.add_message(channel_id, author_id, body, thread_id)
         # Release SQLite's writer lock before any local/remote agent network wait.
         # The inbound message remains durable even when the agent is unavailable.
         await uow.commit()
+        human_dto = to_message(human)
+        # Echo the human message immediately so the sender sees their own text
+        # right away (the agent reply arrives later, in its own frame).
+        if on_human_persisted is not None:
+            await on_human_persisted(human_dto)
         runner = self._registry.bind(uow)
         provider = await AgentRegistry.build(self._settings, uow)
         agent_id, replies = await provider.on_chat_message(
             agent_routable_text(routing_text if routing_text is not None else body), runner
         )
+        # Agent answers live in a thread under the human message so the main
+        # timeline stays uncluttered (the prior decision: agents reply in thread).
+        # Direct messages have no threads, so they stay inline there.
+        is_dm = channel_id.startswith("dm_")
+        reply_thread_id = thread_id if thread_id else (None if is_dm else human.id)
+        if on_agent_resolved is not None and agent_id and replies:
+            await on_agent_resolved(agent_id)
         agent_msgs = [
-            await uow.chat.add_message(channel_id, agent_id, r, thread_id) for r in replies if agent_id
+            await uow.chat.add_message(channel_id, agent_id, r, reply_thread_id)
+            for r in replies if agent_id
         ]
-        return [to_message(human), *[to_message(a) for a in agent_msgs]]
+        return [human_dto, *[to_message(a) for a in agent_msgs]]
 
 
 class BoardService:

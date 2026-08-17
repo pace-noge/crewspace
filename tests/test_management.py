@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 
+from crewspace.infrastructure.db import Database
+
 
 def test_superadmin_sees_management_navigation(client):
     response = client.get("/")
@@ -470,6 +472,20 @@ def test_lifecycle_controls_are_post_forms_and_delete_has_dedicated_page(client)
     assert 'action="/management/workspaces/ws_default/archive"' in workspace.text
 
 
+def test_permanent_delete_cancel_returns_to_referrer(client):
+    # Arrive at the confirm page as if we clicked "Delete" from a channel page.
+    page = client.get(
+        "/management/channels/chan_general/delete",
+        headers={"Referer": "/channels/chan_general"},
+    )
+    assert page.status_code == 200
+    # Cancel link points back to the page we came from, not Team Management.
+    assert '<a class="cancel" href="/channels/chan_general">Cancel</a>' in page.text
+    # A missing/foreign referer safely falls back to Team Management.
+    no_ref = client.get("/management/channels/chan_general/delete")
+    assert '<a class="cancel" href="/management">Cancel</a>' in no_ref.text
+
+
 def test_superadmin_can_delete_workspace_cascade(client):
     response = client.post(
         "/management/workspaces/ws_default/delete",
@@ -608,3 +624,42 @@ def test_non_superadmin_cannot_create_builtin_app_llm_agent(client, app):
         "/auth/agents/register", data={"name": "Cheater", "uses_app_llm": "1"}
     )
     assert blocked.status_code == 403
+
+
+def test_builtin_assistant_is_seeded_protected_and_self_healing(client, app):
+    from crewspace.domain.identifiers import BUILTIN_ASSISTANT_ID
+
+    async def fetch():
+        async with app.state.db.uow() as uow:
+            return await uow.auth.get_member(BUILTIN_ASSISTANT_ID)
+
+    member = asyncio.run(fetch())
+    assert member is not None
+    assert member["name"] == "Crewspace"
+    assert member["uses_app_llm"] == 1
+    assert member["pubkey"] is None
+
+    # Cannot be deleted or archived, even by the superadmin.
+    assert client.get(f"/management/agents/{BUILTIN_ASSISTANT_ID}/delete").status_code == 403
+    assert client.post(
+        f"/management/agents/{BUILTIN_ASSISTANT_ID}/delete", data={"confirmation": "Crewspace"}
+    ).status_code == 403
+    assert client.post(
+        f"/management/agents/{BUILTIN_ASSISTANT_ID}/archive"
+    ).status_code == 403
+
+    # If removed directly from the database, it is re-created on next startup.
+    async def delete_and_restart():
+        async with app.state.db.uow() as uow:
+            await uow.lifecycle.delete_permanently("agent", BUILTIN_ASSISTANT_ID)
+            await uow.commit()
+        await app.state.db.close()
+        restarted = await Database.create(app.state.settings)
+        async with restarted.uow() as uow:
+            member = await uow.auth.get_member(BUILTIN_ASSISTANT_ID)
+        await restarted.close()
+        return member
+
+    restored = asyncio.run(delete_and_restart())
+    assert restored is not None
+    assert restored["name"] == "Crewspace"

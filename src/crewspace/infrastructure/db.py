@@ -7,16 +7,19 @@ protocols and remain backend-neutral.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from ..config import Settings
 from ..domain.ports import UnitOfWork
@@ -68,7 +71,16 @@ class Database:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         assert settings.database_url is not None
-        self.engine: AsyncEngine = create_async_engine(settings.database_url)
+        kwargs: dict[str, Any] = {}
+        # SQLite (the default local/dev backend) serializes writers on a single
+        # file, so concurrent requests race for the write lock
+        # ("database is locked"). A generous busy timeout lets writers queue
+        # instead of failing. We also switch SQLite into WAL journal mode (see
+        # Database.create) so a writer and readers can coexist. This branch is
+        # skipped for PostgreSQL, which keeps its default pool and semantics.
+        if settings.database_url.startswith("sqlite+"):
+            kwargs["connect_args"] = {"timeout": 30}
+        self.engine: AsyncEngine = create_async_engine(settings.database_url, **kwargs)
 
     @classmethod
     async def create(cls, settings: Settings) -> "Database":
@@ -81,6 +93,11 @@ class Database:
 
         db = cls(settings)
         async with db.engine.connect() as raw:
+            # SQLite: enable WAL so a writer and readers can run concurrently
+            # and "database is locked" is far less likely under async load.
+            # No-op for PostgreSQL (the dialect ignores the pragma).
+            if settings.database_url.startswith("sqlite+"):
+                await raw.exec_driver_sql("PRAGMA journal_mode=WAL")
             conn = SqlAlchemyConnection(raw)
             await _seed_if_needed(conn, settings.seed_admin_password)
             await raw.commit()
@@ -303,8 +320,63 @@ async def _seed_if_needed(conn: SqlAlchemyConnection, admin_password: str = "adm
     team_row = await (await conn.execute("SELECT COUNT(*) AS n FROM team")).fetchone()
     member_row = await (await conn.execute("SELECT COUNT(*) AS n FROM member")).fetchone()
     if (team_row and team_row["n"] > 0) or (member_row and member_row["n"] > 0):
+        await _ensure_builtin_assistant(conn)
         return
     await _seed(conn, admin_password)
+
+
+async def _ensure_builtin_assistant(conn: SqlAlchemyConnection) -> None:
+    """Idempotently guarantee the non-deletable builtin assistant exists.
+
+    Runs on every startup so the assistant can never be removed (even if someone
+    deletes the row directly), and is re-added with the same fixed id.
+    """
+    from ..domain.identifiers import BUILTIN_ASSISTANT_ID
+
+    existing = await (await conn.execute(
+        "SELECT COUNT(*) AS n FROM member WHERE id = ? AND kind = 'agent'",
+        (BUILTIN_ASSISTANT_ID,),
+    )).fetchone()
+    if existing and existing["n"] > 0:
+        # Self-heal: ensure the builtin assistant is an app-LLM agent (a row may
+        # have been seeded/imported with the wrong backend, which would route it
+        # to the stub and produce canned replies instead of real LLM answers).
+        await conn.execute(
+            "UPDATE member SET backend = 'llm', uses_app_llm = 1 "
+            "WHERE id = ? AND kind = 'agent'",
+            (BUILTIN_ASSISTANT_ID,),
+        )
+        return
+
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    await conn.execute(
+        "INSERT INTO member (id, kind, name, avatar, password_hash, role, backend, uses_app_llm) "
+        "VALUES (?, 'agent', 'Crewspace', '🛟', NULL, 'agent', 'llm', 1)",
+        (BUILTIN_ASSISTANT_ID,),
+    )
+    # Re-attach to the seeded team/workspace/channel so it can see and act.
+    team = await (await conn.execute("SELECT id FROM team LIMIT 1")).fetchone()
+    ws = await (await conn.execute("SELECT id FROM workspace LIMIT 1")).fetchone()
+    chan = await (await conn.execute("SELECT id FROM channel LIMIT 1")).fetchone()
+    if team:
+        await conn.execute(
+            "INSERT OR IGNORE INTO team_member (team_id, member_id, role, joined_at) "
+            "VALUES (?, ?, 'member', ?)",
+            (team["id"], BUILTIN_ASSISTANT_ID, now),
+        )
+    if ws:
+        await conn.execute(
+            "INSERT OR IGNORE INTO workspace_member (workspace_id, member_id, role, joined_at) "
+            "VALUES (?, ?, 'member', ?)",
+            (ws["id"], BUILTIN_ASSISTANT_ID, now),
+        )
+    if chan:
+        await conn.execute(
+            "INSERT OR IGNORE INTO channel_member "
+            "(channel_id, member_id, role, joined_at, invited_by, is_invitation_pending) "
+            "VALUES (?, ?, 'member', ?, ?, 0)",
+            (chan["id"], BUILTIN_ASSISTANT_ID, now, team["id"] if team else None),
+        )
 
 
 async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") -> None:
@@ -321,6 +393,7 @@ async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") ->
     ws_id = "ws_default"
     user_id = "user_bilal"
     agent_id = "agent_planner"
+    builtin_id = "agent_crewspace"
     chan_id = "chan_general"
     board_id = "board_main"
     
@@ -334,10 +407,11 @@ async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") ->
 
     # Members must precede creator-owned rows because PostgreSQL enforces FKs.
     await conn.executemany(
-        "INSERT INTO member (id, kind, name, avatar, password_hash, role, uses_app_llm) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO member (id, kind, name, avatar, password_hash, role, backend, uses_app_llm) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            (user_id, "human", "Bilal", "🧑", hash_password(admin_password), "superadmin", 0),
-            (agent_id, "agent", "Planner", "🤖", None, "agent", 0),
+            (user_id, "human", "Bilal", "🧑", hash_password(admin_password), "superadmin", "stub", 0),
+            (agent_id, "agent", "Planner", "🤖", None, "agent", "stub", 0),
+            (builtin_id, "agent", "Crewspace", "🛟", None, "agent", "llm", 1),
         ],
     )
     await conn.execute(
@@ -355,6 +429,7 @@ async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") ->
         [
             (team_id, user_id, "leader", now),
             (team_id, agent_id, "member", now),
+            (team_id, builtin_id, "member", now),
         ],
     )
     
@@ -364,6 +439,7 @@ async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") ->
         [
             (ws_id, user_id, "admin", now),
             (ws_id, agent_id, "member", now),
+            (ws_id, builtin_id, "member", now),
         ],
     )
     
@@ -374,7 +450,7 @@ async def _seed(conn: SqlAlchemyConnection, admin_password: str = "admin123") ->
     )
     
     # Add members to channel
-    for mid in (user_id, agent_id):
+    for mid in (user_id, agent_id, builtin_id):
         await conn.execute(
             "INSERT INTO channel_member (channel_id, member_id, role, joined_at, invited_by, is_invitation_pending) VALUES (?, ?, ?, ?, ?, ?)",
             (chan_id, mid, "member", now, user_id, 0),

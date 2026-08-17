@@ -107,6 +107,11 @@ class MultiAgentProvider:
                 return aid
         return None
 
+    def resolve(self, text: str) -> str | None:
+        """Which agent would answer `text` (without invoking it) — used to show
+        a typing indicator before the (possibly slow) agent response arrives."""
+        return self._resolve(text)
+
     async def on_chat_message(self, text: str, runner: ToolRunner) -> tuple[str, list[str]]:
         aid = self._resolve(text)
         if not aid:

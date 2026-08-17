@@ -17,8 +17,9 @@
   </div>
   <p>Type <strong>{{ entity.name }}</strong> to confirm.</p>
   <form method="post" action="/management/{{ collection }}/{{ entity.id }}/delete">
+    <input type="hidden" name="back" value="{{ back }}">
     <label>Confirmation name<input name="confirmation" required autocomplete="off"></label>
-    <div class="actions"><a class="cancel" href="/management">Cancel</a><button class="danger" type="submit">Permanently delete</button></div>
+    <div class="actions"><a class="cancel" href="{{ back }}">Cancel</a><button class="danger" type="submit">Permanently delete</button></div>
   </form>
 </section></div>
 {% endblock %}

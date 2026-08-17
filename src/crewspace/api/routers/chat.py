@@ -128,8 +128,22 @@ async def chat_ws(
                         if direct_peer is not None and direct_peer["kind"] == "agent"
                         else None
                     ),
+                    # Broadcast a typing indicator the moment we know which agent
+                    # will answer (before the possibly-slow agent call runs).
+                    on_agent_resolved=lambda aid: manager.broadcast(
+                        channel_id,
+                        {"type": "typing", "author_id": aid, "channel_id": channel_id},
+                    ),
+                    on_human_persisted=lambda human_dto: manager.broadcast(
+                        channel_id, human_dto.model_dump(mode="json")
+                    ),
                 )
             for m in new_msgs:
+                # The human message was already broadcast immediately on
+                # persist (via on_human_persisted); skip it here to avoid a
+                # duplicate frame. Agent replies are always broadcast.
+                if m is new_msgs[0] and m.author_kind != "agent":
+                    continue
                 await manager.broadcast(channel_id, m.model_dump(mode="json"))
     except WebSocketDisconnect:
         pass

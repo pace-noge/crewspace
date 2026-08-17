@@ -128,6 +128,7 @@
             <span>{{ agent.avatar or "🤖" }} {{ agent.name }}{% if agent.uses_app_llm %} <span class="badge agent">app-llm</span>{% endif %}</span>
             <span class="inline-form">
               <span class="badge">{% if agent_statuses.get(agent.id) == 'connected' %}🟢 connected{% elif agent_statuses.get(agent.id) == 'local' %}🔵 builtin (app-llm){% else %}🔴 disconnected{% endif %}</span>
+              {% if agent.id == 'agent_crewspace' %}<span class="badge agent">🔒 protected</span>{% endif %}
             </span>
           </div>
           {% endfor %}

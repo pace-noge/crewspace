@@ -15,7 +15,7 @@
     a { color: var(--accent); text-decoration: none; }
 
     /* Sidebar */
-    .sidebar { width: 220px; flex: 0 0 220px; background: var(--bg-elev); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+    .sidebar { width: 260px; flex: 0 0 260px; background: var(--bg-elev); border-right: 1px solid var(--border); padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; position: relative; z-index: 30; }
     .sidebar .brand { font-weight: 700; letter-spacing: .02em; margin: 4px 8px 14px; font-size: 15px; }
     .sidebar .brand small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
     .nav-group { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 12px 8px 4px; }
@@ -32,12 +32,14 @@
     .workspace-nav { margin-top: 6px; }
     .workspace-row, .channel-row { display: flex; align-items: center; gap: 4px; }
     .workspace-name { flex: 1; padding: 7px 8px; font-weight: 650; color: var(--text); }
-    .channel-row .nav-link { flex: 1; padding: 6px 10px 6px 18px; }
+    .channel-row .nav-link { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 10px 6px 18px; }
+    .channel-row .badge, .channel-row details.action-menu { flex: 0 0 auto; }
+    .channel-row .badge { white-space: nowrap; }
     details.action-menu { position: relative; }
     details.action-menu > summary { list-style: none; cursor: pointer; border-radius: 6px; padding: 3px 7px; color: var(--muted); }
     details.action-menu > summary::-webkit-details-marker, .user-menu > summary::-webkit-details-marker { display: none; }
     details.action-menu > summary:hover { background: var(--surface); color: var(--text); }
-    .menu-popover { position: absolute; z-index: 20; right: 0; top: 28px; min-width: 180px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 28px #0008; }
+    .menu-popover { position: absolute; z-index: 1000; right: 0; top: 28px; min-width: 180px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 28px #0008; }
     .menu-popover a { display: block; padding: 7px 9px; border-radius: 6px; color: var(--text); white-space: nowrap; }
     .menu-popover a:hover { background: var(--border); }
     .user-menu { position: relative; margin-top: 5px; }
@@ -109,12 +111,11 @@
       {% set st = agent_statuses.get(agent.id, 'disconnected') %}
       <div class="channel-row">
         <a class="nav-link" href="/direct/{{ agent.id }}">
+          <span class="dot dot-{{ st }}" title="{{ st }}"></span>
           <span class="ico">{{ agent.avatar or "🤖" }}</span>
           {{ agent.name }}
-          <span class="dot dot-{{ st }}" title="{{ st }}"></span>
-          {% if agent.uses_app_llm %}<span class="badge agent">app-llm</span>{% endif %}
         </a>
-        {% if current_user.role == "superadmin" %}<details class="action-menu"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a><form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a></div></details>{% endif %}
+        {% if current_user.role == "superadmin" %}<details class="action-menu"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a>{% if agent.id != "agent_crewspace" %}<form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a>{% else %}<span class="locked">🔒 builtin · protected</span>{% endif %}</div></details>{% endif %}
       </div>
     {% endfor %}
 

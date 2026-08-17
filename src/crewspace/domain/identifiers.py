@@ -9,6 +9,10 @@ DEFAULT_WORKSPACE_ID = "ws_default"
 DEFAULT_BOARD_ID = "board_main"
 DEFAULT_CHANNEL_ID = "chan_general"
 PLANNER_AGENT_ID = "agent_planner"
+# The always-present builtin assistant that runs inside the main app using the
+# server's CREWSPACE_LLM_* credentials. It is intentionally non-deletable and
+# acts on the workspace through the main app's tool registry.
+BUILTIN_ASSISTANT_ID = "agent_crewspace"
 HUMAN_USER_ID = "user_bilal"
 
 # Lowercased column name -> seeded column id (used by agent commands).
