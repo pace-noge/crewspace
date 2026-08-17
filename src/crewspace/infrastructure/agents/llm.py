@@ -37,7 +37,12 @@ def _system_prompt(name: str) -> str:
         "Earlier messages in the conversation are supplied as prior turns. Use them "
         "as context: when asked to summarize a thread or conversation, or to extract "
         "action items / decisions / open questions, ground your answer in those "
-        "messages rather than asking the user to repeat them."
+        "messages rather than asking the user to repeat them.\n\n"
+        "Boards: you do NOT need to ask the user for a board id. If a board-related "
+        "tool is called without a board_id, the system uses the caller's single "
+        "board automatically. If the caller has several boards (e.g. a manager or "
+        "admin), call list_boards to see them (name + id) and either pick the right "
+        "one or ask the user which board they mean — present the names, not raw ids."
     )
 
 

@@ -43,3 +43,18 @@ async def require_board_access(user: dict, board_id: str, uow: UnitOfWork) -> No
 
     if not await can_access_board(user, board_id, uow):
         raise HTTPException(status_code=404, detail="board not found")
+
+
+async def list_accessible_boards(user: dict, uow: UnitOfWork) -> list[dict[str, str]]:
+    """Boards the principal may act on, as {id, name, team} dicts.
+
+    Superadmin sees every board; everyone else sees only boards whose
+    workspace they belong to. Used by the agent so it can resolve "the board"
+    without asking for an id, and so higher-tier roles (superadmin /
+    engineering_manager) can be shown the menu of boards they manage.
+    """
+    if user["role"] == "superadmin":
+        boards = await uow.boards.list_all()
+    else:
+        boards = await uow.boards.list_for_member(user["id"])
+    return [{"id": b.id, "name": b.name, "team": b.team_name or ""} for b in boards]

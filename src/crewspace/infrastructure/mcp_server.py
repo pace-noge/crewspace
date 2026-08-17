@@ -87,9 +87,13 @@ def build_mcp_server(settings: Settings | None = None) -> MCPServer:
         # Build a signature: each schema property becomes an explicit param,
         # optional ones default to None so the LLM/agent can omit them.
         param_decls = []
-        arg_names = []
-        for pname, pspec in props.items():
-            arg_names.append(pname)
+        # Python requires parameters without defaults before parameters with
+        # defaults. JSON Schema property order is not semantic, so sort the
+        # required names first before generating the function signature.
+        arg_names = [
+            pname for pname in props if pname in required
+        ] + [pname for pname in props if pname not in required]
+        for pname in arg_names:
             default = " = None" if pname not in required else ""
             param_decls.append(f"{pname}: str{default}")
         sig = ", ".join(param_decls)

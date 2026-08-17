@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from ...domain.entities import CardView
-from ...domain.identifiers import DEFAULT_BOARD_ID, COLUMN_IDS
+from ...domain.identifiers import COLUMN_IDS
 from ...domain.ports import AgentProvider, ToolRunner
 
 HELP_TEXT = (
@@ -45,7 +45,7 @@ class StubAgent:
             return (self.agent_id, [f"Created card «{res['title']}» in {m.group(2).title()}."])
         m = re.search(r'move\s+"([^"]+)"\s+to\s+(todo|doing|done)', t, re.I)
         if m:
-            card = await runner.run("find_card", board_id=DEFAULT_BOARD_ID, title=m.group(1))
+            card = await runner.run("find_card", board_id=None, title=m.group(1))
             if not card:
                 return (self.agent_id, [f"Couldn't find a card named «{m.group(1)}»."])
             moved = await runner.run("move_card", card_id=card["id"], column_id=COLUMN_IDS[m.group(2).lower()])

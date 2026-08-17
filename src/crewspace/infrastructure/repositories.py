@@ -989,6 +989,44 @@ class SqlAlchemyBoardRepository:
             board.columns.append(await self._column_with_cards(col))
         return board
 
+    async def list_all(self) -> list[BoardView]:
+        cur = await self._conn.execute(
+            """
+            SELECT b.id, b.workspace_id, b.name, t.name AS team_name
+            FROM board b
+            JOIN workspace w ON w.id = b.workspace_id
+            LEFT JOIN team t ON t.id = w.team_id
+            ORDER BY b.name ASC
+            """
+        )
+        return [
+            BoardView(
+                id=r["id"], workspace_id=r["workspace_id"], name=r["name"],
+                team_name=r["team_name"],
+            )
+            for r in await cur.fetchall()
+        ]
+
+    async def list_for_member(self, member_id: str) -> list[BoardView]:
+        cur = await self._conn.execute(
+            """
+            SELECT b.id, b.workspace_id, b.name, t.name AS team_name
+            FROM board b
+            JOIN workspace w ON w.id = b.workspace_id
+            LEFT JOIN team t ON t.id = w.team_id
+            JOIN workspace_member wm ON wm.workspace_id = w.id AND wm.member_id = ?
+            ORDER BY b.name ASC
+            """,
+            (member_id,),
+        )
+        return [
+            BoardView(
+                id=r["id"], workspace_id=r["workspace_id"], name=r["name"],
+                team_name=r["team_name"],
+            )
+            for r in await cur.fetchall()
+        ]
+
     async def get_board_id_for_column(self, column_id: str) -> str | None:
         row = await (
             await self._conn.execute(

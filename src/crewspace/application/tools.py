@@ -17,6 +17,7 @@ from typing import Any
 
 from ..domain.identifiers import DEFAULT_BOARD_ID, PLANNER_AGENT_ID
 from ..domain.ports import ToolRunner, UnitOfWork
+from .access import list_accessible_boards
 
 
 @dataclass
@@ -77,6 +78,35 @@ def build_registry() -> ToolRegistry:
         if not principal or not await can_access_board(principal, board_id, uow):
             raise PermissionError("Principal cannot access this board")
 
+    async def resolve_board_id(
+        uow: UnitOfWork, principal_id: str | None, board_id: str | None
+    ) -> str:
+        """Pick the board to act on, or explain the options.
+
+        - Explicit ``board_id`` is used as-is (caller must still pass scope check).
+        - When omitted: a principal with exactly one accessible board gets it
+          automatically (so single-team members never need to supply an id).
+          A principal with several boards (e.g. superadmin / engineering_manager)
+          gets a message listing them (name + id) so the agent can ask which.
+        """
+        if board_id:
+            return board_id
+        if principal_id is None:
+            # System/agent actions without a principal fall back to the default board.
+            return DEFAULT_BOARD_ID
+        principal = await uow.auth.get_member(principal_id)
+        if not principal:
+            return DEFAULT_BOARD_ID
+        boards = await list_accessible_boards(principal, uow)
+        if len(boards) == 1:
+            return boards[0]["id"]
+        names = ", ".join(f"{b['name']} ({b['id']})" for b in boards)
+        if not boards:
+            raise PermissionError("You have no boards available to act on.")
+        raise PermissionError(
+            "Multiple boards are available — specify which one. " + names
+        )
+
     async def require_channel_scope(
         uow: UnitOfWork, principal_id: str | None, channel_id: str
     ) -> None:
@@ -114,16 +144,32 @@ def build_registry() -> ToolRegistry:
         c = await uow.boards.add_comment(card_id, principal_id or author_id or PLANNER_AGENT_ID, body)
         return {"id": c.id, "card_id": c.card_id, "body": c.body}
 
-    async def find_card(uow: UnitOfWork, principal_id: str | None, board_id: str, title: str) -> dict | None:
+    async def find_card(uow: UnitOfWork, principal_id: str | None, title: str, board_id: str | None = None) -> dict | None:
+        board_id = await resolve_board_id(uow, principal_id, board_id)
         await require_board_scope(uow, principal_id, board_id)
         card = await uow.boards.find_card_by_title(board_id, title)
         if card is None:
             return None
         return {"id": card.id, "title": card.title, "column_id": card.column_id}
 
-    async def list_columns(uow: UnitOfWork, principal_id: str | None, board_id: str) -> dict:
+    async def list_columns(uow: UnitOfWork, principal_id: str | None, board_id: str | None = None) -> dict:
+        board_id = await resolve_board_id(uow, principal_id, board_id)
         await require_board_scope(uow, principal_id, board_id)
         return await uow.boards.list_columns(board_id)
+
+    async def list_boards(uow: UnitOfWork, principal_id: str | None) -> list[dict]:
+        """List the boards available to the caller (id + name + team).
+
+        Call this when a board task needs a target and you don't already know
+        which board — e.g. to let a multi-board user pick, or to confirm the
+        single board you'll act on.
+        """
+        if principal_id is None:
+            return []
+        principal = await uow.auth.get_member(principal_id)
+        if not principal:
+            return []
+        return await list_accessible_boards(principal, uow)
 
     async def post_message(uow: UnitOfWork, principal_id: str | None, channel_id: str, body: str, author_id: str | None = None) -> dict:
         await require_channel_scope(uow, principal_id, channel_id)
@@ -191,25 +237,32 @@ def build_registry() -> ToolRegistry:
         comment_card,
     ))
     reg.register(Tool(
-        "find_card", "Find a card by its title within a board",
+        "find_card", "Find a card by its title within a board. If no board_id is given, the agent uses the caller's single board automatically, or lists available boards when there are several.",
         {
             "type": "object",
             "properties": {
-                "board_id": {"type": "string"},
+                "board_id": {"type": "string", "description": "Optional board id. Omit to use the caller's default board or be shown the available boards."},
                 "title": {"type": "string"},
             },
-            "required": ["board_id", "title"],
+            "required": ["title"],
         },
         find_card,
     ))
     reg.register(Tool(
-        "list_columns", "List a board's columns (id + name)",
+        "list_columns", "List a board's columns (id + name). If no board_id is given, the agent uses the caller's single board automatically, or lists available boards when there are several.",
         {
             "type": "object",
-            "properties": {"board_id": {"type": "string"}},
-            "required": ["board_id"],
+            "properties": {"board_id": {"type": "string", "description": "Optional board id. Omit to use the caller's default board or be shown the available boards."}},
         },
         list_columns,
+    ))
+    reg.register(Tool(
+        "list_boards", "List the boards available to you (id, name, and team). Call this when a board task needs a target and you don't know which board to use, or to let a multi-board user pick one.",
+        {
+            "type": "object",
+            "properties": {},
+        },
+        list_boards,
     ))
     reg.register(Tool(
         "post_message", "Post a chat message to a channel",

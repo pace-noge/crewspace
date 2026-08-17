@@ -91,6 +91,12 @@ class BoardRepository(Protocol):
     async def get_board_id_for_card(self, card_id: str) -> str | None:
         ...
 
+    async def list_all(self) -> "list[BoardView]":
+        """All boards (superadmin scope)."""
+
+    async def list_for_member(self, member_id: str) -> "list[BoardView]":
+        """Boards whose workspace the member belongs to (joined with team name)."""
+
     async def add_card(
         self, column_id: str, title: str, description: str | None = None, actor_id: str | None = None
     ) -> CardView:

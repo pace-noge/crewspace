@@ -240,6 +240,7 @@ class BoardView:
     id: str
     workspace_id: str
     name: str
+    team_name: str | None = None
     columns: list[ColumnView] = field(default_factory=list)
 
 
