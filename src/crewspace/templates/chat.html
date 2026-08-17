@@ -61,7 +61,19 @@
 
   function formatTime(value) {
     if (!value) return "now";
-    return new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"}).format(new Date(value));
+    const date = new Date(value);
+    const now = new Date();
+    const sameDay =
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate();
+    // Today: time only. Past (or future) days: include the date.
+    const time = new Intl.DateTimeFormat([], {hour:"numeric", minute:"2-digit"}).format(date);
+    if (sameDay) return time;
+    const dateOpts = {month:"short", day:"numeric"};
+    if (date.getFullYear() !== now.getFullYear()) dateOpts.year = "numeric";
+    const datePart = new Intl.DateTimeFormat([], dateOpts).format(date);
+    return `${datePart}, ${time}`;
   }
   function messageElement(m, allowReply=true) {
     const own=m.author_id===currentMemberId;
@@ -70,13 +82,13 @@
     const content=document.createElement("div"); content.className="msg-content";
     const header=document.createElement("div"); header.className="msg-header";
     const author=document.createElement("span"); author.className="msg-author"; author.textContent=m.author_name;
-    const time=document.createElement("time"); time.className="msg-time"; time.textContent=formatTime(m.created_at);
+    const time=document.createElement("time"); time.className="msg-time"; time.textContent=formatTime(m.created_at); time.dateTime=m.created_at||""; time.title=m.created_at||"";
     const body=document.createElement("div"); body.className="msg-body"; body.innerHTML=m.rendered_body;
     body.querySelectorAll("a").forEach(link=>{link.target="_blank";link.rel="noopener noreferrer";});
     const engagement=document.createElement("div");engagement.className="engagement-row";
     const reactions=document.createElement("div");reactions.className="reaction-row";
     const threadSummary=document.createElement("button");threadSummary.type="button";threadSummary.className="thread-summary";threadSummary.dataset.threadId=m.id;setReplyCount(threadSummary,m.reply_count||0);threadSummary.addEventListener("click",()=>openThread(m.id));
-    engagement.append(reactions,threadSummary);content.append(header,body,engagement);row.append(avatar,content);
+    engagement.append(reactions,threadSummary);header.append(author,time);content.append(header,body,engagement);row.append(avatar,content);
     if(allowReply){
       const actions=document.createElement("div");actions.className="message-actions";
       ["👍","❤️","😂","🎉"].forEach(emoji=>{const button=document.createElement("button");button.className="message-action";button.type="button";button.title=`React ${emoji}`;button.textContent=emoji;button.addEventListener("click",()=>toggleReaction(m.id,emoji,reactions));actions.appendChild(button);});
