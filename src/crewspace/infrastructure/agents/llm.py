@@ -33,7 +33,11 @@ def _system_prompt(name: str) -> str:
         "When the user asks you to do something on the board (create/move a card, "
         "comment, post a message), call the matching tool. Otherwise reply in "
         "plain, friendly chat. Never invent tool-argument ids you were not given; "
-        "use find_card/list_columns to resolve titles to ids. Keep replies short."
+        "use find_card/list_columns to resolve titles to ids. Keep replies short.\n\n"
+        "Earlier messages in the conversation are supplied as prior turns. Use them "
+        "as context: when asked to summarize a thread or conversation, or to extract "
+        "action items / decisions / open questions, ground your answer in those "
+        "messages rather than asking the user to repeat them."
     )
 
 
@@ -112,7 +116,9 @@ class LLMAgent:
 
     # --- protocol ----------------------------------------------------------
 
-    async def on_chat_message(self, text: str, runner: ToolRunner) -> tuple[str, list[str]]:
+    async def on_chat_message(
+        self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None
+    ) -> tuple[str, list[str]]:
         from openai import APIError
 
         # Only react when *this* agent is mentioned (multi-agent routing).
@@ -120,8 +126,15 @@ class LLMAgent:
             return (self.agent_id, [])
 
         client = self._make_client()
+        # Prior conversation turns (thread or channel history) come first so the
+        # model can summarize / extract action items from what was actually said.
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": _system_prompt(self.name)},
+            *[
+                {"role": c.get("role", "user"), "name": c.get("name", "user"), "content": c["content"]}
+                for c in (context or [])
+                if c.get("content")
+            ],
             {"role": "user", "content": text},
         ]
         openai_tools = _to_openai_tools(self._tools)

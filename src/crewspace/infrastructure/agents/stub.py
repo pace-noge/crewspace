@@ -31,7 +31,9 @@ class StubAgent:
     def hears(self, text: str) -> bool:
         return bool(re.search(rf"@{re.escape(self._mention)}\b", text, re.I))
 
-    async def on_chat_message(self, text: str, runner: ToolRunner) -> tuple[str, list[str]]:
+    async def on_chat_message(
+        self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None
+    ) -> tuple[str, list[str]]:
         t = text.strip()
         if not self.hears(t):
             return (self.agent_id, [])
