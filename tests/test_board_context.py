@@ -110,3 +110,18 @@ async def test_list_accessible_boards_count(settings):
         assert set(ids) == {DEFAULT_BOARD_ID, "board_second"}
     finally:
         await db.close()
+
+
+@pytest.mark.asyncio
+async def test_list_boards_without_principal_exposes_boards(settings):
+    # The MCP server binds the runner WITHOUT a principal (agent/system context).
+    # list_boards must still surface the boards (names only) rather than return [].
+    db = await _make_db(settings)
+    try:
+        async with db.uow() as uow:
+            reg = build_registry()
+            runner = reg.bind(uow)  # no principal_id
+            boards = await runner.run("list_boards")
+        assert any(b["id"] == DEFAULT_BOARD_ID for b in boards)
+    finally:
+        await db.close()

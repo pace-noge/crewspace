@@ -160,12 +160,16 @@ def build_registry() -> ToolRegistry:
     async def list_boards(uow: UnitOfWork, principal_id: str | None) -> list[dict]:
         """List the boards available to the caller (id + name + team).
 
-        Call this when a board task needs a target and you don't already know
-        which board — e.g. to let a multi-board user pick, or to confirm the
-        single board you'll act on.
+        Call this when a board task needs a target and you don't know which board
+        to use, or to let a multi-board user pick one.
         """
         if principal_id is None:
-            return []
+            # Agent / system context with no specific human principal: surface
+            # every board (board *names* only — actual card/column reads stay
+            # scope-checked by can_access_board). This keeps list_boards useful
+            # for the MCP server, which binds the runner without a principal.
+            boards = await uow.boards.list_all()
+            return [{"id": b.id, "name": b.name, "team": b.team_name or ""} for b in boards]
         principal = await uow.auth.get_member(principal_id)
         if not principal:
             return []
