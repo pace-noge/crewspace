@@ -44,6 +44,10 @@
       </section>
       {% if current_user.role == "superadmin" %}
       <section class="panel">
+        <div class="team-head"><h2>Platform tools</h2><details class="action-menu"><summary aria-label="Platform tools actions">•••</summary><div class="menu-popover"><a href="/management/mcp">MCP connections</a><a href="/management/tools/runs">Tool execution history</a></div></details></div>
+        <p class="page-intro">Configure external tool providers and inspect agent tool activity.</p>
+      </section>
+      <section class="panel">
         <h2>Create team</h2>
         <form class="stack" method="post" action="/management/teams">
           <label>Team name<input name="name" required placeholder="Platform engineering"></label>

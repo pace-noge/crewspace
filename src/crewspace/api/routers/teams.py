@@ -1,13 +1,18 @@
 """Management UI for teams, workspaces, channels, humans, and agents."""
 from __future__ import annotations
 
+import datetime as dt
+import uuid
+
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ...domain.entities import ChannelType, TeamMembership, TeamRole
+from ...domain.entities import ChannelType, McpConnection, TeamMembership, TeamRole
 from ...application.access import can_manage_team, manageable_teams
 from ...application.agent_tool_policy import AgentToolPolicyService
+from ...application.mcp_connections import McpConnectionService, discover_mcp_tools
 from ...application.tools import build_registry
+from ...infrastructure.mcp_client import build_external_discovery_client
 from ...domain.identifiers import BUILTIN_ASSISTANT_ID
 from ..deps import CurrentUserDep, UowDep, WorkspaceServiceDep
 from ..rendering import navigation_context, templates
@@ -86,6 +91,13 @@ async def _render_dashboard(request: Request, current_user: dict, uow: UowDep, *
 
 def _forbidden(exc: PermissionError) -> HTTPException:
     return HTTPException(status_code=403, detail=str(exc))
+
+
+def _require_superadmin(current_user: dict) -> None:
+    if current_user["role"] != "superadmin":
+        raise HTTPException(
+            status_code=403, detail="Only superadmins can manage MCP connections"
+        )
 
 
 LIFECYCLE_KINDS = {
@@ -578,6 +590,160 @@ async def remove_channel_member(
     await uow.channels.remove_member(channel_id, member_id)
     await uow.commit()
     return await _render_dashboard(request, current_user, uow)
+
+
+@router.get("/mcp", response_class=HTMLResponse)
+async def mcp_connections_page(
+    request: Request, current_user: CurrentUserDep, uow: UowDep,
+):
+    _require_superadmin(current_user)
+    return templates.TemplateResponse(
+        request=request,
+        name="mcp_connections.html",
+        context={
+            "request": request,
+            "current_user": current_user,
+            "connections": await uow.mcp_connections.list_connections(),
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
+@router.get("/mcp/new", response_class=HTMLResponse)
+async def new_mcp_connection_page(
+    request: Request, current_user: CurrentUserDep, uow: UowDep,
+):
+    _require_superadmin(current_user)
+    return templates.TemplateResponse(
+        request=request,
+        name="mcp_connection_form.html",
+        context={
+            "request": request,
+            "current_user": current_user,
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
+@router.post("/mcp")
+async def create_mcp_connection(
+    current_user: CurrentUserDep,
+    uow: UowDep,
+    name: str = Form(...),
+    namespace: str = Form(...),
+    endpoint: str = Form(...),
+    auth_secret_ref: str = Form(default=""),
+):
+    _require_superadmin(current_user)
+    now = dt.datetime.now(dt.timezone.utc)
+    connection = McpConnection(
+        id=f"mcp_{uuid.uuid4().hex}",
+        name=name.strip(),
+        namespace=namespace,
+        transport="streamable_http",
+        endpoint_or_command=endpoint,
+        auth_secret_ref=auth_secret_ref.strip() or None,
+        created_by=current_user["id"],
+        created_at=now,
+        updated_at=now,
+    )
+    if not connection.name:
+        raise HTTPException(status_code=422, detail="MCP connection name is required")
+    try:
+        await McpConnectionService().create(connection, uow)
+        await uow.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return RedirectResponse(f"/management/mcp/{connection.id}", status_code=303)
+
+
+@router.get("/mcp/{connection_id}", response_class=HTMLResponse)
+async def mcp_connection_page(
+    request: Request,
+    connection_id: str,
+    current_user: CurrentUserDep,
+    uow: UowDep,
+):
+    _require_superadmin(current_user)
+    connection = await uow.mcp_connections.get(connection_id)
+    if connection is None:
+        raise HTTPException(status_code=404, detail="MCP connection not found")
+    return templates.TemplateResponse(
+        request=request,
+        name="mcp_connection.html",
+        context={
+            "request": request,
+            "current_user": current_user,
+            "connection": connection,
+            "tools": await uow.mcp_connections.list_discovered_tools(connection_id),
+            "has_secret_ref": connection.auth_secret_ref is not None,
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
+@router.post("/mcp/{connection_id}/discover")
+async def discover_mcp_connection_tools(
+    connection_id: str,
+    current_user: CurrentUserDep,
+    uow: UowDep,
+):
+    _require_superadmin(current_user)
+    connection = await uow.mcp_connections.get(connection_id)
+    if connection is None:
+        raise HTTPException(status_code=404, detail="MCP connection not found")
+    try:
+        client = await build_external_discovery_client(connection)
+        await discover_mcp_tools(connection, uow, client=client)
+        await uow.commit()
+    except (KeyError, RuntimeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="MCP discovery failed. Check the server configuration and provider.",
+        ) from exc
+    return RedirectResponse(f"/management/mcp/{connection_id}", status_code=303)
+
+
+@router.post("/mcp/{connection_id}/enabled")
+async def update_mcp_connection_enabled(
+    connection_id: str,
+    current_user: CurrentUserDep,
+    uow: UowDep,
+    enabled: str = Form(...),
+):
+    _require_superadmin(current_user)
+    normalized = enabled.strip().lower()
+    if normalized not in {"true", "false"}:
+        raise HTTPException(status_code=422, detail="Invalid MCP enabled state")
+    try:
+        await uow.mcp_connections.set_enabled(
+            connection_id, normalized == "true"
+        )
+        await uow.commit()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(f"/management/mcp/{connection_id}", status_code=303)
+
+
+@router.post("/mcp/{connection_id}/tools/{tool_name}/approval")
+async def update_mcp_tool_approval(
+    connection_id: str,
+    tool_name: str,
+    current_user: CurrentUserDep,
+    uow: UowDep,
+    state: str = Form(...),
+):
+    _require_superadmin(current_user)
+    if state not in {"approved", "pending", "disabled"}:
+        raise HTTPException(status_code=422, detail="Invalid MCP tool approval state")
+    try:
+        await uow.mcp_connections.set_tool_approval_state(
+            connection_id, tool_name, state
+        )
+        await uow.commit()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return RedirectResponse(f"/management/mcp/{connection_id}", status_code=303)
 
 
 @router.get("/tools/runs", response_class=HTMLResponse)

@@ -49,6 +49,8 @@ class McpConnectionService:
         self, connection: McpConnection, uow: UnitOfWork,
     ) -> McpConnection:
         connection.namespace = normalize_mcp_namespace(connection.namespace)
+        if await uow.mcp_connections.get_by_namespace(connection.namespace) is not None:
+            raise ValueError(f"MCP namespace {connection.namespace!r} is already in use")
         if connection.transport not in _TRANSPORTS:
             raise ValueError(f"Unsupported MCP transport {connection.transport!r}")
         endpoint = connection.endpoint_or_command.strip()

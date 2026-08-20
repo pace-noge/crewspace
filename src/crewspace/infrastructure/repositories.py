@@ -440,6 +440,26 @@ class SqlAlchemyMcpConnectionRepository:
         )).fetchone()
         return self._map_connection(row) if row else None
 
+    async def get_by_namespace(self, namespace: str) -> McpConnection | None:
+        row = await (await self._conn.execute(
+            "SELECT * FROM mcp_connection WHERE namespace=?", (namespace,)
+        )).fetchone()
+        return self._map_connection(row) if row else None
+
+    async def list_connections(self) -> list[McpConnection]:
+        rows = await (await self._conn.execute(
+            "SELECT * FROM mcp_connection ORDER BY name, id"
+        )).fetchall()
+        return [self._map_connection(row) for row in rows]
+
+    async def set_enabled(self, connection_id: str, enabled: bool) -> None:
+        result = await self._conn.execute(
+            "UPDATE mcp_connection SET enabled=?, updated_at=? WHERE id=?",
+            (int(enabled), _iso(dt.datetime.now(dt.timezone.utc)), connection_id),
+        )
+        if result.rowcount == 0:
+            raise KeyError(f"Unknown MCP connection {connection_id!r}")
+
     async def upsert_discovered_tool(self, tool: McpDiscoveredTool) -> None:
         schema = json.dumps(tool.input_schema, sort_keys=True, separators=(",", ":"))
         fingerprint_payload = json.dumps(
