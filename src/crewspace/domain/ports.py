@@ -325,6 +325,12 @@ class WorkflowRepository(Protocol):
 
 
 @runtime_checkable
+class AgentPolicyRepository(Protocol):
+    async def list_enabled_native_tools(self, agent_id: str) -> set[str]: ...
+    async def replace_native_tools(self, agent_id: str, tool_names: set[str]) -> None: ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Bundles repositories over one consistent storage session."""
 
@@ -337,6 +343,7 @@ class UnitOfWork(Protocol):
     lifecycle: Any
     scheduled_jobs: ScheduledJobRepository
     workflows: WorkflowRepository
+    agent_policies: AgentPolicyRepository
 
     async def commit(self) -> None:
         ...

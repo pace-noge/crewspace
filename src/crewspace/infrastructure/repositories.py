@@ -306,6 +306,36 @@ class SqlAlchemyAuthRepository:
         return list(await cur.fetchall())
 
 
+class SqlAlchemyAgentPolicyRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    async def list_enabled_native_tools(self, agent_id: str) -> set[str]:
+        cur = await self._conn.execute(
+            "SELECT tool_name FROM agent_tool_permission "
+            "WHERE agent_id=? AND provider_type='native' "
+            "AND provider_id='crewspace' AND enabled=1",
+            (agent_id,),
+        )
+        return {row["tool_name"] for row in await cur.fetchall()}
+
+    async def replace_native_tools(self, agent_id: str, tool_names: set[str]) -> None:
+        await self._conn.execute(
+            "DELETE FROM agent_tool_permission WHERE agent_id=? "
+            "AND provider_type='native' AND provider_id='crewspace'",
+            (agent_id,),
+        )
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        for tool_name in sorted(tool_names):
+            await self._conn.execute(
+                "INSERT INTO agent_tool_permission "
+                "(agent_id, provider_type, provider_id, tool_name, enabled, "
+                "approval_mode, created_at, updated_at) "
+                "VALUES (?, 'native', 'crewspace', ?, 1, 'automatic', ?, ?)",
+                (agent_id, tool_name, now, now),
+            )
+
+
 class SqlAlchemyScheduledJobRepository:
     def __init__(self, conn: SqlAlchemyConnection) -> None:
         self._conn = conn

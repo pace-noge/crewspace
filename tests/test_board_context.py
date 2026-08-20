@@ -53,7 +53,7 @@ async def test_single_board_auto_resolves_without_id(settings):
     try:
         async with db.uow() as uow:
             reg = build_registry()
-            runner = reg.bind(uow, principal_id="user_bilal")
+            runner = reg.bind_trusted(uow, principal_id="user_bilal")
             # No board_id supplied; with exactly one board it must resolve
             # automatically instead of asking for an id.
             result = await runner.run("find_card", title="Does not exist", board_id=None)
@@ -68,7 +68,7 @@ async def test_list_boards_returns_callers_boards(settings):
     try:
         async with db.uow() as uow:
             reg = build_registry()
-            runner = reg.bind(uow, principal_id="user_bilal")
+            runner = reg.bind_trusted(uow, principal_id="user_bilal")
             boards = await runner.run("list_boards")
         ids = {b["id"] for b in boards}
         assert DEFAULT_BOARD_ID in ids
@@ -83,7 +83,7 @@ async def test_multi_board_lists_options_instead_of_guessing(settings):
         async with db.uow() as uow:
             await _seed_second_board(db, uow)
             reg = build_registry()
-            runner = reg.bind(uow, principal_id="user_bilal")
+            runner = reg.bind_trusted(uow, principal_id="user_bilal")
             # Two boards now accessible with no board_id -> the agent is shown
             # the menu (a PermissionError whose message lists the boards).
             try:
@@ -120,7 +120,7 @@ async def test_list_boards_without_principal_exposes_boards(settings):
     try:
         async with db.uow() as uow:
             reg = build_registry()
-            runner = reg.bind(uow)  # no principal_id
+            runner = reg.bind_trusted(uow)  # no principal_id
             boards = await runner.run("list_boards")
         assert any(b["id"] == DEFAULT_BOARD_ID for b in boards)
     finally:

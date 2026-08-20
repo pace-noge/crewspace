@@ -47,7 +47,14 @@ async def test_builtin_assistant_replies_via_app_llm():
     try:
         async with database.uow() as uow:
             registry = await AgentRegistry.build(settings, uow)
-            runner = (await _tool_registry()).bind(uow)
+            runner = (await _tool_registry()).bind(
+                uow,
+                principal_id="user_bilal",
+                agent_id=BUILTIN_ASSISTANT_ID,
+                allowed_tools=await uow.agent_policies.list_enabled_native_tools(
+                    BUILTIN_ASSISTANT_ID
+                ),
+            )
 
             agent_id, replies = await registry.on_chat_message(
                 f"@crewspace say hello in one short sentence", runner
@@ -99,7 +106,14 @@ async def test_builtin_assistant_uses_thread_context():
             await uow.chat.add_message(DEFAULT_CHANNEL_ID, "user_bilal", "Email the team", root.id)
             await uow.commit()
 
-            runner = (await _tool_registry()).bind(uow)
+            runner = (await _tool_registry()).bind(
+                uow,
+                principal_id="user_bilal",
+                agent_id=BUILTIN_ASSISTANT_ID,
+                allowed_tools=await uow.agent_policies.list_enabled_native_tools(
+                    BUILTIN_ASSISTANT_ID
+                ),
+            )
             registry = await AgentRegistry.build(settings, uow)
 
             # Agent replies live in a thread under the human message; build the

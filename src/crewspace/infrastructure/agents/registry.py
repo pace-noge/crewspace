@@ -28,7 +28,9 @@ from .stub import StubAgent
 MemberLike = Any
 
 
-def _build_local_agent(member: MemberLike, settings: Settings) -> AgentProvider:
+def _build_local_agent(
+    member: MemberLike, settings: Settings, allowed_tools: set[str]
+) -> AgentProvider:
     """A local agent runs in this process (Stub or LLM logic).
 
     The agent's ``backend`` column selects stub vs LLM. LLM agents use the
@@ -42,8 +44,8 @@ def _build_local_agent(member: MemberLike, settings: Settings) -> AgentProvider:
         from ...application.tools import build_registry
 
         registry = build_registry()
-        return LLMAgent.from_registry(
-            registry,
+        return LLMAgent(
+            [tool for tool in registry.list_tools() if tool.name in allowed_tools],
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             model=settings.llm_model,
@@ -70,7 +72,8 @@ class AgentRegistry:
             agent_id = member["id"]
             mentions[member["name"].strip().lstrip("@").lower()] = agent_id
             if not member["pubkey"]:
-                local[agent_id] = _build_local_agent(member, settings)
+                allowed = await uow.agent_policies.list_enabled_native_tools(agent_id)
+                local[agent_id] = _build_local_agent(member, settings, allowed)
         return MultiAgentProvider(
             local, default_agent_id=PLANNER_AGENT_ID, mentions=mentions
         )
@@ -133,7 +136,12 @@ class MultiAgentProvider:
             return (aid, [f"⚠️ Agent {aid} is offline."])
         return await local.on_chat_message(text, runner, context=context)
 
-    async def on_card_created(self, card: Any, runner: ToolRunner) -> None:
+    async def on_card_created(
+        self,
+        card: Any,
+        runner: ToolRunner,
+        agent_runners: dict[str, ToolRunner] | None = None,
+    ) -> None:
         # Push the new-card event to every CONNECTED agent (Buzz-style fan-out);
         # each reacts under its own identity. Local-only agents also get the
         # in-process callback so the seeded planner still drops its note.
@@ -148,7 +156,8 @@ class MultiAgentProvider:
             if aid in connected:
                 continue
             try:
-                await agent.on_card_created(card, runner)
+                scoped_runner = (agent_runners or {}).get(aid, runner)
+                await agent.on_card_created(card, scoped_runner)
             except Exception:
                 continue
 

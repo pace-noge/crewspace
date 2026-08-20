@@ -66,15 +66,27 @@ class ChatService:
         # right away (the agent reply arrives later, in its own frame).
         if on_human_persisted is not None:
             await on_human_persisted(human_dto)
-        runner = self._registry.bind(uow)
         provider = await AgentRegistry.build(self._settings, uow)
+        routable = agent_routable_text(
+            routing_text if routing_text is not None else body
+        )
+        resolved_agent_id = provider.resolve(routable)
+        allowed_tools = (
+            await uow.agent_policies.list_enabled_native_tools(resolved_agent_id)
+            if resolved_agent_id else set()
+        )
+        runner = self._registry.bind(
+            uow,
+            principal_id=author_id,
+            agent_id=resolved_agent_id or "",
+            allowed_tools=allowed_tools,
+        )
         # Build conversation context so the agent can reason over history
         # (e.g. summarize a thread or pull action items). A thread reply sees
         # the whole thread; a channel message sees recent channel history.
         context = await self._build_context(uow, channel_id, thread_id, human.id)
         agent_id, replies = await provider.on_chat_message(
-            agent_routable_text(routing_text if routing_text is not None else body), runner,
-            context=context,
+            routable, runner, context=context,
         )
         # Agent answers live in a thread under the human message so the main
         # timeline stays uncluttered (the prior decision: agents reply in thread).
@@ -137,9 +149,25 @@ class BoardService:
         self, column_id: str, title: str, uow: UnitOfWork, description: str | None = None, actor_id: str | None = None
     ) -> CardDTO:
         card = await uow.boards.add_card(column_id, title, description, actor_id)
-        runner = self._registry.bind(uow)
         provider = await AgentRegistry.build(self._settings, uow)
-        await provider.on_card_created(card, runner)
+        agent_runners = {}
+        for member in await uow.auth.list_members(kind="agent"):
+            if member["pubkey"]:
+                continue
+            agent_id = member["id"]
+            allowed_tools = await uow.agent_policies.list_enabled_native_tools(
+                agent_id
+            )
+            agent_runners[agent_id] = self._registry.bind(
+                uow,
+                principal_id=actor_id,
+                agent_id=agent_id,
+                allowed_tools=allowed_tools,
+            )
+        await provider.on_card_created(
+            card, self._registry.bind_trusted(uow, principal_id=actor_id),
+            agent_runners=agent_runners,
+        )
         refreshed = await uow.boards.get_card(card.id)
         assert refreshed is not None
         return to_card(refreshed)

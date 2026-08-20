@@ -43,6 +43,22 @@ class MemberModel(Base):
     archived_at: Mapped[str | None] = mapped_column(String)
 
 
+class AgentToolPermissionModel(Base):
+    __tablename__ = "agent_tool_permission"
+    __table_args__ = (
+        CheckConstraint("provider_type IN ('native','mcp')", name="ck_agent_tool_provider_type"),
+        CheckConstraint("approval_mode IN ('automatic','require_approval')", name="ck_agent_tool_approval_mode"),
+    )
+    agent_id: Mapped[str] = mapped_column(ForeignKey("member.id", ondelete="CASCADE"), primary_key=True)
+    provider_type: Mapped[str] = mapped_column(String, primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String, primary_key=True)
+    tool_name: Mapped[str] = mapped_column(String, primary_key=True)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    approval_mode: Mapped[str] = mapped_column(String, nullable=False, default="automatic")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class TeamModel(Base):
     __tablename__ = "team"
     id: Mapped[str] = mapped_column(String, primary_key=True)

@@ -6,6 +6,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ...domain.entities import ChannelType, TeamMembership, TeamRole
 from ...application.access import can_manage_team, manageable_teams
+from ...application.agent_tool_policy import AgentToolPolicyService
+from ...application.tools import build_registry
 from ...domain.identifiers import BUILTIN_ASSISTANT_ID
 from ..deps import CurrentUserDep, UowDep, WorkspaceServiceDep
 from ..rendering import navigation_context, templates
@@ -576,3 +578,51 @@ async def remove_channel_member(
     await uow.channels.remove_member(channel_id, member_id)
     await uow.commit()
     return await _render_dashboard(request, current_user, uow)
+
+
+@router.get("/agents/{agent_id}/settings", response_class=HTMLResponse)
+async def agent_settings_page(
+    request: Request, agent_id: str, current_user: CurrentUserDep, uow: UowDep
+):
+    service = AgentToolPolicyService(build_registry())
+    try:
+        policy = await service.view(current_user, agent_id, uow)
+    except PermissionError as exc:
+        raise _forbidden(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return templates.TemplateResponse(
+        request=request,
+        name="agent_settings.html",
+        context={
+            "request": request,
+            "current_user": current_user,
+            **policy,
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
+@router.post("/agents/{agent_id}/tools")
+async def update_agent_tools(
+    agent_id: str,
+    current_user: CurrentUserDep,
+    uow: UowDep,
+    tool_names: list[str] = Form(default=[]),
+):
+    service = AgentToolPolicyService(build_registry())
+    try:
+        await service.replace_native_tools(
+            current_user, agent_id, set(tool_names), uow
+        )
+    except PermissionError as exc:
+        raise _forbidden(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return RedirectResponse(
+        f"/management/agents/{agent_id}/settings", status_code=303
+    )

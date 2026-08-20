@@ -26,6 +26,7 @@ from ..domain.ports import UnitOfWork
 from .lifecycle import SqlAlchemyLifecycleRepository
 from .models import Base
 from .repositories import (
+    SqlAlchemyAgentPolicyRepository,
     SqlAlchemyAuthRepository,
     SqlAlchemyBoardRepository,
     SqlAlchemyChannelRepository,
@@ -50,6 +51,7 @@ class SqlAlchemyUnitOfWork:
         self.chat = SqlAlchemyChatRepository(conn)
         self.boards = SqlAlchemyBoardRepository(conn)
         self.auth = SqlAlchemyAuthRepository(conn)
+        self.agent_policies = SqlAlchemyAgentPolicyRepository(conn)
         self.teams = SqlAlchemyTeamRepository(conn)
         self.workspaces = SqlAlchemyWorkspaceRepository(conn)
         self.channels = SqlAlchemyChannelRepository(conn)
@@ -101,7 +103,9 @@ class Database:
             if settings.database_url.startswith("sqlite+"):
                 await raw.exec_driver_sql("PRAGMA journal_mode=WAL")
             conn = SqlAlchemyConnection(raw)
-            await _seed_if_needed(conn, settings.seed_admin_password)
+            seeded = await _seed_if_needed(conn, settings.seed_admin_password)
+            if seeded:
+                await _ensure_seeded_agent_tool_permissions(conn)
             await raw.commit()
         return db
 
@@ -318,13 +322,46 @@ class Database:
         await self.engine.dispose()
 
 
-async def _seed_if_needed(conn: SqlAlchemyConnection, admin_password: str = "admin123") -> None:
+async def _seed_if_needed(
+    conn: SqlAlchemyConnection, admin_password: str = "admin123"
+) -> bool:
+    """Seed a new installation and report whether initial members were created."""
     team_row = await (await conn.execute("SELECT COUNT(*) AS n FROM team")).fetchone()
     member_row = await (await conn.execute("SELECT COUNT(*) AS n FROM member")).fetchone()
     if (team_row and team_row["n"] > 0) or (member_row and member_row["n"] > 0):
         await _ensure_builtin_assistant(conn)
-        return
+        return False
     await _seed(conn, admin_password)
+    return True
+
+
+async def _ensure_seeded_agent_tool_permissions(conn: SqlAlchemyConnection) -> None:
+    """Give pre-existing seeded builtin agents their legacy tool surface."""
+    from ..application.tools import build_registry
+
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    for agent_id in ("agent_crewspace", "agent_planner"):
+        agent = await (await conn.execute(
+            "SELECT id FROM member WHERE id=?", (agent_id,)
+        )).fetchone()
+        if not agent:
+            continue
+        for tool in build_registry().list_tools():
+            existing = await (await conn.execute(
+                "SELECT tool_name FROM agent_tool_permission WHERE agent_id=? "
+                "AND provider_type='native' AND provider_id='crewspace' "
+                "AND tool_name=?",
+                (agent_id, tool.name),
+            )).fetchone()
+            if existing:
+                continue
+            await conn.execute(
+                "INSERT INTO agent_tool_permission "
+                "(agent_id, provider_type, provider_id, tool_name, enabled, "
+                "approval_mode, created_at, updated_at) "
+                "VALUES (?, 'native', 'crewspace', ?, 1, 'automatic', ?, ?)",
+                (agent_id, tool.name, now, now),
+            )
 
 
 async def _ensure_builtin_assistant(conn: SqlAlchemyConnection) -> None:

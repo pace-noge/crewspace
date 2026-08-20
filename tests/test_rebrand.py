@@ -37,7 +37,7 @@ def test_postgresql_models_and_engine_are_constructible():
         assert database.engine.url.drivername == "postgresql+asyncpg"
         dialect = postgresql.dialect()
         compiled = [str(CreateTable(table).compile(dialect=dialect)) for table in Base.metadata.sorted_tables]
-        assert len(compiled) == 19
+        assert len(compiled) == 20
         assert all("CREATE TABLE" in statement for statement in compiled)
         create_mock_engine("postgresql://", lambda *_args, **_kwargs: None)
     finally:

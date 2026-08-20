@@ -109,7 +109,7 @@ def build_mcp_server(settings: Settings | None = None) -> MCPServer:
             f"    _kwargs = {{k: v for k, v in _kwargs.items() if v is not None}}\n"
             f"    db = _server._db\n"
             f"    async with db.uow() as _uow:\n"
-            f"        _runner = _registry.bind(_uow)\n"
+            f"        _runner = _registry.bind_trusted(_uow)\n"
             f"        _result = await _runner.run(_tool_name, **_kwargs)\n"
             f"    return _serialize(_result or {{}})\n"
         )

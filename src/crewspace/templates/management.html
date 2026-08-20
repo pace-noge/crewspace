@@ -129,6 +129,7 @@
             <span class="inline-form">
               <span class="badge">{% if agent_statuses.get(agent.id) == 'connected' %}🟢 connected{% elif agent_statuses.get(agent.id) == 'local' %}🔵 builtin (app-llm){% else %}🔴 disconnected{% endif %}</span>
               {% if agent.id == 'agent_crewspace' %}<span class="badge agent">🔒 protected</span>{% endif %}
+              {% if current_user.role == 'superadmin' and not agent.pubkey %}<a href="/management/agents/{{ agent.id }}/settings">Tool settings</a>{% endif %}
             </span>
           </div>
           {% endfor %}
