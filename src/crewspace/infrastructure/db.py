@@ -33,6 +33,7 @@ from .repositories import (
     SqlAlchemyScheduledJobRepository,
     SqlAlchemyTeamRepository,
     SqlAlchemyWorkspaceRepository,
+    SqlAlchemyWorkflowRepository,
 )
 from .lifecycle import SqlAlchemyLifecycleRepository
 from .sql import SqlAlchemyConnection
@@ -54,6 +55,7 @@ class SqlAlchemyUnitOfWork:
         self.channels = SqlAlchemyChannelRepository(conn)
         self.lifecycle = SqlAlchemyLifecycleRepository(conn)
         self.scheduled_jobs = SqlAlchemyScheduledJobRepository(conn)
+        self.workflows = SqlAlchemyWorkflowRepository(conn)
 
     async def commit(self) -> None:
         await self._conn.commit()

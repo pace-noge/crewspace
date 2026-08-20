@@ -226,3 +226,42 @@ class ScheduledJobRunModel(Base):
     message_ids: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     error: Mapped[str | None] = mapped_column(Text)
     next_run_at: Mapped[str | None] = mapped_column(String)
+
+
+class WorkflowModel(Base):
+    __tablename__ = "workflow"
+    __table_args__ = (
+        CheckConstraint(
+            "trigger_type IN ('message_posted','reaction_added','diff_posted','webhook','schedule')",
+            name="ck_workflow_trigger_type",
+        ),
+        UniqueConstraint("channel_id", "name", name="uq_workflow_channel_name"),
+    )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    channel_id: Mapped[str] = mapped_column(ForeignKey("channel.id"), nullable=False)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    trigger_type: Mapped[str] = mapped_column(String, nullable=False)
+    trigger_config: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    filter_expression: Mapped[str | None] = mapped_column(Text)
+    steps: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    creator_id: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    next_run_at: Mapped[str | None] = mapped_column(String)
+
+
+class WorkflowRunModel(Base):
+    __tablename__ = "workflow_run"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(ForeignKey("workflow.id", ondelete="CASCADE"), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String, nullable=False)
+    event: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    step_results: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    started_at: Mapped[str] = mapped_column(String, nullable=False)
+    finished_at: Mapped[str | None] = mapped_column(String)
+    error: Mapped[str | None] = mapped_column(Text)
+    approval_token: Mapped[str | None] = mapped_column(String, unique=True)

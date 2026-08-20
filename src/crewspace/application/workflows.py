@@ -1,0 +1,391 @@
+"""Channel-scoped workflow validation, filtering, and ordered execution."""
+from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import re
+import uuid
+import json
+import urllib.request
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from croniter import croniter
+
+from ..domain.entities import Workflow, WorkflowRun, WorkflowRunStatus
+from ..domain.identifiers import BUILTIN_ASSISTANT_ID
+from ..domain.ports import UnitOfWork
+
+TRIGGER_TYPES = {"message_posted", "reaction_added", "diff_posted", "webhook", "schedule"}
+ACTION_TYPES = {
+    "send_message", "send_dm", "call_webhook", "request_approval",
+    "add_reaction", "set_channel_topic", "delay",
+}
+UTC = dt.timezone.utc
+
+
+def interval_seconds(value: str) -> int:
+    match = re.fullmatch(r"\s*(\d+)\s*([smhd])\s*", value, re.IGNORECASE)
+    if not match:
+        raise ValueError("Interval must look like 30m, 1h, or 2d")
+    amount = int(match.group(1))
+    seconds = amount * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2).lower()]
+    if seconds < 1:
+        raise ValueError("Interval must be at least one second")
+    return seconds
+
+
+def render_template(value: str, context: dict[str, Any]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        current: Any = context
+        for part in match.group(1).strip().split("."):
+            current = current.get(part, "") if isinstance(current, dict) else ""
+        return str(current)
+    return re.sub(r"{{\s*([^{}]+?)\s*}}", replace, value)
+
+
+def matches_filter(expression: str | None, event: dict[str, Any]) -> bool:
+    if not expression or not expression.strip():
+        return True
+    value = expression.strip()
+    match = re.fullmatch(r'contains\(([a-zA-Z_][\w.]*),\s*"([^"]*)"\)', value)
+    if match:
+        current: Any = event
+        for part in match.group(1).split("."):
+            current = current.get(part) if isinstance(current, dict) else None
+        return match.group(2) in str(current or "")
+    match = re.fullmatch(r'([a-zA-Z_][\w.]*)\s*(==|!=)\s*"([^"]*)"', value)
+    if match:
+        current: Any = event
+        for part in match.group(1).split("."):
+            current = current.get(part) if isinstance(current, dict) else None
+        return (str(current or "") == match.group(3)) == (match.group(2) == "==")
+    raise ValueError("Invalid filter expression. Use contains(field, \"value\"), ==, or !=")
+
+
+def matches_step_condition(expression: str | None, event: dict[str, Any]) -> bool:
+    if not expression or not expression.strip():
+        return True
+    normalized = re.sub(r"\btrigger_([a-zA-Z_]\w*)\b", r"\1", expression.strip())
+    normalized = normalized.replace("str_contains(", "contains(", 1)
+    return matches_filter(normalized, event)
+
+
+class WorkflowService:
+    def __init__(self, on_message: Callable[[Any], Awaitable[None]] | None = None) -> None:
+        self._on_message = on_message
+
+    async def create(self, uow: UnitOfWork, *, creator_id: str, data: dict[str, Any]) -> Workflow:
+        name = str(data.get("name", "")).strip()
+        channel_id = str(data.get("channel_id", "")).strip()
+        trigger_type = str(data.get("trigger_type", "")).strip()
+        steps = data.get("steps") or []
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+            raise ValueError("Name must use lowercase letters, numbers, and underscores")
+        if await uow.channels.get_channel(channel_id) is None:
+            raise ValueError("Channel not found")
+        if trigger_type not in TRIGGER_TYPES:
+            raise ValueError("Unknown trigger type")
+        matches_filter(data.get("filter_expression"), {})
+        if not steps:
+            raise ValueError("Add at least one step")
+        seen: set[str] = set()
+        for step in steps:
+            step_id = str(step.get("id", "")).strip()
+            if not step_id or step_id in seen:
+                raise ValueError("Step IDs must be present and unique")
+            seen.add(step_id)
+            if step.get("action") not in ACTION_TYPES:
+                raise ValueError(f"Unknown action: {step.get('action')}")
+            timeout = step.get("timeout_seconds")
+            if timeout is not None and int(timeout) < 1:
+                raise ValueError("Step timeout must be positive")
+            matches_step_condition(step.get("condition"), {})
+        workflow = Workflow(
+            id=f"wf_{uuid.uuid4().hex[:12]}", name=name,
+            description=(str(data.get("description", "")).strip() or None),
+            channel_id=channel_id, enabled=bool(data.get("enabled", True)),
+            trigger_type=trigger_type, trigger_config=data.get("trigger_config") or {},
+            filter_expression=(
+                str(data["filter_expression"]).strip()
+                if data.get("filter_expression") is not None
+                and str(data["filter_expression"]).strip()
+                else None
+            ),
+            steps=steps, creator_id=creator_id,
+        )
+        if trigger_type == "schedule":
+            cron = str(workflow.trigger_config.get("cron", "")).strip()
+            interval = str(workflow.trigger_config.get("interval", "")).strip()
+            legacy_every = workflow.trigger_config.get("every_seconds")
+            if bool(cron) == bool(interval) and legacy_every is None:
+                raise ValueError("Provide either a cron expression or a simple interval")
+            if cron:
+                if len(cron.split()) != 5:
+                    raise ValueError("Cron expression must contain five fields")
+                if not croniter.is_valid(cron):
+                    raise ValueError("Invalid cron expression")
+            every = interval_seconds(interval) if interval else int(legacy_every or 0)
+            if not cron and every < 1:
+                raise ValueError("Provide either a cron expression or a simple interval")
+            if cron:
+                workflow.trigger_config = {"cron": cron}
+                workflow.next_run_at = croniter(cron, dt.datetime.now(UTC)).get_next(dt.datetime)
+            elif interval:
+                workflow.trigger_config = {"interval": interval, "every_seconds": every}
+                workflow.next_run_at = dt.datetime.now(UTC) + dt.timedelta(seconds=every)
+            else:
+                workflow.next_run_at = dt.datetime.now(UTC) + dt.timedelta(seconds=every)
+        return await uow.workflows.create(workflow)
+
+    async def update(
+        self, uow: UnitOfWork, *, workflow: Workflow, data: dict[str, Any]
+    ) -> Workflow:
+        name = str(data.get("name", "")).strip()
+        channel_id = str(data.get("channel_id", "")).strip()
+        trigger_type = str(data.get("trigger_type", "")).strip()
+        steps = data.get("steps") or []
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+            raise ValueError("Name must use lowercase letters, numbers, and underscores")
+        if await uow.channels.get_channel(channel_id) is None:
+            raise ValueError("Channel not found")
+        if trigger_type not in TRIGGER_TYPES:
+            raise ValueError("Unknown trigger type")
+        matches_filter(data.get("filter_expression"), {})
+        if not steps:
+            raise ValueError("Add at least one step")
+        seen: set[str] = set()
+        for step in steps:
+            step_id = str(step.get("id", "")).strip()
+            if not step_id or step_id in seen:
+                raise ValueError("Step IDs must be present and unique")
+            seen.add(step_id)
+            if step.get("action") not in ACTION_TYPES:
+                raise ValueError(f"Unknown action: {step.get('action')}")
+            timeout = step.get("timeout_seconds")
+            if timeout is not None and int(timeout) < 1:
+                raise ValueError("Step timeout must be positive")
+            matches_step_condition(step.get("condition"), {})
+
+        workflow.name = name
+        workflow.description = str(data.get("description", "")).strip() or None
+        workflow.channel_id = channel_id
+        workflow.enabled = bool(data.get("enabled", workflow.enabled))
+        workflow.trigger_type = trigger_type
+        workflow.trigger_config = data.get("trigger_config") or {}
+        workflow.filter_expression = (
+            str(data["filter_expression"]).strip()
+            if data.get("filter_expression") is not None
+            and str(data["filter_expression"]).strip()
+            else None
+        )
+        workflow.steps = steps
+        workflow.next_run_at = None
+        if trigger_type == "schedule":
+            cron = str(workflow.trigger_config.get("cron", "")).strip()
+            interval = str(workflow.trigger_config.get("interval", "")).strip()
+            legacy_every = workflow.trigger_config.get("every_seconds")
+            if bool(cron) == bool(interval) and legacy_every is None:
+                raise ValueError("Provide either a cron expression or a simple interval")
+            if cron:
+                if len(cron.split()) != 5 or not croniter.is_valid(cron):
+                    raise ValueError("Invalid cron expression")
+                workflow.trigger_config = {"cron": cron}
+                workflow.next_run_at = croniter(
+                    cron, dt.datetime.now(UTC)
+                ).get_next(dt.datetime)
+            else:
+                every = interval_seconds(interval) if interval else int(legacy_every or 0)
+                if every < 1:
+                    raise ValueError("Provide either a cron expression or a simple interval")
+                workflow.trigger_config = (
+                    {"interval": interval, "every_seconds": every}
+                    if interval else {"every_seconds": every}
+                )
+                workflow.next_run_at = dt.datetime.now(UTC) + dt.timedelta(seconds=every)
+        return await uow.workflows.update(workflow)
+
+    async def dispatch(self, uow: UnitOfWork, *, channel_id: str, trigger_type: str,
+                       event: dict[str, Any]) -> list[WorkflowRun]:
+        runs = []
+        for workflow in await uow.workflows.list_enabled(channel_id, trigger_type):
+            if not matches_filter(workflow.filter_expression, event):
+                continue
+            runs.append(await self.run(workflow, uow, event))
+        return runs
+
+    async def run(self, workflow: Workflow, uow: UnitOfWork, event: dict[str, Any],
+                  *, start_step: int = 0, existing_run: WorkflowRun | None = None) -> WorkflowRun:
+        now = dt.datetime.now(UTC)
+        run = existing_run or WorkflowRun(
+            id=f"wfr_{uuid.uuid4().hex[:12]}", workflow_id=workflow.id,
+            trigger_type=workflow.trigger_type, event=event, status=WorkflowRunStatus.RUNNING,
+            current_step=start_step, step_results=[], started_at=now,
+        )
+        if existing_run is None:
+            await uow.workflows.start_run(run)
+        await uow.commit()
+        context = {
+            **event,
+            "event": event,
+            "trigger": event,
+            "workflow": {"id": workflow.id, "name": workflow.name},
+        }
+        try:
+            for index in range(start_step, len(workflow.steps)):
+                step = workflow.steps[index]
+                if not matches_step_condition(step.get("condition"), event):
+                    run.current_step = index + 1
+                    run.step_results.append({
+                        "step_id": step["id"], "status": "skipped",
+                        "output": {"condition": step.get("condition")},
+                    })
+                    continue
+                timeout = int(step.get("timeout_seconds") or 300)
+                output = await asyncio.wait_for(
+                    self._execute_action(workflow, step, run, uow, context), timeout=timeout
+                )
+                run.current_step = index + 1
+                run.step_results.append({"step_id": step["id"], "status": "succeeded", "output": output})
+                context[step["id"]] = output
+                if run.status == WorkflowRunStatus.WAITING:
+                    await uow.workflows.update_run(run)
+                    await uow.commit()
+                    return run
+            run.status = WorkflowRunStatus.SUCCEEDED
+            run.finished_at = dt.datetime.now(UTC)
+        except Exception as exc:
+            run.status = WorkflowRunStatus.FAILED
+            run.error = str(exc)
+            run.finished_at = dt.datetime.now(UTC)
+        await uow.workflows.update_run(run)
+        await uow.commit()
+        return run
+
+    async def _execute_action(self, workflow: Workflow, step: dict, run: WorkflowRun,
+                              uow: UnitOfWork, context: dict[str, Any]) -> dict[str, Any]:
+        action = step["action"]
+        config = step.get("config") or {}
+        if action == "send_message":
+            channel_id = config.get("channel_id") or workflow.channel_id
+            text = render_template(str(config.get("text", "")), context).strip()
+            if not text:
+                raise ValueError("Send Message requires text")
+            message = await uow.chat.add_message(channel_id, BUILTIN_ASSISTANT_ID, text)
+            if self._on_message is not None:
+                await uow.commit()
+                await self._on_message(message)
+            return {"message_id": message.id, "channel_id": channel_id, "text": text}
+        if action == "send_dm":
+            member_id = str(config.get("member_id", "")).strip()
+            if await uow.auth.get_member(member_id) is None:
+                raise ValueError("Send DM member not found")
+            channel = await uow.channels.get_or_create_direct(BUILTIN_ASSISTANT_ID, member_id)
+            text = render_template(str(config.get("text", "")), context).strip()
+            message = await uow.chat.add_message(channel.id, BUILTIN_ASSISTANT_ID, text)
+            if self._on_message is not None:
+                await uow.commit()
+                await self._on_message(message)
+            return {"message_id": message.id, "channel_id": channel.id, "text": text}
+        if action == "add_reaction":
+            message_id = render_template(str(config.get("message_id", "")), context)
+            emoji = render_template(str(config.get("emoji", "")), context)
+            await uow.chat.toggle_reaction(message_id, workflow.creator_id, emoji)
+            return {"message_id": message_id, "emoji": emoji}
+        if action == "set_channel_topic":
+            channel = await uow.channels.get_channel(config.get("channel_id") or workflow.channel_id)
+            if channel is None:
+                raise ValueError("Channel not found")
+            channel.topic = render_template(str(config.get("topic", "")), context)
+            await uow.channels.update_channel(channel)
+            return {"channel_id": channel.id, "topic": channel.topic}
+        if action == "delay":
+            seconds = float(config.get("seconds", 0))
+            if seconds < 0 or seconds > 86400:
+                raise ValueError("Delay must be between 0 and 86400 seconds")
+            await asyncio.sleep(seconds)
+            return {"seconds": seconds}
+        if action == "request_approval":
+            run.status = WorkflowRunStatus.WAITING
+            run.approval_token = uuid.uuid4().hex
+            return {"prompt": render_template(str(config.get("prompt", "Approval required")), context)}
+        if action == "call_webhook":
+            url = render_template(str(config.get("url", "")), context)
+            method = str(config.get("method", "POST")).upper()
+            body = render_template(json.dumps(config.get("body", context)), context).encode()
+            headers = {"Content-Type": "application/json", **(config.get("headers") or {})}
+            def call() -> dict[str, Any]:
+                request = urllib.request.Request(url, data=body, headers=headers, method=method)
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    return {"status": response.status, "body": response.read(65536).decode(errors="replace")}
+            return await asyncio.to_thread(call)
+        raise ValueError(f"Action {action} is not implemented")
+
+    async def approve(self, token: str, uow: UnitOfWork, approved: bool) -> WorkflowRun:
+        run = await uow.workflows.get_run_by_approval(token)
+        if run is None or run.status != WorkflowRunStatus.WAITING:
+            raise ValueError("Approval not found or already resolved")
+        workflow = await uow.workflows.get(run.workflow_id)
+        if workflow is None:
+            raise ValueError("Workflow not found")
+        run.approval_token = None
+        if not approved:
+            run.status = WorkflowRunStatus.FAILED
+            run.error = "Approval rejected"
+            run.finished_at = dt.datetime.now(UTC)
+            await uow.workflows.update_run(run)
+            await uow.commit()
+            return run
+        run.status = WorkflowRunStatus.RUNNING
+        return await self.run(workflow, uow, run.event, start_step=run.current_step, existing_run=run)
+
+
+class WorkflowSchedulerLoop:
+    def __init__(
+        self, db, poll_seconds: int = 30,
+        on_message: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> None:
+        self._db = db
+        self._poll_seconds = poll_seconds
+        self._on_message = on_message
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if not self._task or self._task.done():
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    async def run_due_once(self) -> int:
+        now = dt.datetime.now(UTC)
+        count = 0
+        async with self._db.uow() as uow:
+            for workflow in await uow.workflows.list_due_schedules(now):
+                await WorkflowService(on_message=self._on_message).run(
+                    workflow, uow,
+                    {"channel_id": workflow.channel_id, "scheduled_at": now.isoformat(), "text": now.isoformat()},
+                )
+                if workflow.trigger_config.get("cron"):
+                    workflow.next_run_at = croniter(
+                        workflow.trigger_config["cron"], now
+                    ).get_next(dt.datetime)
+                else:
+                    every = int(workflow.trigger_config["every_seconds"])
+                    workflow.next_run_at = now + dt.timedelta(seconds=every)
+                await uow.workflows.update(workflow)
+                await uow.commit()
+                count += 1
+        return count
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await self.run_due_once()
+            finally:
+                await asyncio.sleep(self._poll_seconds)

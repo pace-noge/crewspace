@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from ...config import Settings, get_settings
 from ...security import new_session_id, sign_session, unsign_session
 from ...domain.ports import UnitOfWork
-from ..deps import SESSION_COOKIE, CurrentUserDep, UowDep
+from ..deps import SESSION_COOKIE, CurrentUserDep, CurrentUserOptionalDep, UowDep
 from ..rendering import navigation_context, templates
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -29,17 +29,27 @@ def _settings(request: Request) -> Settings:
 
 
 async def _issue_session(response: RedirectResponse, request: Request, uow: UnitOfWork, member_id: str) -> None:
-    """Create a server-side session row and sign its id into the cookie."""
+    """Persist a server-side session before issuing its signed cookie."""
     sid = new_session_id()
-    await uow.auth.create_session(sid, member_id)  # committed by the router's UowDep
+    await uow.auth.create_session(sid, member_id)
+    # The browser may follow the 303 before dependency teardown completes. Commit
+    # here so the redirected request cannot race the session row becoming visible.
+    await uow.commit()
     token = sign_session(sid, _settings(request).secret)
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax")
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request):
-    return HTMLResponse(_AUTH_HTML.format(title="Log in", action="/auth/login", submit="Log in",
-                                          role_field="", hint="Use your Crewspace account."))
+async def login_page(request: Request, current_user: CurrentUserOptionalDep):
+    if current_user is not None:
+        return RedirectResponse("/", status_code=303)
+    return HTMLResponse(
+        _AUTH_HTML.format(
+            title="Log in", action="/auth/login", submit="Log in",
+            role_field="", hint="Use your Crewspace account.",
+        ),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/register", response_class=HTMLResponse)

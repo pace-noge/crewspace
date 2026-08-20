@@ -10,14 +10,30 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from ...application.workspace_service import WorkspaceService
+from ...application.workflows import WorkflowService
+from ...dto.mappers import to_message
 from ..connection import manager
 from ..deps import ChatServiceDep, CurrentUserDep, UowDep, WorkspaceServiceDep
 
 router = APIRouter(prefix="/channels", tags=["chat"])
 
 
+async def _broadcast_workflow_message(message) -> None:
+    await manager.broadcast(
+        message.channel_id, to_message(message).model_dump(mode="json")
+    )
+
+
+def _workflow_service() -> WorkflowService:
+    return WorkflowService(on_message=_broadcast_workflow_message)
+
+
 class ReactionInput(BaseModel):
     emoji: str
+
+
+class DiffInput(BaseModel):
+    text: str
 
 
 @router.get("/{channel_id}/messages")
@@ -74,7 +90,28 @@ async def toggle_message_reaction(
         raise HTTPException(status_code=404, detail="Message not found")
     reactions = await uow.chat.toggle_reaction(message_id, current_user["id"], emoji)
     await uow.commit()
+    await _workflow_service().dispatch(
+        uow, channel_id=channel_id, trigger_type="reaction_added",
+        event={"message_id": message_id, "channel_id": channel_id,
+               "member_id": current_user["id"], "emoji": emoji, "text": emoji},
+    )
     return reactions
+
+
+@router.post("/{channel_id}/diffs", status_code=201)
+async def post_diff(
+    channel_id: str, payload: DiffInput, current_user: CurrentUserDep, uow: UowDep,
+) -> dict:
+    if not await uow.channels.can_member_access(channel_id, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Channel not found")
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Diff is required")
+    runs = await _workflow_service().dispatch(
+        uow, channel_id=channel_id, trigger_type="diff_posted",
+        event={"channel_id": channel_id, "author_id": current_user["id"], "text": text},
+    )
+    return {"run_ids": [run.id for run in runs]}
 
 
 @router.websocket("/{channel_id}/ws")
@@ -117,6 +154,30 @@ async def chat_ws(
                     thread = await svc.list_thread(thread_id, uow)
                     if not thread or thread[0].channel_id != channel_id:
                         continue
+                async def on_human_persisted(human_dto):
+                    workflow_frames: list[dict] = []
+
+                    async def buffer_workflow_message(message) -> None:
+                        workflow_frames.append(
+                            to_message(message).model_dump(mode="json")
+                        )
+
+                    await WorkflowService(on_message=buffer_workflow_message).dispatch(
+                        uow,
+                        channel_id=channel_id,
+                        trigger_type="message_posted",
+                        event={
+                            "message_id": human_dto.id,
+                            "channel_id": channel_id,
+                            "author_id": member_id,
+                            "text": body,
+                            "thread_id": thread_id,
+                        },
+                    )
+                    await manager.broadcast(channel_id, human_dto.model_dump(mode="json"))
+                    for frame in workflow_frames:
+                        await manager.broadcast(channel_id, frame)
+
                 new_msgs = await svc.post_and_respond(
                     channel_id,
                     member_id,
@@ -134,9 +195,7 @@ async def chat_ws(
                         channel_id,
                         {"type": "typing", "author_id": aid, "channel_id": channel_id},
                     ),
-                    on_human_persisted=lambda human_dto: manager.broadcast(
-                        channel_id, human_dto.model_dump(mode="json")
-                    ),
+                    on_human_persisted=on_human_persisted,
                 )
             for m in new_msgs:
                 # The human message was already broadcast immediately on

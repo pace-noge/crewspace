@@ -45,6 +45,7 @@
   const log = document.getElementById("message-list");
   const scroller = document.getElementById("message-scroll");
   const input = document.getElementById("body");
+  if(new URLSearchParams(location.search).has("compose")) input.focus();
   const send = document.getElementById("send-button");
   const agentState = document.getElementById("agent-state");
   const emojiPicker = document.getElementById("emoji-picker");

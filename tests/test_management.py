@@ -34,12 +34,46 @@ def test_sidebar_separates_workspaces_and_channels(client):
     assert 'href="/management/channels/chan_general/members"' in response.text
 
 
+def test_sidebar_contextual_actions_are_hover_revealed(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'class="sidebar-action quick-action"' in response.text
+    assert 'aria-label="Add workspace"' in response.text
+    assert 'href="/management/workspaces/new"' in response.text
+    assert 'aria-label="Add channel to Acme OS"' in response.text
+    assert 'href="/management/workspaces/ws_default/channels/new"' in response.text
+    assert 'aria-label="Start a message in general"' in response.text
+    assert 'href="/channels/chan_general?compose=1"' in response.text
+    compose = client.get("/channels/chan_general?compose=1")
+    assert 'new URLSearchParams(location.search).has("compose")' in compose.text
+    assert 'input.focus()' in compose.text
+    assert 'aria-label="Register agent"' in response.text
+    assert '.workspace-row:hover>.sidebar-action' in response.text
+    assert '.channel-row:focus-within>.sidebar-action' in response.text
+
+
+def test_add_workspace_uses_dedicated_app_shell_page(client):
+    page = client.get("/management/workspaces/new")
+    assert page.status_code == 200
+    assert 'class="sidebar"' in page.text
+    assert "Add workspace" in page.text
+    assert "Workspace name" in page.text
+    assert 'action="/management/workspaces"' in page.text
+    created = client.post(
+        "/management/workspaces",
+        data={"name": "Quick Space", "team_id": "team_acme"},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    assert created.headers["location"].startswith("/management/workspaces/")
+
+
 def test_agents_section_owns_register_action(client):
     response = client.get("/")
     assert response.status_code == 200
     assert 'aria-label="Agents actions"' in response.text
     assert '>Register agent<' in response.text
-    assert response.text.count('href="/auth/agents/register"') == 2
+    assert response.text.count('href="/auth/agents/register"') == 3
 
 
 def test_channel_actions_open_distinct_forms(client):

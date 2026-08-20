@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block title %}Delete workflow — Crewspace{% endblock %}
+{% block topbar %}Delete workflow{% endblock %}
+{% block head %}<style>
+.page{padding:28px;overflow:auto}.confirm{max-width:620px;margin:auto;background:var(--bg-elev);border:1px solid var(--border);border-radius:14px;padding:24px}.confirm h1{margin-top:0}.warning{color:#fab387}.confirm label{display:grid;gap:7px;font-weight:600}.confirm input{width:100%;font:inherit;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);padding:9px}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.danger{background:#f38ba8;color:#11111b;border-color:#f38ba8}
+</style>{% endblock %}
+{% block content %}<div class="page"><section class="confirm"><h1>Delete workflow</h1><p class="warning">This permanently deletes <strong>{{ workflow.name }}</strong> and all of its run history. This cannot be undone.</p><p>Type <strong>{{ workflow.name }}</strong> to confirm.</p><form method="post" action="/workflows/{{ workflow.id }}/delete"><label>Confirmation name<input name="confirmation" required autocomplete="off"></label><div class="actions"><a class="button" href="/workflows">Cancel</a><button class="danger" type="submit">Permanently delete</button></div></form></section></div>{% endblock %}

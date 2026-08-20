@@ -33,6 +33,9 @@ from ..domain.entities import (
     Workspace,
     WorkspaceMembership,
     WorkspaceRole,
+    Workflow,
+    WorkflowRun,
+    WorkflowRunStatus,
 )
 from ..domain.identifiers import DEFAULT_BOARD_ID, COLUMN_IDS
 from ..domain.ports import (
@@ -970,6 +973,149 @@ class SqlAlchemyChannelRepository:
             "UPDATE channel_member SET role = ? WHERE channel_id = ? AND member_id = ?",
             (role.value, channel_id, member_id),
         )
+
+
+class SqlAlchemyWorkflowRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    @staticmethod
+    def _workflow(row) -> Workflow:
+        return Workflow(
+            id=row["id"], name=row["name"], description=row["description"],
+            channel_id=row["channel_id"], enabled=bool(row["enabled"]),
+            trigger_type=row["trigger_type"], trigger_config=json.loads(row["trigger_config"]),
+            filter_expression=row["filter_expression"], steps=json.loads(row["steps"]),
+            creator_id=row["creator_id"], created_at=_parse(row["created_at"]),
+            updated_at=_parse(row["updated_at"]),
+            next_run_at=_parse(row["next_run_at"]) if row["next_run_at"] else None,
+        )
+
+    @staticmethod
+    def _run(row) -> WorkflowRun:
+        return WorkflowRun(
+            id=row["id"], workflow_id=row["workflow_id"], trigger_type=row["trigger_type"],
+            event=json.loads(row["event"]), status=WorkflowRunStatus(row["status"]),
+            current_step=row["current_step"], step_results=json.loads(row["step_results"]),
+            started_at=_parse(row["started_at"]),
+            finished_at=_parse(row["finished_at"]) if row["finished_at"] else None,
+            error=row["error"], approval_token=row["approval_token"],
+        )
+
+    async def create(self, workflow: Workflow) -> Workflow:
+        now = workflow.created_at or dt.datetime.now(dt.timezone.utc)
+        workflow.created_at = workflow.updated_at = now
+        await self._conn.execute(
+            """INSERT INTO workflow
+            (id,name,description,channel_id,enabled,trigger_type,trigger_config,
+             filter_expression,steps,creator_id,created_at,updated_at,next_run_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (workflow.id, workflow.name, workflow.description, workflow.channel_id,
+             int(workflow.enabled), workflow.trigger_type, json.dumps(workflow.trigger_config),
+             workflow.filter_expression, json.dumps(workflow.steps), workflow.creator_id,
+             _iso(now), _iso(now), _iso(workflow.next_run_at) if workflow.next_run_at else None),
+        )
+        return workflow
+
+    async def get(self, workflow_id: str) -> Workflow | None:
+        row = await (await self._conn.execute("SELECT * FROM workflow WHERE id=?", (workflow_id,))).fetchone()
+        return self._workflow(row) if row else None
+
+    async def get_by_hook_id(self, hook_id: str) -> Workflow | None:
+        rows = await (await self._conn.execute(
+            "SELECT * FROM workflow WHERE trigger_type='webhook' AND enabled=1"
+        )).fetchall()
+        return next(
+            (self._workflow(row) for row in rows
+             if json.loads(row["trigger_config"]).get("hook_id") == hook_id),
+            None,
+        )
+
+    async def update(self, workflow: Workflow) -> Workflow:
+        workflow.updated_at = dt.datetime.now(dt.timezone.utc)
+        await self._conn.execute(
+            """UPDATE workflow SET name=?,description=?,channel_id=?,enabled=?,trigger_type=?,
+               trigger_config=?,filter_expression=?,steps=?,updated_at=?,next_run_at=? WHERE id=?""",
+            (workflow.name, workflow.description, workflow.channel_id, int(workflow.enabled),
+             workflow.trigger_type, json.dumps(workflow.trigger_config), workflow.filter_expression,
+             json.dumps(workflow.steps), _iso(workflow.updated_at),
+             _iso(workflow.next_run_at) if workflow.next_run_at else None, workflow.id),
+        )
+        return workflow
+
+    async def delete(self, workflow_id: str) -> None:
+        await self._conn.execute("DELETE FROM workflow_run WHERE workflow_id=?", (workflow_id,))
+        await self._conn.execute("DELETE FROM workflow WHERE id=?", (workflow_id,))
+
+    async def list_for_channels(self, channel_ids: list[str]) -> list[Workflow]:
+        if not channel_ids:
+            return []
+        marks = ",".join("?" for _ in channel_ids)
+        rows = await (await self._conn.execute(
+            f"SELECT * FROM workflow WHERE channel_id IN ({marks}) ORDER BY name", channel_ids
+        )).fetchall()
+        return [self._workflow(row) for row in rows]
+
+    async def list_enabled(self, channel_id: str, trigger_type: str) -> list[Workflow]:
+        rows = await (await self._conn.execute(
+            "SELECT * FROM workflow WHERE channel_id=? AND trigger_type=? AND enabled=1 ORDER BY created_at",
+            (channel_id, trigger_type),
+        )).fetchall()
+        return [self._workflow(row) for row in rows]
+
+    async def start_run(self, run: WorkflowRun) -> WorkflowRun:
+        await self._conn.execute(
+            """INSERT INTO workflow_run
+            (id,workflow_id,trigger_type,event,status,current_step,step_results,started_at,
+             finished_at,error,approval_token) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (run.id, run.workflow_id, run.trigger_type, json.dumps(run.event), run.status.value,
+             run.current_step, json.dumps(run.step_results), _iso(run.started_at),
+             _iso(run.finished_at) if run.finished_at else None, run.error, run.approval_token),
+        )
+        return run
+
+    async def update_run(self, run: WorkflowRun) -> None:
+        await self._conn.execute(
+            """UPDATE workflow_run SET status=?,current_step=?,step_results=?,finished_at=?,
+               error=?,approval_token=? WHERE id=?""",
+            (run.status.value, run.current_step, json.dumps(run.step_results),
+             _iso(run.finished_at) if run.finished_at else None, run.error,
+             run.approval_token, run.id),
+        )
+
+    async def get_run(self, run_id: str) -> WorkflowRun | None:
+        row = await (await self._conn.execute("SELECT * FROM workflow_run WHERE id=?", (run_id,))).fetchone()
+        return self._run(row) if row else None
+
+    async def get_run_by_approval(self, token: str) -> WorkflowRun | None:
+        row = await (await self._conn.execute(
+            "SELECT * FROM workflow_run WHERE approval_token=?", (token,)
+        )).fetchone()
+        return self._run(row) if row else None
+
+    async def list_pending_approvals(self, workflow_ids: list[str]) -> list[WorkflowRun]:
+        if not workflow_ids:
+            return []
+        placeholders = ",".join("?" for _ in workflow_ids)
+        rows = await (await self._conn.execute(
+            f"SELECT * FROM workflow_run WHERE status='waiting' "
+            f"AND workflow_id IN ({placeholders}) ORDER BY started_at DESC",
+            tuple(workflow_ids),
+        )).fetchall()
+        return [self._run(row) for row in rows]
+
+    async def list_runs(self, workflow_id: str) -> list[WorkflowRun]:
+        rows = await (await self._conn.execute(
+            "SELECT * FROM workflow_run WHERE workflow_id=? ORDER BY started_at DESC", (workflow_id,)
+        )).fetchall()
+        return [self._run(row) for row in rows]
+
+    async def list_due_schedules(self, now: dt.datetime) -> list[Workflow]:
+        rows = await (await self._conn.execute(
+            "SELECT * FROM workflow WHERE enabled=1 AND trigger_type='schedule' AND next_run_at<=?",
+            (_iso(now),),
+        )).fetchall()
+        return [self._workflow(row) for row in rows]
 
 
 class SqlAlchemyBoardRepository:

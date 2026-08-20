@@ -265,6 +265,48 @@ async def manage_workspaces_page(
     )
 
 
+@router.get("/workspaces/new", response_class=HTMLResponse)
+async def add_workspace_page(
+    request: Request, current_user: CurrentUserDep, uow: UowDep
+):
+    teams = await manageable_teams(current_user, uow)
+    if not teams:
+        raise HTTPException(status_code=403, detail="You cannot add workspaces")
+    return templates.TemplateResponse(
+        request=request,
+        name="workspace_create.html",
+        context={
+            "request": request,
+            "current_user": current_user,
+            "teams": teams,
+            "agents": await uow.auth.list_members(kind="agent"),
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
+@router.post("/workspaces")
+async def create_workspace_from_form(
+    current_user: CurrentUserDep,
+    svc: WorkspaceServiceDep,
+    uow: UowDep,
+    name: str = Form(...),
+    team_id: str = Form(...),
+) -> RedirectResponse:
+    allowed_team_ids = {team.id for team in await manageable_teams(current_user, uow)}
+    if team_id not in allowed_team_ids:
+        raise HTTPException(status_code=403, detail="You cannot add a workspace to that team")
+    clean_name = name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=422, detail="Workspace name is required")
+    try:
+        workspace = await svc.create_workspace(team_id, clean_name, current_user["id"], uow)
+    except PermissionError as exc:
+        raise _forbidden(exc) from exc
+    await uow.commit()
+    return RedirectResponse(f"/management/workspaces/{workspace.id}", status_code=303)
+
+
 @router.get("/workspaces/{workspace_id}", response_class=HTMLResponse)
 async def manage_workspace_page(
     request: Request, workspace_id: str, current_user: CurrentUserDep, uow: UowDep

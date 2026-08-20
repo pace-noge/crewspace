@@ -35,6 +35,12 @@
     .channel-row .nav-link { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 10px 6px 18px; }
     .channel-row .badge, .channel-row details.action-menu { flex: 0 0 auto; }
     .channel-row .badge { white-space: nowrap; }
+    .sidebar-action { opacity: 0; pointer-events: none; transition: opacity .14s ease; flex: 0 0 auto; }
+    .sidebar-action.quick-action { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 25px; padding: 0; border-radius: 6px; color: var(--muted); font-size: 18px; line-height: 1; }
+    .sidebar-action.quick-action:hover, .sidebar-action.quick-action:focus-visible { background: var(--surface); color: var(--text); outline: none; }
+    .workspace-row:hover>.sidebar-action, .workspace-row:focus-within>.sidebar-action,
+    .channel-row:hover>.sidebar-action, .channel-row:focus-within>.sidebar-action,
+    .sidebar-action:focus, .sidebar-action[open] { opacity: 1; pointer-events: auto; }
     details.action-menu { position: relative; }
     details.action-menu > summary { list-style: none; cursor: pointer; border-radius: 6px; padding: 3px 7px; color: var(--muted); }
     details.action-menu > summary::-webkit-details-marker, .user-menu > summary::-webkit-details-marker { display: none; }
@@ -66,7 +72,7 @@
 
     <div class="workspace-row">
       <div class="nav-group" style="flex:1">Workspaces & channels</div>
-      {% if can_manage %}<details class="action-menu">
+      {% if can_manage %}<a class="sidebar-action quick-action" href="/management/workspaces/new" aria-label="Add workspace" title="Add workspace">+</a><details class="action-menu sidebar-action">
         <summary aria-label="Workspaces and channels actions">•••</summary>
         <div class="menu-popover"><a href="/management/workspaces">Manage workspaces</a></div>
       </details>{% endif %}
@@ -76,12 +82,13 @@
       <div class="workspace-nav">
         <div class="workspace-row">
           <div class="workspace-name">▾ {{ workspace_item.workspace.name }}</div>
-          {% if can_manage %}<details class="action-menu"><summary aria-label="Workspace actions">•••</summary><div class="menu-popover"><a href="/management/workspaces/{{ workspace_item.workspace.id }}">Manage workspace</a><a href="/management/workspaces/{{ workspace_item.workspace.id }}/channels/new">Add channel</a><form method="post" action="/management/workspaces/{{ workspace_item.workspace.id }}/archive"><button type="submit">Archive workspace</button></form></div></details>{% endif %}
+          {% if can_manage %}<a class="sidebar-action quick-action" href="/management/workspaces/{{ workspace_item.workspace.id }}/channels/new" aria-label="Add channel to {{ workspace_item.workspace.name }}" title="Add channel">+</a><details class="action-menu sidebar-action"><summary aria-label="Workspace actions">•••</summary><div class="menu-popover"><a href="/management/workspaces/{{ workspace_item.workspace.id }}">Manage workspace</a><a href="/management/workspaces/{{ workspace_item.workspace.id }}/channels/new">Add channel</a><form method="post" action="/management/workspaces/{{ workspace_item.workspace.id }}/archive"><button type="submit">Archive workspace</button></form></div></details>{% endif %}
         </div>
         {% for nav_channel in workspace_item.channels %}
         <div class="channel-row">
           <a class="nav-link {% if channel_id is defined and channel_id == nav_channel.id %}active{% endif %}" href="/channels/{{ nav_channel.id }}"># {{ nav_channel.name }}</a>
-          {% if can_manage %}<details class="action-menu"><summary aria-label="Channel actions">•••</summary><div class="menu-popover"><a href="/channels/{{ nav_channel.id }}">Open channel</a><a href="/management/channels/{{ nav_channel.id }}">Manage channel</a><a href="/management/channels/{{ nav_channel.id }}/members">Manage members</a><form method="post" action="/management/channels/{{ nav_channel.id }}/archive"><button type="submit">Archive channel</button></form></div></details>{% endif %}
+          <a class="sidebar-action quick-action" href="/channels/{{ nav_channel.id }}?compose=1" aria-label="Start a message in {{ nav_channel.name }}" title="Start a message">+</a>
+          {% if can_manage %}<details class="action-menu sidebar-action"><summary aria-label="Channel actions">•••</summary><div class="menu-popover"><a href="/channels/{{ nav_channel.id }}">Open channel</a><a href="/management/channels/{{ nav_channel.id }}">Manage channel</a><a href="/management/channels/{{ nav_channel.id }}/members">Manage members</a><form method="post" action="/management/channels/{{ nav_channel.id }}/archive"><button type="submit">Archive channel</button></form></div></details>{% endif %}
         </div>
         {% endfor %}
       </div>
@@ -97,11 +104,12 @@
     <div class="nav-group">Tools</div>
     <a class="nav-link {% block nav_board %}{% endblock %}" href="/board/board_main"><span class="ico">📋</span> Board</a>
     <a class="nav-link" href="/cronjobs"><span class="ico">⏱</span> Scheduled instructions</a>
+    <a class="nav-link" href="/workflows"><span class="ico">⚡</span> Workflows</a>
 
     <div class="workspace-row">
       <div class="nav-group" style="flex:1">Agents</div>
       {% if current_user %}
-      <details class="action-menu">
+      <a class="sidebar-action quick-action" href="/auth/agents/register" aria-label="Register agent" title="Register agent">+</a><details class="action-menu sidebar-action">
         <summary aria-label="Agents actions">•••</summary>
         <div class="menu-popover"><a href="/auth/agents/register">Register agent</a></div>
       </details>
@@ -115,7 +123,7 @@
           <span class="ico">{{ agent.avatar or "🤖" }}</span>
           {{ agent.name }}
         </a>
-        {% if current_user.role == "superadmin" %}<details class="action-menu"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a>{% if agent.id != "agent_crewspace" %}<form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a>{% else %}<span class="locked">🔒 builtin · protected</span>{% endif %}</div></details>{% endif %}
+        {% if current_user.role == "superadmin" %}<details class="action-menu sidebar-action"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a>{% if agent.id != "agent_crewspace" %}<form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a>{% else %}<span class="locked">🔒 builtin · protected</span>{% endif %}</div></details>{% endif %}
       </div>
     {% endfor %}
 

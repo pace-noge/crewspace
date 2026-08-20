@@ -15,8 +15,11 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .infrastructure.db import Database
-from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools
+from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools, workflows
 from .application.scheduling import SchedulerLoop
+from .application.workflows import WorkflowSchedulerLoop
+from .api.connection import manager
+from .dto.mappers import to_message
 from .security import is_same_origin
 from .infrastructure.db import logger as db_logger
 
@@ -35,11 +38,21 @@ async def lifespan(app: FastAPI):
         db = app.state.db
     db_logger.info("Crewspace database ready (bound to %s).", settings.database_url)
     scheduler = SchedulerLoop(db, settings)
+    async def broadcast_workflow_message(message):
+        await manager.broadcast(
+            message.channel_id, to_message(message).model_dump(mode="json")
+        )
+
+    workflow_scheduler = WorkflowSchedulerLoop(
+        db, on_message=broadcast_workflow_message
+    )
     scheduler.start()
+    workflow_scheduler.start()
     try:
         yield
     finally:
         await scheduler.stop()
+        await workflow_scheduler.stop()
         await db.close()
 
 
@@ -69,6 +82,8 @@ def create_app() -> FastAPI:
     app.include_router(teams.router)
     app.include_router(cronjobs.router)
     app.include_router(tools.router)
+    app.include_router(workflows.router)
+    app.include_router(workflows.hooks_router)
     return app
 
 

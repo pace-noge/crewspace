@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block title %}Add workspace — Crewspace{% endblock %}
+{% block topbar %}Add workspace{% endblock %}
+{% block head %}<style>
+.form-page{padding:28px}.form-card{max-width:520px;padding:22px;border:1px solid var(--border);border-radius:12px;background:var(--bg-elev)}.form-card h1{margin:0 0 5px;font-size:22px}.form-card>p{margin:0 0 18px;color:var(--muted)}.form-card form,.form-card label{display:grid;gap:10px}.form-card input,.form-card select{width:100%}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}.cancel{padding:6px 10px;border:1px solid var(--border);border-radius:6px;color:var(--text)}
+</style>{% endblock %}
+{% block content %}<div class="form-page"><section class="form-card"><h1>Add workspace</h1><p>Create a workspace in a team you manage.</p><form method="post" action="/management/workspaces"><label>Team<select name="team_id" required>{% for team in teams %}<option value="{{ team.id }}">{{ team.name }}</option>{% endfor %}</select></label><label>Workspace name<input name="name" required placeholder="Engineering"></label><div class="actions"><a class="cancel" href="/management/workspaces">Cancel</a><button class="primary" type="submit">Add workspace</button></div></form></section></div>{% endblock %}

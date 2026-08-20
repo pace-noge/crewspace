@@ -47,6 +47,13 @@ class ScheduleKind(str, Enum):
     DAILY = "daily"
 
 
+class WorkflowRunStatus(str, Enum):
+    RUNNING = "running"
+    WAITING = "waiting"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 @dataclass
 class Member:
     id: str
@@ -146,6 +153,38 @@ class ScheduledJobRun:
     message_ids: list[str] = field(default_factory=list)
     error: str | None = None
     next_run_at: datetime | None = None
+
+
+@dataclass
+class Workflow:
+    id: str
+    name: str
+    channel_id: str
+    trigger_type: str
+    trigger_config: dict
+    steps: list[dict]
+    creator_id: str
+    enabled: bool = True
+    description: str | None = None
+    filter_expression: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    next_run_at: datetime | None = None
+
+
+@dataclass
+class WorkflowRun:
+    id: str
+    workflow_id: str
+    trigger_type: str
+    event: dict
+    status: WorkflowRunStatus
+    current_step: int
+    step_results: list[dict]
+    started_at: datetime
+    finished_at: datetime | None = None
+    error: str | None = None
+    approval_token: str | None = None
 
 
 @dataclass

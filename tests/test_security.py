@@ -128,6 +128,24 @@ def test_login_page_does_not_disclose_seeded_credentials(anonymous_client):
     assert "Default admin" not in response.text
 
 
+def test_successful_login_redirects_home_and_login_page_does_not_trap_session(
+    anonymous_client,
+):
+    anonymous_client.headers["Origin"] = "http://testserver"
+    response = anonymous_client.post(
+        "/auth/login",
+        data={"username": "Bilal", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert response.cookies.get("crewspace_session")
+
+    login_page = anonymous_client.get("/auth/login", follow_redirects=False)
+    assert login_page.status_code == 303
+    assert login_page.headers["location"] == "/"
+
+
 def test_outsider_cannot_read_or_toggle_channel_reactions(client):
     with client.websocket_connect("/channels/chan_general/ws") as ws:
         ws.send_json({"body": "Private reaction target"})

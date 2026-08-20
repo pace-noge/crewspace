@@ -16,6 +16,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "sqlalchemy[asyncio]>=2.0.41",
     "uvicorn[standard]>=0.52.3",
+    "croniter>=6.2.4",
 ]
 
 [project.scripts]
