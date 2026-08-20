@@ -157,6 +157,43 @@ async def test_external_mcp_endpoint_validation_blocks_ssrf_targets():
         )
 
 
+async def test_external_transport_stops_response_before_byte_limit_is_exceeded():
+    import httpx2
+    import pytest
+
+    from crewspace.infrastructure.mcp_client import (
+        McpResponseTooLarge,
+        _LimitedResponseTransport,
+    )
+
+    class Chunks(httpx2.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self):
+            yield b"1234"
+            yield b"5678"
+
+        async def aclose(self):
+            self.closed = True
+
+    stream = Chunks()
+
+    class Delegate(httpx2.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            return httpx2.Response(200, stream=stream, request=request)
+
+        async def aclose(self):
+            return None
+
+    transport = _LimitedResponseTransport(Delegate(), max_response_bytes=6)
+    response = await transport.handle_async_request(
+        httpx2.Request("POST", "https://mcp.example.test/api")
+    )
+    with pytest.raises(McpResponseTooLarge):
+        await response.aread()
+    assert stream.closed is True
+
+
 async def test_pinned_backend_never_resolves_original_hostname():
     from crewspace.infrastructure.mcp_client import _PinnedNetworkBackend
 
@@ -232,6 +269,39 @@ async def test_mcp_discovery_rejects_duplicate_or_unsafe_tool_names():
             max_tools=10,
             max_catalog_bytes=10_000,
         )
+    deeply_nested: dict[str, object] = {"type": "object"}
+    nested: dict[str, object] = deeply_nested
+    for _ in range(100):
+        child = {}
+        nested["properties"] = {"child": child}
+        nested = child
+
+    for invalid_schema in (
+        {
+            "type": "object",
+            "$schema": 1,
+            "properties": "not-an-object",
+        },
+        deeply_nested,
+        {
+            "type": "object",
+            "properties": {"item": {"$ref": "https://attacker.invalid/schema"}},
+        },
+        {
+            "type": "object",
+            "$dynamicRef": "https://attacker.invalid/schema",
+        },
+        {
+            "type": "object",
+            "$recursiveRef": "https://attacker.invalid/schema",
+        },
+    ):
+        with pytest.raises(McpDiscoveryError):
+            validate_discovered_tools(
+                [DiscoveredMcpTool("invalid_schema", "Invalid", invalid_schema)],
+                max_tools=10,
+                max_catalog_bytes=10_000,
+            )
 
 
 async def test_mcp_discovery_reads_all_catalog_pages(monkeypatch):

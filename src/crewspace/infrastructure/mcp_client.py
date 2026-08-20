@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
-import re
 import socket
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -15,15 +12,17 @@ from httpcore2._backends.auto import AutoBackend
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 
+from ..application.mcp_catalog import (
+    DiscoveredMcpTool,
+    McpCatalogTooLarge,
+    McpDiscoveryError,
+    validate_discovered_tools,
+)
 from ..application.mcp_connections import resolve_mcp_secret_ref
 from ..domain.entities import McpConnection
 
 
-class McpDiscoveryError(RuntimeError):
-    pass
-
-
-class McpCatalogTooLarge(McpDiscoveryError):
+class McpResponseTooLarge(McpDiscoveryError):
     pass
 
 
@@ -113,15 +112,60 @@ class _PinnedNetworkBackend:
         await self._delegate.sleep(seconds)
 
 
+class _LimitedByteStream(httpx2.AsyncByteStream):
+    def __init__(self, stream: httpx2.AsyncByteStream, limit: int) -> None:
+        self._stream = stream
+        self._limit = limit
+
+    async def __aiter__(self):
+        received = 0
+        async for chunk in self._stream:
+            received += len(chunk)
+            if received > self._limit:
+                await self._stream.aclose()
+                raise McpResponseTooLarge("MCP response exceeds byte limit")
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class _LimitedResponseTransport(httpx2.AsyncBaseTransport):
+    def __init__(
+        self, delegate: httpx2.AsyncBaseTransport, *, max_response_bytes: int,
+    ) -> None:
+        self._delegate = delegate
+        self._max_response_bytes = max_response_bytes
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        response = await self._delegate.handle_async_request(request)
+        content_length = response.headers.get("content-length")
+        if content_length is not None and int(content_length) > self._max_response_bytes:
+            await response.aclose()
+            raise McpResponseTooLarge("MCP response exceeds byte limit")
+        if not isinstance(response.stream, httpx2.AsyncByteStream):
+            await response.aclose()
+            raise McpDiscoveryError("MCP response did not provide an async stream")
+        response.stream = _LimitedByteStream(
+            response.stream, self._max_response_bytes
+        )
+        return response
+
+    async def aclose(self) -> None:
+        await self._delegate.aclose()
+
+
 class ExternalMcpDiscoveryClient:
     def __init__(
         self, endpoint: str, authorization_headers: dict[str, str],
         *, pinned_addresses: set[str], timeout_seconds: float = 10,
+        max_response_bytes: int = 1_000_000,
     ) -> None:
         self.endpoint = endpoint
         self.authorization_headers = authorization_headers
         self.pinned_addresses = pinned_addresses
         self._timeout_seconds = timeout_seconds
+        self._max_response_bytes = max_response_bytes
         self.follow_redirects = False
 
     async def list_tools(self) -> list[DiscoveredMcpTool]:
@@ -131,11 +175,14 @@ class ExternalMcpDiscoveryClient:
         transport._pool._network_backend = _PinnedNetworkBackend(  # pyright: ignore
             self.pinned_addresses
         )
+        limited_transport = _LimitedResponseTransport(
+            transport, max_response_bytes=self._max_response_bytes
+        )
         http_client = httpx2.AsyncClient(
             headers=self.authorization_headers,
             follow_redirects=self.follow_redirects,
             timeout=self._timeout_seconds,
-            transport=transport,
+            transport=limited_transport,
             trust_env=False,
         )
         async with http_client:
@@ -163,55 +210,6 @@ async def build_external_discovery_client(
     return ExternalMcpDiscoveryClient(
         endpoint, headers, pinned_addresses=addresses
     )
-
-
-@dataclass(frozen=True)
-class DiscoveredMcpTool:
-    name: str
-    description: str
-    input_schema: dict[str, Any]
-
-    @property
-    def qualified_name(self) -> str:
-        return self.name
-
-
-def validate_discovered_tools(
-    tools: list[DiscoveredMcpTool], *, max_tools: int,
-    max_catalog_bytes: int, max_schema_bytes: int = 64_000,
-) -> list[DiscoveredMcpTool]:
-    if len(tools) > max_tools:
-        raise McpCatalogTooLarge(f"MCP catalog exceeds {max_tools} tools")
-    names: set[str] = set()
-    total_size = 0
-    for tool in tools:
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,127}", tool.name):
-            raise McpDiscoveryError(f"Unsafe MCP tool name {tool.name!r}")
-        if tool.name in names:
-            raise McpDiscoveryError(f"Duplicate MCP tool name {tool.name!r}")
-        names.add(tool.name)
-        if tool.input_schema.get("type") != "object":
-            raise McpDiscoveryError(
-                f"MCP tool {tool.name!r} must have an object input schema"
-            )
-        encoded = json.dumps(
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        schema_size = len(json.dumps(tool.input_schema).encode())
-        if schema_size > max_schema_bytes:
-            raise McpDiscoveryError(
-                f"MCP tool {tool.name!r} schema exceeds size limit"
-            )
-        total_size += len(encoded)
-    if total_size > max_catalog_bytes:
-        raise McpCatalogTooLarge("MCP catalog payload exceeds size limit")
-    return tools
 
 
 class McpDiscoveryClient:

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from ..domain.entities import McpConnection, McpDiscoveredTool
 from ..domain.ports import UnitOfWork
+from .mcp_catalog import validate_discovered_tools
 
 _RESERVED_NAMESPACES = {"crewspace", "native", "system"}
 _SECRET_REF = re.compile(r"env:(CREWSPACE_MCP_[A-Z0-9_]+)")
@@ -68,8 +69,6 @@ class McpConnectionService:
 
 
 async def discover_mcp_tools(connection: McpConnection, uow: UnitOfWork, *, client):
-    from ..infrastructure.mcp_client import validate_discovered_tools
-
     discovered = validate_discovered_tools(
         await client.list_tools(),
         max_tools=100,
