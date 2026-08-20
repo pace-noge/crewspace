@@ -66,21 +66,33 @@ class ChatService:
         # right away (the agent reply arrives later, in its own frame).
         if on_human_persisted is not None:
             await on_human_persisted(human_dto)
-        provider = await AgentRegistry.build(self._settings, uow)
+        provider = await AgentRegistry.build(
+            self._settings, uow, principal_id=author_id
+        )
         routable = agent_routable_text(
             routing_text if routing_text is not None else body
         )
         resolved_agent_id = provider.resolve(routable)
-        allowed_tools = (
-            await uow.agent_policies.list_enabled_native_tools(resolved_agent_id)
-            if resolved_agent_id else set()
-        )
-        runner = self._registry.bind(
-            uow,
-            principal_id=author_id,
-            agent_id=resolved_agent_id or "",
-            allowed_tools=allowed_tools,
-        )
+        if resolved_agent_id:
+            from ..infrastructure import mcp_client
+            from .mcp_tools import build_agent_tool_runtime
+
+            executor = await mcp_client.build_external_tool_executor()
+            runtime = await build_agent_tool_runtime(
+                self._registry,
+                uow,
+                principal_id=author_id,
+                agent_id=resolved_agent_id,
+                executor=executor,
+            )
+            runner = runtime.runner
+        else:
+            runner = self._registry.bind(
+                uow,
+                principal_id=author_id,
+                agent_id="",
+                allowed_tools=set(),
+            )
         # Build conversation context so the agent can reason over history
         # (e.g. summarize a thread or pull action items). A thread reply sees
         # the whole thread; a channel message sees recent channel history.

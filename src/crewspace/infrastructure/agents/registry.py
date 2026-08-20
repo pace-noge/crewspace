@@ -29,7 +29,7 @@ MemberLike = Any
 
 
 def _build_local_agent(
-    member: MemberLike, settings: Settings, allowed_tools: set[str]
+    member: MemberLike, settings: Settings, allowed_tools: list[Any]
 ) -> AgentProvider:
     """A local agent runs in this process (Stub or LLM logic).
 
@@ -41,11 +41,8 @@ def _build_local_agent(
     if backend == "llm":
         from .llm import LLMAgent
 
-        from ...application.tools import build_registry
-
-        registry = build_registry()
         return LLMAgent(
-            [tool for tool in registry.list_tools() if tool.name in allowed_tools],
+            allowed_tools,
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
             model=settings.llm_model,
@@ -64,15 +61,36 @@ class AgentRegistry:
     """
 
     @staticmethod
-    async def build(settings: Settings, uow: UnitOfWork) -> "MultiAgentProvider":
+    async def build(
+        settings: Settings, uow: UnitOfWork, *, principal_id: str | None = None,
+    ) -> "MultiAgentProvider":
         members = await uow.auth.list_members(kind="agent")
+        principal = (
+            await uow.auth.get_member(principal_id) if principal_id else None
+        )
+        allow_external = bool(principal and principal["kind"] == "human")
         local: dict[str, AgentProvider] = {}
         mentions: dict[str, str] = {}
         for member in members:
             agent_id = member["id"]
             mentions[member["name"].strip().lstrip("@").lower()] = agent_id
             if not member["pubkey"]:
-                allowed = await uow.agent_policies.list_enabled_native_tools(agent_id)
+                from ...application.mcp_tools import list_effective_agent_tools
+                from ...application.tools import build_registry
+
+                if allow_external:
+                    allowed = await list_effective_agent_tools(
+                        build_registry(), uow, agent_id
+                    )
+                else:
+                    native = build_registry()
+                    native_grants = await uow.agent_policies.list_enabled_native_tools(
+                        agent_id
+                    )
+                    allowed = [
+                        tool for tool in native.list_tools()
+                        if tool.name in native_grants
+                    ]
                 local[agent_id] = _build_local_agent(member, settings, allowed)
         return MultiAgentProvider(
             local, default_agent_id=PLANNER_AGENT_ID, mentions=mentions

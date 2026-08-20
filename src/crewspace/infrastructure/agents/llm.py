@@ -17,6 +17,8 @@ test can hand in a mocked AsyncOpenAI without any network or API key.
 """
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Any
 
 from ...domain.entities import CardView
@@ -46,13 +48,21 @@ def _system_prompt(name: str) -> str:
     )
 
 
+def _provider_tool_name(tool: Any) -> str:
+    if tool.provider == "crewspace":
+        return tool.name
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", tool.name)
+    digest = hashlib.sha256(tool.name.encode()).hexdigest()[:10]
+    return f"mcp_{safe[:49]}_{digest}"
+
+
 def _to_openai_tools(registry_tools: list[Any]) -> list[dict[str, Any]]:
     """Convert registry tools into the OpenAI function-calling schema."""
     return [
         {
             "type": "function",
             "function": {
-                "name": t.name,
+                "name": _provider_tool_name(t),
                 "description": t.description,
                 "parameters": t.input_schema,
             },
@@ -78,6 +88,9 @@ class LLMAgent:
         mention: str | None = None,
     ) -> None:
         self._tools = registry_tools
+        self._tool_aliases = {
+            _provider_tool_name(tool): tool.name for tool in registry_tools
+        }
         self._api_key = api_key
         self._base_url = base_url
         self._model = model
@@ -168,8 +181,11 @@ class LLMAgent:
                 # Execute each requested tool via the registry-bound runner.
                 for tc in choice.tool_calls:
                     args = _parse_args(tc.function.arguments)
+                    canonical_name = self._tool_aliases.get(
+                        tc.function.name, tc.function.name
+                    )
                     try:
-                        result = await runner.run(tc.function.name, **args)
+                        result = await runner.run(canonical_name, **args)
                     except Exception as exc:  # surface tool failures to the model
                         result = {"error": f"{type(exc).__name__}: {exc}"}
                     messages.append(

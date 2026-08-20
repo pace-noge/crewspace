@@ -110,7 +110,8 @@ async def test_chat_commits_human_message_before_waiting_for_agent(app, monkeypa
                 observed["visible"] = row["n"] == 1
             return "", []
 
-    async def fake_build(settings, uow):
+    async def fake_build(settings, uow, *, principal_id=None):
+        assert principal_id == "user_bilal"
         return Provider()
 
     monkeypatch.setattr(AgentRegistry, "build", staticmethod(fake_build))

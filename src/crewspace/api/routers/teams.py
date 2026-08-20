@@ -796,11 +796,12 @@ async def update_agent_tools(
     current_user: CurrentUserDep,
     uow: UowDep,
     tool_names: list[str] = Form(default=[]),
+    mcp_tool_names: list[str] = Form(default=[]),
 ):
     service = AgentToolPolicyService(build_registry())
     try:
-        await service.replace_native_tools(
-            current_user, agent_id, set(tool_names), uow
+        await service.replace_tool_access(
+            current_user, agent_id, set(tool_names), set(mcp_tool_names), uow
         )
     except PermissionError as exc:
         raise _forbidden(exc) from exc

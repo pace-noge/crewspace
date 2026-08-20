@@ -103,6 +103,61 @@ def _make_agent(script: list[ChatCompletion]) -> LLMAgent:
 
 # --- tests ------------------------------------------------------------------
 
+def test_llm_agent_maps_namespaced_tool_alias_back_to_canonical_name():
+    from crewspace.application.tools import Tool
+
+    async def unused(*args, **kwargs):
+        raise AssertionError("catalog handlers are not called directly")
+
+    tool = Tool(
+        name="jira.create_issue",
+        description="Create issue",
+        input_schema={
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+        },
+        handler=unused,
+        provider="mcp_jira",
+    )
+    import hashlib
+
+    provider_alias = "mcp_jira_create_issue_" + hashlib.sha256(
+        b"jira.create_issue"
+    ).hexdigest()[:10]
+    script = [
+        _completion(_msg(None, [_tool_call("mcp1", provider_alias, {"title": "Alias"})])),
+        _completion(_msg("Created.", None)),
+    ]
+    client = _ScriptedClient(script)
+    agent = LLMAgent(
+        [tool],
+        api_key="test",
+        model="test-model",
+        client_factory=lambda *a, **k: client,
+        agent_id="agent_crewspace",
+        name="Crewspace",
+    )
+    called = []
+
+    async def runner(name: str, **args: Any) -> dict:
+        called.append((name, args))
+        return {"ok": True}
+
+    asyncio.run(
+        agent.on_chat_message(
+            "@crewspace create issue", _BoundRunnerStub(runner)
+        )
+    )
+
+    advertised = client.calls[0]["tools"]
+    provider_name = advertised[0]["function"]["name"]
+    assert provider_name.startswith("mcp_jira_create_issue_")
+    assert "." not in provider_name
+    assert len(provider_name) <= 64
+    assert called == [("jira.create_issue", {"title": "Alias"})]
+
+
 def test_llm_agent_creates_card_via_tool():
     """Agent calls create_card from a tool-call, then returns a text reply."""
     script = [
@@ -203,7 +258,8 @@ def test_llm_agent_creates_real_card_through_service_app(app, monkeypatch):
         client_factory=lambda *a, **k: client,
     )
     # Route chat through the facade with this agent as the planner.
-    async def _fake_build(settings, uow):
+    async def _fake_build(settings, uow, *, principal_id=None):
+        assert principal_id == "user_bilal"
         return MultiAgentProvider({agent.agent_id: agent}, default_agent_id=agent.agent_id)
     monkeypatch.setattr(AgentRegistry, "build", staticmethod(_fake_build))
 

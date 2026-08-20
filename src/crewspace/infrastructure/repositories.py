@@ -339,6 +339,35 @@ class SqlAlchemyAgentPolicyRepository:
                 (agent_id, tool_name, now, now),
             )
 
+    async def list_enabled_mcp_tools(self, agent_id: str) -> set[tuple[str, str]]:
+        cur = await self._conn.execute(
+            "SELECT provider_id, tool_name FROM agent_tool_permission "
+            "WHERE agent_id=? AND provider_type='mcp' AND enabled=1",
+            (agent_id,),
+        )
+        return {
+            (row["provider_id"], row["tool_name"])
+            for row in await cur.fetchall()
+        }
+
+    async def replace_mcp_tools(
+        self, agent_id: str, tools: set[tuple[str, str]],
+    ) -> None:
+        await self._conn.execute(
+            "DELETE FROM agent_tool_permission WHERE agent_id=? "
+            "AND provider_type='mcp'",
+            (agent_id,),
+        )
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        for provider_id, tool_name in sorted(tools):
+            await self._conn.execute(
+                "INSERT INTO agent_tool_permission "
+                "(agent_id, provider_type, provider_id, tool_name, enabled, "
+                "approval_mode, created_at, updated_at) "
+                "VALUES (?, 'mcp', ?, ?, 1, 'automatic', ?, ?)",
+                (agent_id, provider_id, tool_name, now, now),
+            )
+
 
 class SqlAlchemyAgentToolCallRepository:
     def __init__(self, conn: SqlAlchemyConnection) -> None:
@@ -538,6 +567,16 @@ class SqlAlchemyMcpConnectionRepository:
             "ORDER BY tool_name", (connection_id,)
         )).fetchall()
         return [self._map_tool(row) for row in rows]
+
+    async def get_discovered_tool(
+        self, connection_id: str, tool_name: str,
+    ) -> McpDiscoveredTool | None:
+        row = await (await self._conn.execute(
+            "SELECT * FROM mcp_discovered_tool "
+            "WHERE connection_id=? AND tool_name=?",
+            (connection_id, tool_name),
+        )).fetchone()
+        return self._map_tool(row) if row else None
 
 
 class SqlAlchemyScheduledJobRepository:

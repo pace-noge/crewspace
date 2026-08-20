@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import socket
 from typing import Any
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ import httpx2
 from httpcore2._backends.auto import AutoBackend
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import TextContent
 
 from ..application.mcp_catalog import (
     DiscoveredMcpTool,
@@ -194,6 +196,77 @@ class ExternalMcpDiscoveryClient:
             ).list_tools()
 
 
+class ExternalMcpExecutionClient:
+    def __init__(
+        self, endpoint: str, authorization_headers: dict[str, str],
+        *, pinned_addresses: set[str], timeout_seconds: float = 10,
+        max_response_bytes: int = 1_000_000,
+    ) -> None:
+        self.endpoint = endpoint
+        self.authorization_headers = authorization_headers
+        self.pinned_addresses = pinned_addresses
+        self._timeout_seconds = timeout_seconds
+        self._max_response_bytes = max_response_bytes
+        self.follow_redirects = False
+
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        transport = httpx2.AsyncHTTPTransport(trust_env=False, retries=0)
+        transport._pool._network_backend = _PinnedNetworkBackend(  # pyright: ignore
+            self.pinned_addresses
+        )
+        limited_transport = _LimitedResponseTransport(
+            transport, max_response_bytes=self._max_response_bytes
+        )
+        http_client = httpx2.AsyncClient(
+            headers=self.authorization_headers,
+            follow_redirects=False,
+            timeout=self._timeout_seconds,
+            transport=limited_transport,
+            trust_env=False,
+        )
+        async with http_client:
+            server = streamable_http_client(
+                self.endpoint, http_client=http_client
+            )
+            return await McpExecutionClient(
+                server, timeout_seconds=self._timeout_seconds
+            ).call_tool(tool_name, arguments)
+
+
+class ExternalMcpToolExecutor:
+    def __init__(self, *, resolver=_resolve_host) -> None:
+        self._resolver = resolver
+
+    async def client_for(
+        self, connection: McpConnection,
+    ) -> ExternalMcpExecutionClient:
+        if connection.transport != "streamable_http":
+            raise ValueError("Only Streamable HTTP MCP connections are supported")
+        endpoint, addresses = await _validate_and_resolve_mcp_endpoint(
+            connection.endpoint_or_command, resolver=self._resolver
+        )
+        headers: dict[str, str] = {}
+        if connection.auth_secret_ref:
+            headers["Authorization"] = (
+                f"Bearer {resolve_mcp_secret_ref(connection.auth_secret_ref)}"
+            )
+        return ExternalMcpExecutionClient(
+            endpoint, headers, pinned_addresses=addresses
+        )
+
+    async def call_tool(
+        self, connection: McpConnection, tool_name: str, arguments: dict[str, Any]
+    ) -> Any:
+        client = await self.client_for(connection)
+        return await client.call_tool(tool_name, arguments)
+
+
+async def build_external_tool_executor(
+    *, resolver=_resolve_host,
+) -> ExternalMcpToolExecutor:
+    return ExternalMcpToolExecutor(resolver=resolver)
+
+
 async def build_external_discovery_client(
     connection: McpConnection, *, resolver=_resolve_host,
 ) -> ExternalMcpDiscoveryClient:
@@ -210,6 +283,39 @@ async def build_external_discovery_client(
     return ExternalMcpDiscoveryClient(
         endpoint, headers, pinned_addresses=addresses
     )
+
+
+class McpExecutionClient:
+    def __init__(
+        self, server: Any, *, timeout_seconds: float = 10,
+    ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("MCP execution timeout must be positive")
+        self._server = server
+        self._timeout_seconds = timeout_seconds
+
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                async with Client(
+                    self._server,
+                    read_timeout_seconds=self._timeout_seconds,
+                    raise_exceptions=False,
+                ) as client:
+                    result = await client.call_tool(tool_name, arguments)
+        except TimeoutError as exc:
+            raise RuntimeError("MCP tool execution timed out") from exc
+        if result.is_error:
+            raise RuntimeError("MCP tool returned an error")
+        if result.structured_content is not None:
+            return result.structured_content
+        if len(result.content) == 1 and isinstance(result.content[0], TextContent):
+            text = result.content[0].text
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return text
+        return [item.model_dump(mode="json", by_alias=True) for item in result.content]
 
 
 class McpDiscoveryClient:

@@ -5,6 +5,31 @@ from mcp.server import MCPServer
 from crewspace.domain.entities import McpConnection
 
 
+async def test_mcp_v2_tool_execution_normalizes_results_and_errors():
+    import pytest
+
+    from crewspace.infrastructure.mcp_client import McpExecutionClient
+
+    server = MCPServer(name="fake-execution", version="1.0")
+
+    async def create_issue(title: str) -> dict:
+        return {"issue_key": "ENG-42", "title": title}
+
+    async def fail_issue(title: str) -> str:
+        raise ValueError(f"cannot create {title}")
+
+    server.add_tool(create_issue, name="create_issue")
+    server.add_tool(fail_issue, name="fail_issue")
+    client = McpExecutionClient(server, timeout_seconds=2)
+
+    assert await client.call_tool("create_issue", {"title": "Ship"}) == {
+        "issue_key": "ENG-42",
+        "title": "Ship",
+    }
+    with pytest.raises(RuntimeError, match="MCP tool returned an error"):
+        await client.call_tool("fail_issue", {"title": "Broken"})
+
+
 async def test_in_process_mcp_discovery_persists_pending_namespaced_tools(app):
     from crewspace.application.mcp_connections import discover_mcp_tools
     from crewspace.infrastructure.mcp_client import McpDiscoveryClient
@@ -212,7 +237,10 @@ async def test_pinned_backend_never_resolves_original_hostname():
 async def test_external_mcp_client_factory_uses_secret_reference_and_supported_transport(monkeypatch):
     import pytest
 
-    from crewspace.infrastructure.mcp_client import build_external_discovery_client
+    from crewspace.infrastructure.mcp_client import (
+        build_external_discovery_client,
+        build_external_tool_executor,
+    )
 
     now = dt.datetime.now(dt.timezone.utc)
     connection = McpConnection(
@@ -238,6 +266,14 @@ async def test_external_mcp_client_factory_uses_secret_reference_and_supported_t
     }
     assert "secret-bearer-value" not in client.endpoint
     assert client.follow_redirects is False
+
+    executor = await build_external_tool_executor(resolver=public)
+    execution_client = await executor.client_for(connection)
+    assert execution_client.pinned_addresses == {"8.8.8.8"}
+    assert execution_client.authorization_headers == {
+        "Authorization": "Bearer secret-bearer-value"
+    }
+    assert execution_client.follow_redirects is False
 
     connection.transport = "sse"
     with pytest.raises(ValueError):

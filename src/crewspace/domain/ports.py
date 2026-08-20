@@ -331,6 +331,10 @@ class WorkflowRepository(Protocol):
 class AgentPolicyRepository(Protocol):
     async def list_enabled_native_tools(self, agent_id: str) -> set[str]: ...
     async def replace_native_tools(self, agent_id: str, tool_names: set[str]) -> None: ...
+    async def list_enabled_mcp_tools(self, agent_id: str) -> set[tuple[str, str]]: ...
+    async def replace_mcp_tools(
+        self, agent_id: str, tools: set[tuple[str, str]],
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -361,6 +365,9 @@ class McpConnectionRepository(Protocol):
     async def list_discovered_tools(
         self, connection_id: str,
     ) -> list[McpDiscoveredTool]: ...
+    async def get_discovered_tool(
+        self, connection_id: str, tool_name: str,
+    ) -> McpDiscoveredTool | None: ...
 
 
 @runtime_checkable
