@@ -86,6 +86,49 @@ class AgentToolCallModel(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class McpConnectionModel(Base):
+    __tablename__ = "mcp_connection"
+    __table_args__ = (
+        UniqueConstraint("namespace", name="uq_mcp_connection_namespace"),
+        CheckConstraint(
+            "transport IN ('streamable_http','sse','stdio_managed')",
+            name="ck_mcp_connection_transport",
+        ),
+        CheckConstraint("enabled IN (0,1)", name="ck_mcp_connection_enabled"),
+    )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    namespace: Mapped[str] = mapped_column(String, nullable=False)
+    transport: Mapped[str] = mapped_column(String, nullable=False)
+    endpoint_or_command: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    auth_secret_ref: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class McpDiscoveredToolModel(Base):
+    __tablename__ = "mcp_discovered_tool"
+    __table_args__ = (
+        CheckConstraint(
+            "approval_state IN ('pending','approved','changed','disabled')",
+            name="ck_mcp_discovered_tool_approval_state",
+        ),
+    )
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("mcp_connection.id", ondelete="CASCADE"), primary_key=True
+    )
+    tool_name: Mapped[str] = mapped_column(String, primary_key=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    input_schema: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_hash: Mapped[str] = mapped_column(String, nullable=False)
+    approval_state: Mapped[str] = mapped_column(
+        String, nullable=False, default="pending"
+    )
+    discovered_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class TeamModel(Base):
     __tablename__ = "team"
     id: Mapped[str] = mapped_column(String, primary_key=True)

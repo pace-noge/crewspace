@@ -32,6 +32,7 @@ from .repositories import (
     SqlAlchemyBoardRepository,
     SqlAlchemyChannelRepository,
     SqlAlchemyChatRepository,
+    SqlAlchemyMcpConnectionRepository,
     SqlAlchemyScheduledJobRepository,
     SqlAlchemyTeamRepository,
     SqlAlchemyWorkspaceRepository,
@@ -55,6 +56,7 @@ class SqlAlchemyUnitOfWork:
         self.auth = SqlAlchemyAuthRepository(conn)
         self.agent_policies = SqlAlchemyAgentPolicyRepository(conn)
         self.agent_tool_calls = SqlAlchemyAgentToolCallRepository(conn)
+        self.mcp_connections = SqlAlchemyMcpConnectionRepository(conn)
         self.teams = SqlAlchemyTeamRepository(conn)
         self.workspaces = SqlAlchemyWorkspaceRepository(conn)
         self.channels = SqlAlchemyChannelRepository(conn)

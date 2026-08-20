@@ -8,6 +8,7 @@ against asyncpg while returning the exact same entities, so every layer above
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import uuid
 
@@ -15,6 +16,8 @@ from .sql import MappingRow, SqlAlchemyConnection
 
 from ..domain.entities import (
     AgentToolCall,
+    McpConnection,
+    McpDiscoveredTool,
     BoardView,
     CardView,
     Channel,
@@ -391,6 +394,115 @@ class SqlAlchemyAgentToolCallRepository:
             "ORDER BY created_at DESC, id DESC LIMIT ?)",
             (keep,),
         )
+
+
+class SqlAlchemyMcpConnectionRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    @staticmethod
+    def _map_connection(row) -> McpConnection:
+        return McpConnection(
+            id=row["id"], name=row["name"], namespace=row["namespace"],
+            transport=row["transport"],
+            endpoint_or_command=row["endpoint_or_command"],
+            enabled=bool(row["enabled"]),
+            auth_secret_ref=row["auth_secret_ref"], created_by=row["created_by"],
+            created_at=_parse(row["created_at"]), updated_at=_parse(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _map_tool(row) -> McpDiscoveredTool:
+        return McpDiscoveredTool(
+            connection_id=row["connection_id"], tool_name=row["tool_name"],
+            description=row["description"], input_schema=json.loads(row["input_schema"]),
+            schema_hash=row["schema_hash"], approval_state=row["approval_state"],
+            discovered_at=_parse(row["discovered_at"]),
+        )
+
+    async def create(self, connection: McpConnection) -> McpConnection:
+        await self._conn.execute(
+            "INSERT INTO mcp_connection "
+            "(id, name, namespace, transport, endpoint_or_command, enabled, "
+            "auth_secret_ref, created_by, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (connection.id, connection.name, connection.namespace,
+             connection.transport, connection.endpoint_or_command,
+             int(connection.enabled), connection.auth_secret_ref,
+             connection.created_by, _iso(connection.created_at),
+             _iso(connection.updated_at)),
+        )
+        return connection
+
+    async def get(self, connection_id: str) -> McpConnection | None:
+        row = await (await self._conn.execute(
+            "SELECT * FROM mcp_connection WHERE id=?", (connection_id,)
+        )).fetchone()
+        return self._map_connection(row) if row else None
+
+    async def upsert_discovered_tool(self, tool: McpDiscoveredTool) -> None:
+        schema = json.dumps(tool.input_schema, sort_keys=True, separators=(",", ":"))
+        fingerprint_payload = json.dumps(
+            {
+                "name": tool.tool_name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        schema_hash = f"sha256:{hashlib.sha256(fingerprint_payload).hexdigest()}"
+        existing = await (await self._conn.execute(
+            "SELECT schema_hash, approval_state FROM mcp_discovered_tool "
+            "WHERE connection_id=? AND tool_name=?",
+            (tool.connection_id, tool.tool_name),
+        )).fetchone()
+        approval_state = tool.approval_state
+        if existing:
+            approval_state = (
+                existing["approval_state"]
+                if existing["schema_hash"] == schema_hash
+                else "changed"
+            )
+        else:
+            approval_state = "pending"
+        result = await self._conn.execute(
+            "UPDATE mcp_discovered_tool SET description=?, input_schema=?, "
+            "schema_hash=?, approval_state=?, discovered_at=? "
+            "WHERE connection_id=? AND tool_name=?",
+            (tool.description, schema, schema_hash, approval_state,
+             _iso(tool.discovered_at), tool.connection_id, tool.tool_name),
+        )
+        if result.rowcount == 0:
+            await self._conn.execute(
+                "INSERT INTO mcp_discovered_tool "
+                "(connection_id, tool_name, description, input_schema, schema_hash, "
+                "approval_state, discovered_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (tool.connection_id, tool.tool_name, tool.description, schema,
+                 schema_hash, approval_state, _iso(tool.discovered_at)),
+            )
+
+    async def set_tool_approval_state(
+        self, connection_id: str, tool_name: str, state: str,
+    ) -> None:
+        if state not in {"pending", "approved", "changed", "disabled"}:
+            raise ValueError(f"Invalid MCP tool approval state {state!r}")
+        result = await self._conn.execute(
+            "UPDATE mcp_discovered_tool SET approval_state=? "
+            "WHERE connection_id=? AND tool_name=?",
+            (state, connection_id, tool_name),
+        )
+        if result.rowcount == 0:
+            raise KeyError(f"Unknown MCP tool {connection_id}.{tool_name}")
+
+    async def list_discovered_tools(
+        self, connection_id: str,
+    ) -> list[McpDiscoveredTool]:
+        rows = await (await self._conn.execute(
+            "SELECT * FROM mcp_discovered_tool WHERE connection_id=? "
+            "ORDER BY tool_name", (connection_id,)
+        )).fetchall()
+        return [self._map_tool(row) for row in rows]
 
 
 class SqlAlchemyScheduledJobRepository:

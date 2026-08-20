@@ -15,6 +15,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from .entities import (
     AgentToolCall,
+    McpConnection,
+    McpDiscoveredTool,
     BoardView,
     CardView,
     Channel,
@@ -343,6 +345,19 @@ class AgentToolCallRepository(Protocol):
 
 
 @runtime_checkable
+class McpConnectionRepository(Protocol):
+    async def create(self, connection: McpConnection) -> McpConnection: ...
+    async def get(self, connection_id: str) -> McpConnection | None: ...
+    async def upsert_discovered_tool(self, tool: McpDiscoveredTool) -> None: ...
+    async def set_tool_approval_state(
+        self, connection_id: str, tool_name: str, state: str,
+    ) -> None: ...
+    async def list_discovered_tools(
+        self, connection_id: str,
+    ) -> list[McpDiscoveredTool]: ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Bundles repositories over one consistent storage session."""
 
@@ -357,6 +372,7 @@ class UnitOfWork(Protocol):
     workflows: WorkflowRepository
     agent_policies: AgentPolicyRepository
     agent_tool_calls: AgentToolCallRepository
+    mcp_connections: McpConnectionRepository
 
     def queue_agent_tool_call(self, call: AgentToolCall) -> None: ...
 

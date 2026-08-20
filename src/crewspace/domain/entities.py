@@ -71,6 +71,31 @@ class AgentToolCall:
 
 
 @dataclass
+class McpConnection:
+    id: str
+    name: str
+    namespace: str
+    transport: str
+    endpoint_or_command: str
+    auth_secret_ref: str | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    enabled: bool = False
+
+
+@dataclass
+class McpDiscoveredTool:
+    connection_id: str
+    tool_name: str
+    description: str
+    input_schema: dict
+    schema_hash: str
+    discovered_at: datetime
+    approval_state: str = "pending"
+
+
+@dataclass
 class Member:
     id: str
     kind: MemberKind
