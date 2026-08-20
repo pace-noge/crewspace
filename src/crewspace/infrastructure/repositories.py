@@ -12,6 +12,8 @@ import hashlib
 import json
 import uuid
 
+from sqlalchemy.exc import IntegrityError
+
 from .sql import MappingRow, SqlAlchemyConnection
 
 from ..domain.entities import (
@@ -450,17 +452,26 @@ class SqlAlchemyMcpConnectionRepository:
         )
 
     async def create(self, connection: McpConnection) -> McpConnection:
-        await self._conn.execute(
-            "INSERT INTO mcp_connection "
-            "(id, name, namespace, transport, endpoint_or_command, enabled, "
-            "auth_secret_ref, created_by, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (connection.id, connection.name, connection.namespace,
-             connection.transport, connection.endpoint_or_command,
-             int(connection.enabled), connection.auth_secret_ref,
-             connection.created_by, _iso(connection.created_at),
-             _iso(connection.updated_at)),
-        )
+        try:
+            await self._conn.execute(
+                "INSERT INTO mcp_connection "
+                "(id, name, namespace, transport, endpoint_or_command, enabled, "
+                "auth_secret_ref, created_by, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (connection.id, connection.name, connection.namespace,
+                 connection.transport, connection.endpoint_or_command,
+                 int(connection.enabled), connection.auth_secret_ref,
+                 connection.created_by, _iso(connection.created_at),
+                 _iso(connection.updated_at)),
+            )
+        except IntegrityError as exc:
+            constraint_name = getattr(getattr(exc.orig, "diag", None), "constraint_name", None)
+            sqlite_namespace_conflict = (
+                "UNIQUE constraint failed: mcp_connection.namespace" in str(exc.orig)
+            )
+            if constraint_name == "uq_mcp_connection_namespace" or sqlite_namespace_conflict:
+                raise ValueError("MCP namespace is already in use") from exc
+            raise
         return connection
 
     async def get(self, connection_id: str) -> McpConnection | None:

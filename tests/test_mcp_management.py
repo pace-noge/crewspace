@@ -103,6 +103,63 @@ def test_superadmin_manages_mcp_connections_without_rendering_secrets(client, ap
     assert "Approved" in client.get(detail_url).text
 
 
+def test_concurrent_mcp_namespace_conflict_returns_validation_error(client, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    from crewspace.infrastructure.sql import SqlAlchemyConnection
+
+    original_execute = SqlAlchemyConnection.execute
+
+    async def concurrent_loser(connection, sql, params=()):
+        if sql.startswith("INSERT INTO mcp_connection"):
+            raise IntegrityError(
+                sql,
+                params or {},
+                Exception("UNIQUE constraint failed: mcp_connection.namespace"),
+            )
+        return await original_execute(connection, sql, params)
+
+    monkeypatch.setattr(SqlAlchemyConnection, "execute", concurrent_loser)
+    response = client.post(
+        "/management/mcp",
+        data={
+            "name": "Racing Jira",
+            "namespace": "jira",
+            "endpoint": "https://mcp.example.com/api",
+            "auth_secret_ref": "",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "MCP namespace is already in use"}
+
+
+def test_mcp_create_does_not_mask_unrelated_integrity_errors(client, monkeypatch):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    from crewspace.infrastructure.sql import SqlAlchemyConnection
+
+    original_execute = SqlAlchemyConnection.execute
+
+    async def foreign_key_failure(connection, sql, params=()):
+        if sql.startswith("INSERT INTO mcp_connection"):
+            raise IntegrityError(sql, params, Exception("FOREIGN KEY constraint failed"))
+        return await original_execute(connection, sql, params)
+
+    monkeypatch.setattr(SqlAlchemyConnection, "execute", foreign_key_failure)
+    with pytest.raises(IntegrityError, match="FOREIGN KEY constraint failed"):
+        client.post(
+            "/management/mcp",
+            data={
+                "name": "Broken FK",
+                "namespace": "broken_fk",
+                "endpoint": "https://mcp.example.com/api",
+                "auth_secret_ref": "",
+            },
+        )
+
+
 def test_superadmin_enables_and_rediscovers_mcp_connection(client, monkeypatch):
     created = client.post(
         "/management/mcp",
