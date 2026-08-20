@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from .entities import (
+    AgentToolCall,
     BoardView,
     CardView,
     Channel,
@@ -331,6 +332,17 @@ class AgentPolicyRepository(Protocol):
 
 
 @runtime_checkable
+class AgentToolCallRepository(Protocol):
+    async def create(self, call: AgentToolCall) -> AgentToolCall: ...
+    async def finish(
+        self, call_id: str, *, status: str, duration_ms: int,
+        result_summary: str | None, error: str | None,
+    ) -> None: ...
+    async def list_recent(self, limit: int = 100) -> list[AgentToolCall]: ...
+    async def prune(self, keep: int = 10_000) -> None: ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Bundles repositories over one consistent storage session."""
 
@@ -344,6 +356,9 @@ class UnitOfWork(Protocol):
     scheduled_jobs: ScheduledJobRepository
     workflows: WorkflowRepository
     agent_policies: AgentPolicyRepository
+    agent_tool_calls: AgentToolCallRepository
+
+    def queue_agent_tool_call(self, call: AgentToolCall) -> None: ...
 
     async def commit(self) -> None:
         ...

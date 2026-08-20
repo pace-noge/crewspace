@@ -27,6 +27,7 @@ from .lifecycle import SqlAlchemyLifecycleRepository
 from .models import Base
 from .repositories import (
     SqlAlchemyAgentPolicyRepository,
+    SqlAlchemyAgentToolCallRepository,
     SqlAlchemyAuthRepository,
     SqlAlchemyBoardRepository,
     SqlAlchemyChannelRepository,
@@ -48,16 +49,21 @@ class SqlAlchemyUnitOfWork:
 
     def __init__(self, conn: SqlAlchemyConnection) -> None:
         self._conn = conn
+        self.pending_agent_tool_calls = []
         self.chat = SqlAlchemyChatRepository(conn)
         self.boards = SqlAlchemyBoardRepository(conn)
         self.auth = SqlAlchemyAuthRepository(conn)
         self.agent_policies = SqlAlchemyAgentPolicyRepository(conn)
+        self.agent_tool_calls = SqlAlchemyAgentToolCallRepository(conn)
         self.teams = SqlAlchemyTeamRepository(conn)
         self.workspaces = SqlAlchemyWorkspaceRepository(conn)
         self.channels = SqlAlchemyChannelRepository(conn)
         self.lifecycle = SqlAlchemyLifecycleRepository(conn)
         self.scheduled_jobs = SqlAlchemyScheduledJobRepository(conn)
         self.workflows = SqlAlchemyWorkflowRepository(conn)
+
+    def queue_agent_tool_call(self, call) -> None:
+        self.pending_agent_tool_calls.append(call)
 
     async def commit(self) -> None:
         await self._conn.commit()
@@ -308,15 +314,32 @@ class Database:
 
     @asynccontextmanager
     async def uow(self) -> AsyncIterator[UnitOfWork]:
-        async with self.engine.connect() as raw:
-            conn = SqlAlchemyConnection(raw)
-            uow: UnitOfWork = SqlAlchemyUnitOfWork(conn)
-            try:
-                yield uow
-                await uow.commit()
-            except Exception:
-                await uow.rollback()
-                raise
+        pending_tool_calls = []
+        try:
+            async with self.engine.connect() as raw:
+                conn = SqlAlchemyConnection(raw)
+                concrete_uow = SqlAlchemyUnitOfWork(conn)
+                uow: UnitOfWork = concrete_uow
+                try:
+                    yield uow
+                    await uow.commit()
+                except Exception:
+                    await uow.rollback()
+                    raise
+                finally:
+                    pending_tool_calls = list(concrete_uow.pending_agent_tool_calls)
+        finally:
+            if pending_tool_calls:
+                try:
+                    async with self.engine.begin() as raw:
+                        repository = SqlAlchemyAgentToolCallRepository(
+                            SqlAlchemyConnection(raw)
+                        )
+                        for call in pending_tool_calls:
+                            await repository.create(call)
+                        await repository.prune()
+                except Exception:
+                    logger.exception("Failed to persist agent tool-call audit records")
 
     async def close(self) -> None:
         await self.engine.dispose()

@@ -5,7 +5,7 @@ DTO projections; ORM instances never cross the repository boundary.
 """
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -57,6 +57,33 @@ class AgentToolPermissionModel(Base):
     approval_mode: Mapped[str] = mapped_column(String, nullable=False, default="automatic")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class AgentToolCallModel(Base):
+    __tablename__ = "agent_tool_call"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('allowed','blocked','succeeded','failed')",
+            name="ck_agent_tool_call_status",
+        ),
+        CheckConstraint(
+            "provider_type IN ('native','mcp')",
+            name="ck_agent_tool_call_provider_type",
+        ),
+        Index("ix_agent_tool_call_created_at", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_id: Mapped[str | None] = mapped_column(String)
+    initiator_id: Mapped[str | None] = mapped_column(String)
+    provider_type: Mapped[str] = mapped_column(String, nullable=False)
+    provider_id: Mapped[str] = mapped_column(String, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    arguments_redacted: Mapped[str] = mapped_column(Text, nullable=False)
+    result_summary: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class TeamModel(Base):

@@ -580,6 +580,25 @@ async def remove_channel_member(
     return await _render_dashboard(request, current_user, uow)
 
 
+@router.get("/tools/runs", response_class=HTMLResponse)
+async def agent_tool_runs_page(
+    request: Request, current_user: CurrentUserDep, uow: UowDep
+):
+    if current_user["role"] != "superadmin":
+        raise HTTPException(status_code=403, detail="Only superadmins can view tool history")
+    calls = await uow.agent_tool_calls.list_recent(limit=200)
+    return templates.TemplateResponse(
+        request=request,
+        name="agent_tool_runs.html",
+        context={
+            "request": request,
+            "current_user": current_user,
+            "calls": calls,
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
 @router.get("/agents/{agent_id}/settings", response_class=HTMLResponse)
 async def agent_settings_page(
     request: Request, agent_id: str, current_user: CurrentUserDep, uow: UowDep

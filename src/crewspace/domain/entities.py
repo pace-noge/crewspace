@@ -55,6 +55,22 @@ class WorkflowRunStatus(str, Enum):
 
 
 @dataclass
+class AgentToolCall:
+    id: str
+    agent_id: str | None
+    initiator_id: str | None
+    provider_type: str
+    provider_id: str
+    tool_name: str
+    status: str
+    arguments_redacted: str
+    created_at: datetime
+    result_summary: str | None = None
+    error: str | None = None
+    duration_ms: int | None = None
+
+
+@dataclass
 class Member:
     id: str
     kind: MemberKind

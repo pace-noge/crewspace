@@ -14,6 +14,7 @@ import uuid
 from .sql import MappingRow, SqlAlchemyConnection
 
 from ..domain.entities import (
+    AgentToolCall,
     BoardView,
     CardView,
     Channel,
@@ -334,6 +335,62 @@ class SqlAlchemyAgentPolicyRepository:
                 "VALUES (?, 'native', 'crewspace', ?, 1, 'automatic', ?, ?)",
                 (agent_id, tool_name, now, now),
             )
+
+
+class SqlAlchemyAgentToolCallRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    @staticmethod
+    def _map(row) -> AgentToolCall:
+        return AgentToolCall(
+            id=row["id"], agent_id=row["agent_id"],
+            initiator_id=row["initiator_id"], provider_type=row["provider_type"],
+            provider_id=row["provider_id"], tool_name=row["tool_name"],
+            status=row["status"], arguments_redacted=row["arguments_redacted"],
+            result_summary=row["result_summary"], error=row["error"],
+            duration_ms=row["duration_ms"], created_at=_parse(row["created_at"]),
+        )
+
+    async def create(self, call: AgentToolCall) -> AgentToolCall:
+        await self._conn.execute(
+            "INSERT INTO agent_tool_call "
+            "(id, agent_id, initiator_id, provider_type, provider_id, tool_name, "
+            "status, arguments_redacted, result_summary, error, duration_ms, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (call.id, call.agent_id, call.initiator_id, call.provider_type,
+             call.provider_id, call.tool_name, call.status,
+             call.arguments_redacted, call.result_summary, call.error,
+             call.duration_ms, _iso(call.created_at)),
+        )
+        return call
+
+    async def finish(
+        self, call_id: str, *, status: str, duration_ms: int,
+        result_summary: str | None, error: str | None,
+    ) -> None:
+        await self._conn.execute(
+            "UPDATE agent_tool_call SET status=?, duration_ms=?, "
+            "result_summary=?, error=? WHERE id=?",
+            (status, duration_ms, result_summary, error, call_id),
+        )
+
+    async def list_recent(self, limit: int = 100) -> list[AgentToolCall]:
+        cur = await self._conn.execute(
+            "SELECT * FROM agent_tool_call ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [self._map(row) for row in await cur.fetchall()]
+
+    async def prune(self, keep: int = 10_000) -> None:
+        if keep < 1:
+            raise ValueError("Audit retention must keep at least one row")
+        await self._conn.execute(
+            "DELETE FROM agent_tool_call WHERE id NOT IN ("
+            "SELECT id FROM agent_tool_call "
+            "ORDER BY created_at DESC, id DESC LIMIT ?)",
+            (keep,),
+        )
 
 
 class SqlAlchemyScheduledJobRepository:

@@ -11,11 +11,17 @@ ignorant of storage.
 """
 from __future__ import annotations
 
+import datetime as dt
+import json
+import re
+import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..domain.identifiers import DEFAULT_BOARD_ID, PLANNER_AGENT_ID
+from ..domain.entities import AgentToolCall
 from ..domain.ports import ToolRunner, UnitOfWork
 from .access import list_accessible_boards
 
@@ -47,6 +53,67 @@ class ToolPermissionDenied(PermissionError):
     pass
 
 
+_SECRET_LABEL = (
+    r"authorization|password|passwd|secret|access[_-]?token|refresh[_-]?token|"
+    r"token|api[_-]?key|private[_-]?key|ssh[_-]?key|credential|cookie|session|bearer"
+)
+_SENSITIVE_NAME = re.compile(rf"(?:{_SECRET_LABEL})", re.IGNORECASE)
+_SECURITY_HEADER = re.compile(
+    r"(?im)\b(authorization|proxy-authorization|cookie|set-cookie)"
+    r"\s*:\s*[^\r\n]+"
+)
+_INLINE_SECRET = re.compile(
+    rf"(?i)(?<![A-Za-z0-9])({_SECRET_LABEL})\s*[:=]\s*"
+    r"(?:\"[^\"]*\"|'[^']*'|[^\r\n,;&]+)"
+)
+_BEARER_SECRET = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+_PEM_SECRET = re.compile(
+    r"-----BEGIN [^-\r\n]+-----.*?-----END [^-\r\n]+-----",
+    re.DOTALL,
+)
+_AUDIT_TEXT_LIMIT = 2048
+
+
+def _redact_string(value: str) -> Any:
+    stripped = value.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                return _redact_value(parsed)
+    value = _PEM_SECRET.sub("[REDACTED]", value)
+    value = _SECURITY_HEADER.sub(
+        lambda match: f"{match.group(1)}: [REDACTED]", value
+    )
+    value = _BEARER_SECRET.sub("Bearer [REDACTED]", value)
+    return _INLINE_SECRET.sub(
+        lambda match: f"{match.group(1)}=[REDACTED]", value
+    )
+
+
+def _redact_value(value: Any, key: str | None = None) -> Any:
+    if key and _SENSITIVE_NAME.search(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(k): _redact_value(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, str):
+        return _redact_string(value)
+    return value
+
+
+def _bounded_audit_text(value: Any) -> str:
+    try:
+        text = json.dumps(_redact_value(value), default=str, separators=(",", ":"))
+    except Exception:
+        text = json.dumps("[UNSERIALIZABLE]")
+    return text[:_AUDIT_TEXT_LIMIT]
+
+
 class _BoundRunner:
     """ToolRunner bound to one UnitOfWork and an explicit capability policy."""
 
@@ -62,15 +129,41 @@ class _BoundRunner:
         self._allowed_tools = allowed_tools
 
     async def run(self, tool_name: str, **args: Any) -> dict:
+        started = time.monotonic()
+        call = AgentToolCall(
+            id=f"atc_{uuid.uuid4().hex}",
+            agent_id=self._agent_id,
+            initiator_id=self._principal_id,
+            provider_type="native",
+            provider_id="crewspace",
+            tool_name=tool_name,
+            status="allowed",
+            arguments_redacted=_bounded_audit_text(args),
+            created_at=dt.datetime.now(dt.timezone.utc),
+        )
+        self._uow.queue_agent_tool_call(call)
         if self._allowed_tools is not None and tool_name not in self._allowed_tools:
+            call.status = "blocked"
+            call.duration_ms = int((time.monotonic() - started) * 1000)
+            call.error = "Tool is not allowed for this agent"
             raise ToolPermissionDenied(
                 f"Tool {tool_name!r} is not allowed for agent {self._agent_id!r}"
             )
-        tool = self._registry.get(tool_name)
-        actor_id = self._agent_id or self._principal_id
-        return await tool.handler(
-            self._uow, self._principal_id, actor_id, **args
-        )
+        try:
+            tool = self._registry.get(tool_name)
+            actor_id = self._agent_id or self._principal_id
+            result = await tool.handler(
+                self._uow, self._principal_id, actor_id, **args
+            )
+        except BaseException as exc:
+            call.status = "failed"
+            call.duration_ms = int((time.monotonic() - started) * 1000)
+            call.error = _bounded_audit_text(f"{type(exc).__name__}: {exc}")
+            raise
+        call.status = "succeeded"
+        call.duration_ms = int((time.monotonic() - started) * 1000)
+        call.result_summary = _bounded_audit_text(result)
+        return result
 
 
 class ToolRegistry:
@@ -95,10 +188,11 @@ class ToolRegistry:
         return _BoundRunner(self, uow, principal_id, agent_id, allowed_tools)
 
     def bind_trusted(
-        self, uow: UnitOfWork, principal_id: str | None = None
+        self, uow: UnitOfWork, principal_id: str | None = None, *,
+        agent_id: str | None = None,
     ) -> ToolRunner:
         """Bind an internal adapter that intentionally exposes the full registry."""
-        return _BoundRunner(self, uow, principal_id)
+        return _BoundRunner(self, uow, principal_id, agent_id)
 
 
 def build_registry() -> ToolRegistry:

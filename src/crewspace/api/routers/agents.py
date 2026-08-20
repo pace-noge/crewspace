@@ -112,7 +112,7 @@ async def _run_tool(websocket: WebSocket, registry, agent_id: str, frame: dict) 
             for identity_field in ("author_id", "creator_id", "actor_id"):
                 args.pop(identity_field, None)
             result = await registry.bind_trusted(
-                uow, principal_id=agent_id
+                uow, principal_id=agent_id, agent_id=agent_id
             ).run(name, **args)
             await uow.commit()
         except Exception as exc:
