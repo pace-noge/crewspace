@@ -495,6 +495,21 @@ class SqlAlchemyMcpConnectionRepository:
         if result.rowcount == 0:
             raise KeyError(f"Unknown MCP tool {connection_id}.{tool_name}")
 
+    async def disable_missing_tools(
+        self, connection_id: str, present_names: set[str],
+    ) -> None:
+        rows = await (await self._conn.execute(
+            "SELECT tool_name FROM mcp_discovered_tool WHERE connection_id=?",
+            (connection_id,),
+        )).fetchall()
+        for row in rows:
+            if row["tool_name"] not in present_names:
+                await self._conn.execute(
+                    "UPDATE mcp_discovered_tool SET approval_state='disabled' "
+                    "WHERE connection_id=? AND tool_name=?",
+                    (connection_id, row["tool_name"]),
+                )
+
     async def list_discovered_tools(
         self, connection_id: str,
     ) -> list[McpDiscoveredTool]:

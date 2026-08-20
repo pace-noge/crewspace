@@ -72,6 +72,20 @@ async def test_mcp_connection_service_rejects_raw_secret_values(app):
         async with app.state.db.uow() as uow:
             await McpConnectionService().create(connection, uow)
 
+    connection.auth_secret_ref = None
+    connection.endpoint_or_command = (
+        "https://mcp.example.test/api?access_token=raw-secret-value"
+    )
+    with pytest.raises(ValueError):
+        async with app.state.db.uow() as uow:
+            await McpConnectionService().create(connection, uow)
+
+    connection.transport = "stdio_managed"
+    connection.endpoint_or_command = "mcp-server --token raw-secret-value"
+    with pytest.raises(ValueError):
+        async with app.state.db.uow() as uow:
+            await McpConnectionService().create(connection, uow)
+
 
 async def test_mcp_connection_repository_round_trip_defaults_disabled(app):
     now = dt.datetime.now(dt.timezone.utc)

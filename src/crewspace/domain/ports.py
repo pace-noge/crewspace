@@ -352,6 +352,9 @@ class McpConnectionRepository(Protocol):
     async def set_tool_approval_state(
         self, connection_id: str, tool_name: str, state: str,
     ) -> None: ...
+    async def disable_missing_tools(
+        self, connection_id: str, present_names: set[str],
+    ) -> None: ...
     async def list_discovered_tools(
         self, connection_id: str,
     ) -> list[McpDiscoveredTool]: ...
