@@ -27,6 +27,17 @@ class McpToolExecutor(Protocol):
     ) -> Any: ...
 
 
+class UnavailableMcpToolExecutor:
+    async def call_tool(
+        self, connection: McpConnection, tool_name: str, arguments: dict[str, Any]
+    ) -> Any:
+        raise RuntimeError("External MCP tool execution is not configured")
+
+
+async def build_unavailable_mcp_executor() -> McpToolExecutor:
+    return UnavailableMcpToolExecutor()
+
+
 @dataclass
 class AgentToolRuntime:
     tools: list[Tool]

@@ -19,6 +19,7 @@ from ..application.tools import ToolRegistry, build_registry
 from ..application.workspace_service import WorkspaceService
 from ..config import Settings, get_settings
 from ..domain.ports import UnitOfWork
+from ..infrastructure.mcp_client import build_external_tool_executor
 from ..security import unsign_session
 
 SESSION_COOKIE = "crewspace_session"
@@ -44,7 +45,9 @@ RegistryDep = Annotated[ToolRegistry, Depends(get_registry_dep)]
 
 
 def get_chat_service(registry: RegistryDep, settings: Annotated[Settings, Depends(get_settings_dep)]) -> ChatService:
-    return ChatService(registry, settings)
+    return ChatService(
+        registry, settings, mcp_executor_factory=build_external_tool_executor
+    )
 
 
 def get_board_service(registry: RegistryDep, settings: Annotated[Settings, Depends(get_settings_dep)]) -> BoardService:

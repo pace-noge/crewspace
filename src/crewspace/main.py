@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .infrastructure.db import Database
+from .infrastructure.mcp_client import build_external_tool_executor
 from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools, workflows
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
@@ -37,7 +38,9 @@ async def lifespan(app: FastAPI):
     else:
         db = app.state.db
     db_logger.info("Crewspace database ready (bound to %s).", settings.database_url)
-    scheduler = SchedulerLoop(db, settings)
+    scheduler = SchedulerLoop(
+        db, settings, mcp_executor_factory=build_external_tool_executor
+    )
     async def broadcast_workflow_message(message):
         await manager.broadcast(
             message.channel_id, to_message(message).model_dump(mode="json")

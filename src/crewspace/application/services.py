@@ -21,6 +21,11 @@ from ..dto.mappers import to_board, to_card, to_comment, to_message
 from ..dto.messages import MessageDTO
 from ..config import Settings
 from ..infrastructure.agents.registry import AgentRegistry
+from .mcp_tools import (
+    McpToolExecutor,
+    build_agent_tool_runtime,
+    build_unavailable_mcp_executor,
+)
 from .tools import ToolRegistry
 
 
@@ -32,9 +37,16 @@ def agent_routable_text(body: str) -> str:
 
 
 class ChatService:
-    def __init__(self, registry: ToolRegistry, settings: Settings) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        settings: Settings,
+        *,
+        mcp_executor_factory: Callable[[], Awaitable[McpToolExecutor]] = build_unavailable_mcp_executor,
+    ) -> None:
         self._registry = registry
         self._settings = settings
+        self._mcp_executor_factory = mcp_executor_factory
 
     async def list_messages(self, channel_id: str, uow: UnitOfWork) -> list[MessageDTO]:
         messages = [to_message(m) for m in await uow.chat.list_messages(channel_id)]
@@ -74,10 +86,7 @@ class ChatService:
         )
         resolved_agent_id = provider.resolve(routable)
         if resolved_agent_id:
-            from ..infrastructure import mcp_client
-            from .mcp_tools import build_agent_tool_runtime
-
-            executor = await mcp_client.build_external_tool_executor()
+            executor = await self._mcp_executor_factory()
             runtime = await build_agent_tool_runtime(
                 self._registry,
                 uow,

@@ -5,12 +5,14 @@ import asyncio
 import datetime as dt
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 
 from ..config import Settings
 from ..domain.entities import ScheduleKind, ScheduledJob, ScheduledJobRun
 from ..domain.ports import UnitOfWork
 from .access import can_manage_team
 from .services import ChatService
+from .mcp_tools import McpToolExecutor, build_unavailable_mcp_executor
 from .tools import build_registry
 
 UTC = dt.timezone.utc
@@ -85,8 +87,14 @@ async def can_access_job(user: dict, job: ScheduledJob, uow: UnitOfWork) -> bool
 
 
 class ScheduledJobService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        mcp_executor_factory: Callable[[], Awaitable[McpToolExecutor]] = build_unavailable_mcp_executor,
+    ) -> None:
         self._settings = settings
+        self._mcp_executor_factory = mcp_executor_factory
 
     async def create(
         self,
@@ -204,7 +212,10 @@ class ScheduledJobService:
         await uow.scheduled_jobs.start_run(run)
         await uow.commit()
         try:
-            chat = ChatService(build_registry(), self._settings)
+            chat = ChatService(
+                build_registry(), self._settings,
+                mcp_executor_factory=self._mcp_executor_factory,
+            )
             messages = await chat.post_and_respond(
                 job.channel_id, job.creator_id, job.instruction, uow
             )
@@ -245,9 +256,14 @@ class ScheduledJobService:
 
 
 class SchedulerLoop:
-    def __init__(self, db, settings: Settings, poll_seconds: int = 30) -> None:
+    def __init__(
+        self, db, settings: Settings, poll_seconds: int = 30, *,
+        mcp_executor_factory: Callable[[], Awaitable[McpToolExecutor]] = build_unavailable_mcp_executor,
+    ) -> None:
         self._db = db
-        self._service = ScheduledJobService(settings)
+        self._service = ScheduledJobService(
+            settings, mcp_executor_factory=mcp_executor_factory
+        )
         self._poll_seconds = poll_seconds
         self._task: asyncio.Task | None = None
 

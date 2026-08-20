@@ -164,7 +164,7 @@ async def test_chat_service_routes_namespaced_mcp_call_through_composite_runner(
     from crewspace.application.tools import build_registry
     from crewspace.config import Settings
     from crewspace.infrastructure.agents import registry as agent_registry
-    from crewspace.infrastructure import mcp_client
+
 
     connection = await _seed_approved_tool(app)
     executions = []
@@ -190,18 +190,30 @@ async def test_chat_service_routes_namespaced_mcp_call_through_composite_runner(
         return Executor()
 
     monkeypatch.setattr(agent_registry.AgentRegistry, "build", build_provider)
-    monkeypatch.setattr(mcp_client, "build_external_tool_executor", build_executor)
+
 
     async with app.state.db.uow() as uow:
         await uow.agent_policies.replace_mcp_tools(
             "agent_crewspace", {(connection.id, "create_issue")}
         )
-        messages = await ChatService(build_registry(), Settings()).post_and_respond(
+        messages = await ChatService(
+            build_registry(), Settings(), mcp_executor_factory=build_executor,
+        ).post_and_respond(
             "channel_general", "user_bilal", "@crewspace create issue", uow
         )
 
     assert executions == [("mcp_jira", "create_issue", {"title": "From chat"})]
     assert messages[-1].body == "ENG-43"
+
+
+def test_chat_application_service_does_not_import_mcp_infrastructure():
+    import inspect
+
+    from crewspace.application import services
+
+    source = inspect.getsource(services)
+    assert "infrastructure import mcp_client" not in source
+    assert "infrastructure.mcp_client" not in source
 
 
 async def test_mcp_execution_requires_principal_and_valid_bounded_arguments(app):
