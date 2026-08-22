@@ -38,7 +38,11 @@ async def lifespan(app: FastAPI):
         app.state.db = db
     else:
         db = app.state.db
-    db_logger.info("Crewspace database ready (bound to %s).", settings.database_url)
+    # Tests that inject a pre-configured Database (e.g. a temp file) drive
+    # requests directly and do not need the background pollers running; leaving
+    # them on contends with every request for the single SQLite file (WAL +
+    # busy timeout) and makes the suite slow/flaky. Opt out via the fixture.
+    start_schedulers = getattr(app.state, "start_schedulers", True)
     scheduler = SchedulerLoop(
         db, settings, mcp_executor_factory=build_external_tool_executor
     )
@@ -53,8 +57,9 @@ async def lifespan(app: FastAPI):
         webhook_executor=build_workflow_webhook_executor(),
         mcp_executor=ExternalMcpToolExecutor(),
     )
-    scheduler.start()
-    workflow_scheduler.start()
+    if start_schedulers:
+        scheduler.start()
+        workflow_scheduler.start()
     try:
         yield
     finally:

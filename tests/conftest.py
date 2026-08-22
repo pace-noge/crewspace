@@ -28,6 +28,7 @@ def app():
     application = create_app()
     application.state.db = database
     application.state.settings = settings
+    application.state.start_schedulers = False
     yield application
     asyncio.run(database.close())
 
