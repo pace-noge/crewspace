@@ -1,0 +1,166 @@
+"""
+Claude-Code remote agent (clone-and-run reference).
+
+This is a *remote agent* for Crewspace: a separate process on its own machine
+that dials INTO the app over the signed WebSocket protocol (Buzz model — the
+agent connects, not the app). When someone @mentions it in chat, the app pushes
+a ``chat`` frame with the message as the prompt. This agent runs that prompt as a
+``claude`` subprocess, waits for it to finish, and sends one signed ``reply``
+frame back with the captured output.
+
+WebSocket is the right transport for long jobs: it is one long-lived,
+bidirectional connection that stays open for the whole subprocess run (minutes to
+hours). There is no polling and no inherent time limit. The only thing to watch is
+the app's reply timeout (``CREWSPACE_AGENT_REPLY_TIMEOUT``, default 1800s) — keep
+long Claude runs under that, or raise it.
+
+Your agent identity (Ed25519 private key) lives ONLY in this process's
+environment; the app never sees it. Every frame we send is signed.
+
+Run:
+    pip install websockets
+    export AGENT_PRIV="<base64url raw 32-byte private key from the register page>"
+    export AGENT_ID="agent_coder"
+    export AGENT_WS_URL="ws://127.0.0.1:8000/agents/ws"
+    export CLAUDE_BIN="claude"                 # path to the Claude Code CLI
+    export CLAUDE_ARGS="--print --verbose"       # forwarded to `claude` (optional)
+    python claude_code_agent.py
+
+Then in the app's chat:  @coder refactor src/crewspace/api/connection.py to add a reset() method
+and the agent will run Claude Code with that prompt and post the result back.
+
+This example deliberately does NOT use the app's tool-execution path (create_card,
+etc.). It is a thin "prompt -> subprocess -> reply" bridge. If you want the agent to
+act on the board, mirror the tool-calling pattern in llm_agent.py instead.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import os
+import secrets
+import time
+
+import websockets
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+
+# --------------------------------------------------------------------------
+# Protocol helpers (mirror docs/AGENT_PROTOCOL.md §3 exactly)
+# --------------------------------------------------------------------------
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def _b64u_dec(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _canonical(obj: dict) -> bytes:
+    # Deterministic JSON: sorted keys, compact separators. Used for ALL signatures.
+    return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+class Signer:
+    def __init__(self, priv_b64u: str) -> None:
+        self._priv = Ed25519PrivateKey.from_private_bytes(_b64u_dec(priv_b64u))
+
+    def sign(self, obj: dict) -> str:
+        """Ed25519-sign canonical(obj); return base64url signature."""
+        return _b64u(self._priv.sign(_canonical(obj)))
+
+    def connect_claim(self, agent_id: str) -> str:
+        """Build the signed connect token: base64url(json) + '.' + sig."""
+        payload = {
+            "agent_id": agent_id,
+            "iat": int(time.time()),
+            "nonce": secrets.token_urlsafe(8),
+        }
+        return _b64u(_canonical(payload)) + "." + self.sign(payload)
+
+    def sign_frame(self, frame: dict) -> dict:
+        """Return a copy of the frame with a `sig` field attached."""
+        f = dict(frame)
+        f["sig"] = self.sign({k: v for k, v in frame.items() if k != "sig"})
+        return f
+
+
+# --------------------------------------------------------------------------
+# Agent loop
+# --------------------------------------------------------------------------
+async def _run_claude(prompt: str) -> str:
+    """Run `claude <args> <prompt>` and return its combined stdout.
+
+    Runs to completion; the caller is responsible for keeping the WebSocket open
+    until this returns (the app waits up to CREWSPACE_AGENT_REPLY_TIMEOUT).
+    """
+    bin_path = os.environ.get("CLAUDE_BIN", "claude")
+    extra_args = os.environ.get("CLAUDE_ARGS", "").split()
+    cmd = [bin_path, *extra_args, prompt]
+    print(f"[agent] running: {' '.join(cmd)}", flush=True)
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out_chunks: list[str] = []
+    assert proc.stdout is not None
+    async for line in proc.stdout:
+        text = line.decode("utf-8", errors="replace")
+        # Surface progress to the operator's console (the app only sees the final reply).
+        print(f"[claude] {text.rstrip()}", end="", flush=True)
+        out_chunks.append(text)
+    await proc.wait()
+    full = "".join(out_chunks).strip()
+    if proc.returncode != 0:
+        full = f"(claude exited {proc.returncode})\n{full}"
+    # Keep the reply within reason; the app renders it as a chat message.
+    return full[-8000:] if len(full) > 8000 else full
+
+
+async def main() -> None:
+    agent_id = os.environ["AGENT_ID"]
+    ws_url = os.environ["AGENT_WS_URL"]
+    signer = Signer(os.environ["AGENT_PRIV"])
+
+    async with websockets.connect(
+        ws_url,
+        additional_headers={"Authorization": "Bearer " + signer.connect_claim(agent_id)},
+    ) as ws:
+        print(f"[agent] connected as {agent_id}", flush=True)
+        async for raw in ws:
+            frame = json.loads(raw)
+            ftype = frame.get("type")
+
+            if ftype == "chat":
+                # The app pushed a chat message that @mentioned this agent.
+                text = frame["text"]
+                message_id = frame["message_id"]
+                print(f"[agent] prompt: {text}", flush=True)
+                try:
+                    result = await _run_claude(text)
+                except Exception as exc:  # never leave the app waiting forever
+                    result = f"⚠️ agent error: {exc}"
+                reply = signer.sign_frame(
+                    {"type": "reply", "message_id": message_id, "text": result}
+                )
+                await ws.send(json.dumps(reply))
+                print("[agent] replied", flush=True)
+
+            elif ftype == "card_created":
+                # Fire-and-forget: a card was created elsewhere. Ignore for this bridge.
+                pass
+
+            elif ftype == "tool_result":
+                # We don't request app tools in this example; nothing to do.
+                pass
+
+
+if __name__ == "__main__":
+    required = ["AGENT_ID", "AGENT_PRIV", "AGENT_WS_URL"]
+    missing = [v for v in required if not os.environ.get(v)]
+    if missing:
+        raise SystemExit(f"Missing env vars: {', '.join(missing)}")
+    asyncio.run(main())

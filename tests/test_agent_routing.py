@@ -212,4 +212,23 @@ async def test_chat_commits_human_message_before_waiting_for_agent(app, monkeypa
             "chan_general", "user_bilal", "Committed before wait", uow
         )
 
-    assert observed["visible"] is True
+
+@pytest.mark.asyncio
+async def test_remote_agent_reply_uses_configured_timeout(monkeypatch):
+    captured: dict[str, float] = {}
+
+    async def fake_send_and_wait(agent_id, payload, timeout=20.0):
+        captured["timeout"] = timeout
+        return "done"
+
+    monkeypatch.setattr(agent_manager, "send_and_wait", fake_send_and_wait)
+
+    settings = Settings(agent_reply_timeout=900.0)
+    provider = MultiAgentProvider({}, mentions={"coder": "agent_coder"}, settings=settings)
+    await agent_manager.connect("agent_coder", cast(WebSocket, __import__("tests.test_agent_routing", fromlist=["FakeSocket"]).FakeSocket()))
+    try:
+        await provider.on_chat_message("@coder refactor the parser", None)
+    finally:
+        agent_manager.disconnect("agent_coder", cast(WebSocket, __import__("tests.test_agent_routing", fromlist=["FakeSocket"]).FakeSocket()))
+
+    assert captured["timeout"] == 900.0

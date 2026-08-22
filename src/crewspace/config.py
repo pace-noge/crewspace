@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # Default password for the seeded admin (user_bilal). Change after first login.
     seed_admin_password: str = _DEVELOPMENT_PASSWORD
 
+    # How long the app waits for a connected remote agent's reply before giving
+    # up (seconds). Remote agents may run long subprocesses (e.g. Claude Code),
+    # so this is deliberately generous; a WebSocket stays open regardless.
+    agent_reply_timeout: float = 1800.0
+
     @model_validator(mode="after")
     def reject_network_exposure_with_development_credentials(self) -> "Settings":
         if self.database_url is None:

@@ -93,7 +93,7 @@ class AgentRegistry:
                     ]
                 local[agent_id] = _build_local_agent(member, settings, allowed)
         return MultiAgentProvider(
-            local, default_agent_id=PLANNER_AGENT_ID, mentions=mentions
+            local, default_agent_id=PLANNER_AGENT_ID, mentions=mentions, settings=settings
         )
 
 
@@ -105,6 +105,7 @@ class MultiAgentProvider:
         local: dict[str, AgentProvider],
         default_agent_id: str = PLANNER_AGENT_ID,
         mentions: dict[str, str] | None = None,
+        settings: Settings | None = None,
     ) -> None:
         # id -> explicit in-process provider (builtin/local agents only)
         self._local = local
@@ -120,6 +121,7 @@ class MultiAgentProvider:
         self._default_agent_id = (
             default_agent_id if default_agent_id in all_ids else next(iter(all_ids), "")
         )
+        self._settings = settings
 
     def _resolve(self, text: str) -> str | None:
         low = text.lower()
@@ -146,7 +148,9 @@ class MultiAgentProvider:
                 await on_engaged(aid)
             try:
                 reply = await agent_manager.send_and_wait(
-                    aid, {"type": "chat", "agent_id": aid, "text": text, "context": context or []}
+                    aid,
+                    {"type": "chat", "agent_id": aid, "text": text, "context": context or []},
+                    timeout=self._settings.agent_reply_timeout if self._settings else 20.0,
                 )
                 return (aid, [reply] if reply else [])
             except Exception as exc:
