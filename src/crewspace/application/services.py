@@ -67,6 +67,7 @@ class ChatService:
         thread_id: str | None = None, routing_text: str | None = None,
         on_agent_resolved: "Callable[[str], Awaitable[None]] | None" = None,
         on_human_persisted: "Callable[[MessageDTO], Awaitable[None]] | None" = None,
+        on_agent_progress: "Callable[[str], Awaitable[None]] | None" = None,
     ) -> list[MessageDTO]:
         """Persist the human message, route to the mentioned agent, persist its replies."""
         human = await uow.chat.add_message(channel_id, author_id, body, thread_id)
@@ -102,20 +103,27 @@ class ChatService:
                 agent_id="",
                 allowed_tools=set(),
             )
+        # Tell clients which agent is about to answer before the potentially
+        # slow local/remote call begins.
+        if on_agent_resolved is not None and resolved_agent_id:
+            await on_agent_resolved(resolved_agent_id)
         # Build conversation context so the agent can reason over history
         # (e.g. summarize a thread or pull action items). A thread reply sees
         # the whole thread; a channel message sees recent channel history.
         context = await self._build_context(uow, channel_id, thread_id, human.id)
-        agent_id, replies = await provider.on_chat_message(
-            routable, runner, context=context,
-        )
+        if on_agent_progress is not None:
+            agent_id, replies = await provider.on_chat_message(
+                routable, runner, context=context, on_engaged=on_agent_progress,
+            )
+        else:
+            agent_id, replies = await provider.on_chat_message(
+                routable, runner, context=context,
+            )
         # Agent answers live in a thread under the human message so the main
         # timeline stays uncluttered (the prior decision: agents reply in thread).
         # Direct messages have no threads, so they stay inline there.
         is_dm = channel_id.startswith("dm_")
         reply_thread_id = thread_id if thread_id else (None if is_dm else human.id)
-        if on_agent_resolved is not None and agent_id and replies:
-            await on_agent_resolved(agent_id)
         agent_msgs = [
             await uow.chat.add_message(channel_id, agent_id, r, reply_thread_id)
             for r in replies if agent_id

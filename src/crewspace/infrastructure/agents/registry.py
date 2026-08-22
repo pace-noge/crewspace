@@ -17,7 +17,7 @@ so an agent can come and go without any app restart or schema change.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from ...config import Settings
 from ...domain.identifiers import PLANNER_AGENT_ID
@@ -134,13 +134,16 @@ class MultiAgentProvider:
         return self._resolve(text)
 
     async def on_chat_message(
-        self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None
+        self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None,
+        on_engaged: "Callable[[str], Awaitable[None]] | None" = None,
     ) -> tuple[str, list[str]]:
         aid = self._resolve(text)
         if not aid:
             return ("", [])
         # Connected agent -> push the message DOWN its WebSocket and await its reply.
         if agent_manager.is_connected(aid):
+            if on_engaged is not None:
+                await on_engaged(aid)
             try:
                 reply = await agent_manager.send_and_wait(
                     aid, {"type": "chat", "agent_id": aid, "text": text, "context": context or []}

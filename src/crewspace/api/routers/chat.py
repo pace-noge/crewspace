@@ -209,6 +209,13 @@ async def chat_ws(
                         channel_id,
                         {"type": "typing", "author_id": aid, "channel_id": channel_id},
                     ),
+                    # When a connected remote agent is engaged over its socket,
+                    # signal that it is actively working (cleared when its reply
+                    # frame arrives). Mirrors the in-process workflow progress.
+                    on_agent_progress=lambda aid: manager.broadcast(
+                        channel_id,
+                        {"type": "agent_working", "author_id": aid, "channel_id": channel_id},
+                    ),
                     on_human_persisted=on_human_persisted,
                 )
             for m in new_msgs:

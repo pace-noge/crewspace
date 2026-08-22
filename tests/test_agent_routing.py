@@ -62,6 +62,56 @@ async def test_unmentioned_chat_does_not_route_to_connected_default_agent():
 
 
 @pytest.mark.asyncio
+async def test_connected_remote_agent_fires_on_engaged_before_reply(monkeypatch):
+    provider = MultiAgentProvider(
+        {}, mentions={"remote": "agent_remote"}
+    )
+    socket = FakeSocket()
+    await agent_manager.connect("agent_remote", cast(WebSocket, socket))
+    events: list[str] = []
+
+    async def send_and_wait(agent_id: str, payload: dict, timeout: float = 20.0):
+        assert agent_id == "agent_remote"
+        assert payload["type"] == "chat"
+        events.append("reply")
+        return "remote reply"
+
+    monkeypatch.setattr(agent_manager, "send_and_wait", send_and_wait)
+    try:
+        async def on_engaged(agent_id: str) -> None:
+            events.append(f"engaged:{agent_id}")
+
+        agent_id, replies = await provider.on_chat_message(
+            "@remote please help", NullRunner(), on_engaged=on_engaged
+        )
+    finally:
+        agent_manager.disconnect("agent_remote", cast(WebSocket, socket))
+
+    assert events == ["engaged:agent_remote", "reply"]
+    assert agent_id == "agent_remote"
+    assert replies == ["remote reply"]
+
+
+@pytest.mark.asyncio
+async def test_offline_remote_agent_does_not_fire_on_engaged():
+    provider = MultiAgentProvider(
+        {}, mentions={"remote": "agent_remote"}
+    )
+    engaged: list[str] = []
+
+    async def on_engaged(agent_id: str) -> None:
+        engaged.append(agent_id)
+
+    agent_id, replies = await provider.on_chat_message(
+        "@remote please help", NullRunner(), on_engaged=on_engaged
+    )
+
+    assert engaged == []
+    assert agent_id == "agent_remote"
+    assert replies == ["⚠️ Agent agent_remote is offline."]
+
+
+@pytest.mark.asyncio
 async def test_disconnected_remote_agent_does_not_use_local_fallback():
     provider = MultiAgentProvider(
         {}, mentions={"remote": "agent_remote"}
@@ -90,6 +140,47 @@ async def test_connected_agent_receives_card_event_only_once():
     assert len(socket.sent) == 1
     assert socket.sent[0]["type"] == "card_created"
     assert local.card_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_connected_remote_agent_streams_working_frame_to_channel(client, app, monkeypatch):
+    engaged: list[str] = []
+
+    class RemoteProvider:
+        def resolve(self, text):
+            return "agent_planner"
+
+        async def on_chat_message(self, text, runner, context=None, on_engaged=None):
+            if on_engaged is not None:
+                await on_engaged("agent_planner")
+            engaged.append("agent_planner")
+            return "agent_planner", ["remote says hi"]
+
+    async def fake_build(settings, uow, *, principal_id=None):
+        return RemoteProvider()
+
+    monkeypatch.setattr(AgentRegistry, "build", staticmethod(fake_build))
+
+    with client.websocket_connect(
+        "/channels/chan_general/ws", headers={"Origin": "http://testserver"}
+    ) as ws:
+        ws.send_json({"body": "@remote hi"})
+        # human echo
+        human = ws.receive_json()
+        assert human["body"] == "@remote hi"
+        # typing identifies the resolved agent before the slow call starts
+        typing = ws.receive_json()
+        assert typing["type"] == "typing"
+        # live "working" frame emitted when the remote agent is engaged
+        working = ws.receive_json()
+        assert working["type"] == "agent_working"
+        assert working["author_id"] == "agent_planner"
+        # the reply itself
+        reply = ws.receive_json()
+        assert reply["body"] == "remote says hi"
+        assert reply["author_id"] == "agent_planner"
+
+    assert engaged == ["agent_planner"]
 
 
 @pytest.mark.asyncio

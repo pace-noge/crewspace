@@ -57,6 +57,7 @@
   const typingAvatar = document.getElementById("typing-avatar");
   const typingName = document.getElementById("typing-name");
   let typingTimer = null;
+  let agentWorkingId = null;
   let activeThreadId = null;
   let reactionTarget = null;
 
@@ -158,6 +159,17 @@
           setTimeout(()=>{if(agentState.textContent===text)agentState.textContent="Ready";},1500);
         }
         return;
+      }
+      if(data.type==="agent_working"){
+        const {name}=agentName(data.author_id);
+        agentState.textContent=`${name} is working…`;
+        agentWorkingId=data.author_id;
+        return;
+      }
+      // A real agent message clears any "is working" state for that agent.
+      if(data.author_kind==="agent"&&agentWorkingId&&data.author_id===agentWorkingId){
+        agentState.textContent="Ready";
+        agentWorkingId=null;
       }
       render(data);
     };
