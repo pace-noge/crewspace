@@ -445,6 +445,65 @@ def test_workflow_creator_can_run_now_with_realtime_delivery_and_history(client)
     assert runs[0]["event"]["initiated_by"] == "user_bilal"
 
 
+def test_workflow_detail_shows_definition_actions_and_step_run_history(client):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="observable_flow", filter_expression=None,
+        steps=[
+            {"id": "notify", "name": "Notify channel", "action": "send_message",
+             "config": {"text": "Observed {{trigger.initiated_by}}"}},
+            {"id": "skip", "name": "Deploy only", "action": "send_message",
+             "condition": 'str_contains(trigger_text, "deploy")',
+             "config": {"text": "not sent"}},
+        ],
+    )).json()
+    run = client.post(f'/workflows/{workflow["id"]}/run').json()
+
+    listing = client.get("/workflows")
+    assert f'href="/workflows/{workflow["id"]}"' in listing.text
+    detail = client.get(f'/workflows/{workflow["id"]}')
+    assert detail.status_code == 200
+    assert "observable_flow" in detail.text
+    assert "Message Posted" in detail.text
+    assert "Notify channel" in detail.text
+    assert "Deploy only" in detail.text
+    assert f'action="/workflows/{workflow["id"]}/run?redirect=detail"' in detail.text
+    assert f'href="/workflows/{workflow["id"]}/edit"' in detail.text
+    assert run["id"] in detail.text
+    assert "Manual" in detail.text
+    assert "Succeeded" in detail.text
+    assert "Notify channel" in detail.text
+    assert "Skipped" in detail.text
+    assert "user_bilal" in detail.text
+
+
+def test_workflow_detail_hides_management_actions_from_channel_viewer(client):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="viewable_flow"
+    )).json()
+    created = client.post(
+        "/management/humans",
+        data={"name": "Run Viewer", "password": "temporary-password", "team_id": "team_acme"},
+    )
+    assert created.status_code == 200
+    management = client.get("/management/channels/chan_general/members")
+    member_match = re.search(r'<option value="(user_[^"]+)">Run Viewer', management.text)
+    assert member_match is not None
+    assert client.post(
+        "/management/channels/chan_general/members",
+        data={"member_id": member_match.group(1)},
+    ).status_code == 200
+    client.post("/auth/logout")
+    assert client.post(
+        "/auth/login", data={"username": "Run Viewer", "password": "temporary-password"}
+    ).status_code == 200
+
+    detail = client.get(f'/workflows/{workflow["id"]}')
+    assert detail.status_code == 200
+    assert "viewable_flow" in detail.text
+    assert f'/workflows/{workflow["id"]}/edit' not in detail.text
+    assert f'/workflows/{workflow["id"]}/run' not in detail.text
+
+
 def test_workflow_can_be_edited_and_updated_definition_executes(client):
     workflow = client.post("/workflows", json=_workflow_payload(
         name="editable_flow", filter_expression=None

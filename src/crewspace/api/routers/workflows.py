@@ -147,6 +147,15 @@ async def _manageable_workflow(workflow_id: str, user: dict, uow):
     return workflow
 
 
+async def _visible_workflow(workflow_id: str, user: dict, uow):
+    workflow = await uow.workflows.get(workflow_id)
+    if workflow is None or not await uow.channels.can_member_access(
+        workflow.channel_id, user["id"]
+    ):
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return workflow
+
+
 @router.get("", response_class=HTMLResponse)
 async def list_workflows(request: Request, current_user: CurrentUserOptionalDep, uow: UowDep) -> Response:
     redirect = require_member_redirect(current_user)
@@ -168,6 +177,51 @@ async def new_workflow(request: Request, current_user: CurrentUserOptionalDep, u
         request=request, name="workflow_form.html", context={
             **await _page_context(request, current_user, uow), "workflow": None,
         }
+    )
+
+
+@router.get("/{workflow_id}", response_class=HTMLResponse)
+async def workflow_detail(
+    workflow_id: str, request: Request,
+    current_user: CurrentUserOptionalDep, uow: UowDep,
+) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
+    workflow = await _visible_workflow(workflow_id, current_user, uow)
+    step_names = {
+        step["id"]: step.get("name") or step["id"] for step in workflow.steps
+    }
+    run_views = []
+    for run in await uow.workflows.list_runs(workflow.id):
+        duration_ms = None
+        if run.finished_at is not None:
+            duration_ms = int((run.finished_at - run.started_at).total_seconds() * 1000)
+        run_views.append({
+            "run": run,
+            "duration_ms": duration_ms,
+            "initiated_by": run.event.get("initiated_by"),
+            "results": [
+                {
+                    "name": step_names.get(result["step_id"], result["step_id"]),
+                    "status": result["status"],
+                }
+                for result in run.step_results
+            ],
+        })
+    return templates.TemplateResponse(
+        request=request,
+        name="workflow_detail.html",
+        context={
+            **await _page_context(request, current_user, uow),
+            "workflow": workflow,
+            "run_views": run_views,
+            "can_manage": (
+                workflow.creator_id == current_user["id"]
+                or current_user["role"] == "superadmin"
+            ),
+        },
     )
 
 
@@ -265,7 +319,8 @@ async def run_workflow_now(
         trigger_type="manual",
     )
     if redirect:
-        return RedirectResponse("/workflows", status_code=303)
+        target = f"/workflows/{workflow.id}" if redirect == "detail" else "/workflows"
+        return RedirectResponse(target, status_code=303)
     return _run_json(run)
 
 
