@@ -1319,7 +1319,8 @@ class SqlAlchemyWorkflowRepository:
         workflow.updated_at = dt.datetime.now(dt.timezone.utc)
         await self._conn.execute(
             """UPDATE workflow SET name=?,description=?,channel_id=?,enabled=?,trigger_type=?,
-               trigger_config=?,filter_expression=?,steps=?,updated_at=?,next_run_at=? WHERE id=?""",
+               trigger_config=?,filter_expression=?,steps=?,updated_at=?,next_run_at=?,
+               claim_token=NULL,claim_until=NULL WHERE id=?""",
             (workflow.name, workflow.description, workflow.channel_id, int(workflow.enabled),
              workflow.trigger_type, json.dumps(workflow.trigger_config), workflow.filter_expression,
              json.dumps(workflow.steps), _iso(workflow.updated_at),
@@ -1398,6 +1399,28 @@ class SqlAlchemyWorkflowRepository:
         rows = await (await self._conn.execute(
             "SELECT * FROM workflow WHERE enabled=1 AND trigger_type='schedule' AND next_run_at<=?",
             (_iso(now),),
+        )).fetchall()
+        return [self._workflow(row) for row in rows]
+
+    async def claim_due_schedules(
+        self, now: dt.datetime, *, claim_token: str, claim_until: dt.datetime
+    ) -> list[Workflow]:
+        rows = await (await self._conn.execute(
+            """UPDATE workflow
+               SET claim_token=?, claim_until=?
+               WHERE id IN (
+                   SELECT workflow.id FROM workflow
+                   JOIN channel ON channel.id=workflow.channel_id
+                   JOIN workspace ON workspace.id=channel.workspace_id
+                   JOIN team ON team.id=workspace.team_id
+                   WHERE workflow.enabled=1 AND workflow.trigger_type='schedule'
+                   AND workflow.next_run_at<=?
+                   AND (workflow.claim_until IS NULL OR workflow.claim_until<=?)
+                   AND channel.archived_at IS NULL AND workspace.archived_at IS NULL
+                   AND team.archived_at IS NULL
+               )
+               RETURNING *""",
+            (claim_token, _iso(claim_until), _iso(now), _iso(now)),
         )).fetchall()
         return [self._workflow(row) for row in rows]
 

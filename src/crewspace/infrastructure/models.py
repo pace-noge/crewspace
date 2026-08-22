@@ -336,6 +336,8 @@ class WorkflowModel(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
     next_run_at: Mapped[str | None] = mapped_column(String)
+    claim_token: Mapped[str | None] = mapped_column(String)
+    claim_until: Mapped[str | None] = mapped_column(String)
 
 
 class WorkflowRunModel(Base):

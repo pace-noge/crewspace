@@ -368,7 +368,13 @@ class WorkflowSchedulerLoop:
         now = dt.datetime.now(UTC)
         count = 0
         async with self._db.uow() as uow:
-            for workflow in await uow.workflows.list_due_schedules(now):
+            workflows = await uow.workflows.claim_due_schedules(
+                now,
+                claim_token=uuid.uuid4().hex,
+                claim_until=now + dt.timedelta(minutes=5),
+            )
+            await uow.commit()
+            for workflow in workflows:
                 await WorkflowService(on_message=self._on_message).run(
                     workflow, uow,
                     {"channel_id": workflow.channel_id, "scheduled_at": now.isoformat(), "text": now.isoformat()},

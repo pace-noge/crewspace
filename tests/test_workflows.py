@@ -205,6 +205,41 @@ def test_schedule_trigger_and_call_webhook_action(client, app, monkeypatch):
     assert client.get(f"/workflows/{workflow_id}/runs").json()[0]["status"] == "succeeded"
 
 
+def test_two_workflow_scheduler_workers_claim_due_occurrence_once(client, app, monkeypatch):
+    import datetime as dt
+
+    from crewspace.application.workflows import WorkflowSchedulerLoop, WorkflowService
+
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="claim_once", trigger_type="schedule",
+        trigger_config={"interval": "1h"}, filter_expression=None,
+    )).json()
+    calls: list[str] = []
+
+    async def fake_run(self, claimed, uow, event, **kwargs):
+        calls.append(claimed.id)
+        await asyncio.sleep(0.05)
+        claimed.next_run_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1)
+        await uow.workflows.update(claimed)
+        await uow.commit()
+
+    monkeypatch.setattr(WorkflowService, "run", fake_run)
+
+    async def race():
+        async with app.state.db.uow() as uow:
+            await uow._conn.execute(
+                "UPDATE workflow SET next_run_at=? WHERE id=?",
+                ("2000-01-01T00:00:00+00:00", workflow["id"]),
+            )
+            await uow.commit()
+        first = WorkflowSchedulerLoop(app.state.db)
+        second = WorkflowSchedulerLoop(app.state.db)
+        return await asyncio.gather(first.run_due_once(), second.run_due_once())
+
+    assert sum(asyncio.run(race())) == 1
+    assert calls == [workflow["id"]]
+
+
 def test_schedule_accepts_human_interval_and_rejects_missing_or_ambiguous_schedule(client):
     payload = _workflow_payload(
         name="human_schedule", trigger_type="schedule",
