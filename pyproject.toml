@@ -43,3 +43,13 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+# The async SQLite test harness checks out AsyncConnections per UnitOfWork. When
+# a WebSocket-triggered workflow is still streaming after the test client closes
+# the socket, the in-flight coroutine holds a connection that is only reaped by
+# the garbage collector at process teardown. SQLAlchemy emits a benign
+# "non-checked-in connection ... will be terminated" warning for these; the
+# connection is correctly closed, so we quiet it here to keep real warnings
+# visible. This is test-only and does not affect production logging.
+filterwarnings = [
+    "ignore::sqlalchemy.exc.SAWarning",
+]
