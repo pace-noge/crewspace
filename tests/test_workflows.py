@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import uuid
 
 
 def _workflow_payload(**overrides):
@@ -534,6 +535,135 @@ def test_workflow_detail_hides_management_actions_from_channel_viewer(client):
     assert "viewable_flow" in detail.text
     assert f'/workflows/{workflow["id"]}/edit' not in detail.text
     assert f'/workflows/{workflow["id"]}/run' not in detail.text
+
+
+def test_creator_retries_failed_run_from_failed_step_with_lineage(client):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="retryable",
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "first side effect"}},
+            {"id": "second", "action": "send_message", "config": {"text": ""}},
+        ],
+    )).json()
+    original = client.post(f'/workflows/{workflow["id"]}/run').json()
+    assert original["status"] == "failed"
+    assert original["current_step"] == 1
+
+    updated = _workflow_payload(
+        name="retryable",
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "first side effect"}},
+            {"id": "second", "action": "send_message", "config": {"text": "recovered {{trigger.initiated_by}}"}},
+        ],
+    )
+    assert client.put(f'/workflows/{workflow["id"]}', json=updated).status_code == 200
+
+    retried = client.post(
+        f'/workflows/{workflow["id"]}/runs/{original["id"]}/retry'
+    )
+    assert retried.status_code == 200
+    attempt = retried.json()
+    assert attempt["status"] == "succeeded"
+    assert attempt["parent_run_id"] == original["id"]
+    assert attempt["root_run_id"] == original["id"]
+    assert attempt["attempt"] == 2
+    assert attempt["event"] == original["event"]
+    assert [item["step_id"] for item in attempt["step_results"]] == ["second"]
+
+    messages = [item["body"] for item in client.get("/channels/chan_general/messages").json()]
+    assert messages.count("first side effect") == 1
+    assert messages.count("recovered user_bilal") == 1
+    original_after = next(
+        item for item in client.get(f'/workflows/{workflow["id"]}/runs').json()
+        if item["id"] == original["id"]
+    )
+    assert original_after["status"] == "failed"
+
+    detail = client.get(f'/workflows/{workflow["id"]}')
+    assert detail.status_code == 200
+    assert f'/workflows/{workflow["id"]}/runs/{original["id"]}/retry' in detail.text
+    assert f'Retry of {original["id"]}' in detail.text
+
+
+def test_retry_of_retry_reconstructs_outputs_from_full_lineage(client):
+    name = f"retry_chain_{uuid.uuid4().hex[:8]}"
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name=name,
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "alpha"}},
+            {"id": "second", "action": "send_message", "config": {"text": ""}},
+            {"id": "third", "action": "send_message", "config": {"text": ""}},
+        ],
+    )).json()
+    original = client.post(f'/workflows/{workflow["id"]}/run').json()
+    assert original["current_step"] == 1
+
+    assert client.put(f'/workflows/{workflow["id"]}', json=_workflow_payload(
+        name=name,
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "alpha"}},
+            {"id": "second", "action": "send_message", "config": {"text": "beta {{first.text}}"}},
+            {"id": "third", "action": "send_message", "config": {"text": ""}},
+        ],
+    )).status_code == 200
+    second = client.post(
+        f'/workflows/{workflow["id"]}/runs/{original["id"]}/retry'
+    ).json()
+    assert second["status"] == "failed"
+    assert second["current_step"] == 2
+
+    assert client.put(f'/workflows/{workflow["id"]}', json=_workflow_payload(
+        name=name,
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "alpha"}},
+            {"id": "second", "action": "send_message", "config": {"text": "beta {{first.text}}"}},
+            {"id": "third", "action": "send_message", "config": {
+                "text": "gamma {{first.text}} / {{second.text}}",
+            }},
+        ],
+    )).status_code == 200
+    third = client.post(
+        f'/workflows/{workflow["id"]}/runs/{second["id"]}/retry'
+    ).json()
+    assert third["status"] == "succeeded"
+    assert third["attempt"] == 3
+    assert third["parent_run_id"] == second["id"]
+    messages = [item["body"] for item in client.get("/channels/chan_general/messages").json()]
+    assert "gamma alpha / beta alpha" in messages
+
+
+def test_retry_requires_failed_run_and_workflow_manager(client):
+    suffix = uuid.uuid4().hex[:8]
+    workflow = client.post(
+        "/workflows", json=_workflow_payload(name=f"retry_guard_{suffix}")
+    ).json()
+    succeeded = client.post(f'/workflows/{workflow["id"]}/run').json()
+    assert client.post(
+        f'/workflows/{workflow["id"]}/runs/{succeeded["id"]}/retry'
+    ).status_code == 409
+
+    viewer_name = f"Intern {suffix}"
+    created = client.post("/management/humans", data={
+        "name": viewer_name, "password": "intern123", "team_id": "team_acme",
+        "role": "member",
+    })
+    assert created.status_code == 200
+    management = client.get("/management/channels/chan_general/members")
+    member_match = re.search(
+        rf'<option value="(user_[^"]+)">{re.escape(viewer_name)}', management.text
+    )
+    assert member_match is not None
+    assert client.post(
+        "/management/channels/chan_general/members",
+        data={"member_id": member_match.group(1)},
+    ).status_code == 200
+    client.post("/auth/logout")
+    assert client.post("/auth/login", data={
+        "username": viewer_name, "password": "intern123",
+    }).status_code == 200
+    assert client.post(
+        f'/workflows/{workflow["id"]}/runs/{succeeded["id"]}/retry'
+    ).status_code == 403
 
 
 def test_workflow_can_be_edited_and_updated_definition_executes(client):

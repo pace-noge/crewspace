@@ -206,6 +206,10 @@ async def workflow_detail(
             "run": run,
             "duration_ms": duration_ms,
             "initiated_by": run.event.get("initiated_by"),
+            "can_retry": (
+                run.status.value == "failed"
+                and run.current_step < len(workflow.steps)
+            ),
             "results": [
                 {
                     "name": step_names.get(result["step_id"], result["step_id"]),
@@ -325,6 +329,27 @@ async def run_workflow_now(
     if redirect:
         target = f"/workflows/{workflow.id}" if redirect == "detail" else "/workflows"
         return RedirectResponse(target, status_code=303)
+    return _run_json(run)
+
+
+@router.post("/{workflow_id}/runs/{run_id}/retry", response_model=None)
+async def retry_workflow_run(
+    workflow_id: str, run_id: str,
+    current_user: CurrentUserDep, uow: UowDep,
+    redirect: bool = False,
+) -> dict | RedirectResponse:
+    workflow = await _manageable_workflow(workflow_id, current_user, uow)
+    failed = await uow.workflows.get_run(run_id)
+    if failed is None or failed.workflow_id != workflow.id:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    try:
+        run = await _workflow_service().retry_failed(
+            workflow, failed, uow, initiated_by=current_user["id"]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if redirect:
+        return RedirectResponse(f"/workflows/{workflow.id}", status_code=303)
     return _run_json(run)
 
 

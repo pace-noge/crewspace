@@ -226,6 +226,10 @@ class WorkflowRun:
     finished_at: datetime | None = None
     error: str | None = None
     approval_token: str | None = None
+    parent_run_id: str | None = None
+    root_run_id: str | None = None
+    attempt: int = 1
+    retry_initiated_by: str | None = None
 
 
 @dataclass

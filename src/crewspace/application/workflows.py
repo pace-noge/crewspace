@@ -235,7 +235,8 @@ class WorkflowService:
 
     async def run(self, workflow: Workflow, uow: UnitOfWork, event: dict[str, Any],
                   *, start_step: int = 0, existing_run: WorkflowRun | None = None,
-                  trigger_type: str | None = None) -> WorkflowRun:
+                  trigger_type: str | None = None,
+                  context_results: list[dict[str, Any]] | None = None) -> WorkflowRun:
         now = dt.datetime.now(UTC)
         run = existing_run or WorkflowRun(
             id=f"wfr_{uuid.uuid4().hex[:12]}", workflow_id=workflow.id,
@@ -252,6 +253,9 @@ class WorkflowService:
             "trigger": event,
             "workflow": {"id": workflow.id, "name": workflow.name},
         }
+        for result in context_results or []:
+            if result.get("status") == "succeeded":
+                context[result["step_id"]] = result.get("output")
         try:
             for index in range(start_step, len(workflow.steps)):
                 step = workflow.steps[index]
@@ -282,6 +286,57 @@ class WorkflowService:
         await uow.workflows.update_run(run)
         await uow.commit()
         return run
+
+    async def retry_failed(
+        self, workflow: Workflow, failed: WorkflowRun, uow: UnitOfWork,
+        *, initiated_by: str,
+    ) -> WorkflowRun:
+        if failed.workflow_id != workflow.id:
+            raise ValueError("Workflow run not found")
+        if failed.status != WorkflowRunStatus.FAILED:
+            raise ValueError("Only failed workflow runs can be retried")
+        if failed.current_step >= len(workflow.steps):
+            raise ValueError("Failed step no longer exists in the workflow definition")
+        root_run_id = failed.root_run_id or failed.id
+        related = await uow.workflows.list_runs(workflow.id)
+        lineage = sorted(
+            (
+                run for run in related
+                if run.id == root_run_id or run.root_run_id == root_run_id
+            ),
+            key=lambda run: run.attempt,
+        )
+        attempt = max((run.attempt for run in lineage), default=1) + 1
+        context_results = [
+            result
+            for ancestor in lineage
+            if ancestor.attempt <= failed.attempt
+            for result in ancestor.step_results
+            if result.get("status") == "succeeded"
+        ]
+        retry = WorkflowRun(
+            id=f"wfr_{uuid.uuid4().hex[:12]}",
+            workflow_id=workflow.id,
+            trigger_type=failed.trigger_type,
+            event=failed.event,
+            status=WorkflowRunStatus.RUNNING,
+            current_step=failed.current_step,
+            step_results=[],
+            started_at=dt.datetime.now(UTC),
+            parent_run_id=failed.id,
+            root_run_id=root_run_id,
+            attempt=attempt,
+            retry_initiated_by=initiated_by,
+        )
+        await uow.workflows.start_run(retry)
+        return await self.run(
+            workflow,
+            uow,
+            failed.event,
+            start_step=failed.current_step,
+            existing_run=retry,
+            context_results=context_results,
+        )
 
     async def _execute_action(self, workflow: Workflow, step: dict, run: WorkflowRun,
                               uow: UnitOfWork, context: dict[str, Any]) -> dict[str, Any]:

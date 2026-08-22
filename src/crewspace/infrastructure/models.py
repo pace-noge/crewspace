@@ -353,3 +353,7 @@ class WorkflowRunModel(Base):
     finished_at: Mapped[str | None] = mapped_column(String)
     error: Mapped[str | None] = mapped_column(Text)
     approval_token: Mapped[str | None] = mapped_column(String, unique=True)
+    parent_run_id: Mapped[str | None] = mapped_column(String)
+    root_run_id: Mapped[str | None] = mapped_column(String)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    retry_initiated_by: Mapped[str | None] = mapped_column(String)

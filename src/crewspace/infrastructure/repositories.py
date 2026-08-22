@@ -1284,6 +1284,8 @@ class SqlAlchemyWorkflowRepository:
             started_at=_parse(row["started_at"]),
             finished_at=_parse(row["finished_at"]) if row["finished_at"] else None,
             error=row["error"], approval_token=row["approval_token"],
+            parent_run_id=row["parent_run_id"], root_run_id=row["root_run_id"],
+            attempt=row["attempt"], retry_initiated_by=row["retry_initiated_by"],
         )
 
     async def create(self, workflow: Workflow) -> Workflow:
@@ -1352,10 +1354,12 @@ class SqlAlchemyWorkflowRepository:
         await self._conn.execute(
             """INSERT INTO workflow_run
             (id,workflow_id,trigger_type,event,status,current_step,step_results,started_at,
-             finished_at,error,approval_token) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+             finished_at,error,approval_token,parent_run_id,root_run_id,attempt,retry_initiated_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (run.id, run.workflow_id, run.trigger_type, json.dumps(run.event), run.status.value,
              run.current_step, json.dumps(run.step_results), _iso(run.started_at),
-             _iso(run.finished_at) if run.finished_at else None, run.error, run.approval_token),
+             _iso(run.finished_at) if run.finished_at else None, run.error, run.approval_token,
+             run.parent_run_id, run.root_run_id, run.attempt, run.retry_initiated_by),
         )
         return run
 
