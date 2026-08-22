@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from fastapi import WebSocket
 
-from crewspace.api.connection import AgentConnectionManager
+from crewspace.api.connection import AgentConnectionManager, ConnectionManager
 
 
 class FakeWebSocket:
@@ -72,3 +72,39 @@ def test_agent_status_distinguishes_builtin_and_remote_agents():
 
     assert manager.status("agent_builtin", is_local=True) == "local"
     assert manager.status("agent_remote", is_local=False) == "disconnected"
+
+
+class RecordingManager(ConnectionManager):
+    def __init__(self) -> None:
+        super().__init__()
+        self.broadcasts: list[tuple[str, dict]] = []
+
+    async def broadcast(self, channel_id: str, payload: dict) -> None:
+        self.broadcasts.append((channel_id, payload))
+
+
+@pytest.mark.asyncio
+async def test_connect_and_disconnect_broadcast_presence(monkeypatch):
+    import crewspace.api.connection as conn
+
+    recorder = RecordingManager()
+    monkeypatch.setattr(conn, "manager", recorder)
+    manager = AgentConnectionManager()
+    ws = FakeWebSocket()
+
+    await manager.connect("agent_x", cast(WebSocket, ws))
+    manager.disconnect("agent_x", cast(WebSocket, ws))
+    # Presence is broadcast fire-and-forget on the running loop; let the
+    # scheduled tasks run before inspecting the recorded frames.
+    await asyncio.sleep(0)
+
+    assert recorder.broadcasts == [
+        (
+            conn.PRESENCE_ROOM,
+            {"type": "agent_presence", "agent_id": "agent_x", "status": "connected"},
+        ),
+        (
+            conn.PRESENCE_ROOM,
+            {"type": "agent_presence", "agent_id": "agent_x", "status": "disconnected"},
+        ),
+    ]

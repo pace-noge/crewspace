@@ -10,6 +10,7 @@ Two independent broadcast spaces:
     pushes events down to a connected agent and reads its replies/tool calls
     back over that same socket. For multi-worker, back both with Redis pub/sub.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +39,6 @@ class ConnectionManager:
         """Drop socket bookkeeping when the owning application shuts down."""
         self._rooms.clear()
 
-
     async def broadcast(self, channel_id: str, payload: dict) -> None:
         for ws in list(self._rooms.get(channel_id, set())):
             try:
@@ -61,10 +61,12 @@ class AgentConnectionManager:
     async def connect(self, agent_id: str, ws: WebSocket) -> None:
         await ws.accept()
         self._conns[agent_id] = ws
+        _broadcast_presence(agent_id, "connected")
 
     def disconnect(self, agent_id: str, ws: WebSocket) -> None:
         if self._conns.get(agent_id) is ws:
             self._conns.pop(agent_id, None)
+            _broadcast_presence(agent_id, "disconnected")
 
     def reset(self) -> None:
         """Drop live connections and cancel unresolved waits on app shutdown."""
@@ -73,7 +75,6 @@ class AgentConnectionManager:
             if not future.done():
                 future.cancel()
         self._waiters.clear()
-
 
     async def close(self, agent_id: str, code: int = 4004) -> None:
         ws = self._conns.pop(agent_id, None)
@@ -134,6 +135,31 @@ class AgentConnectionManager:
         return self._resolve(agent_id, message_id, value)
 
 
+def _broadcast_presence(agent_id: str, status: str) -> None:
+    """Notify every open UI client that an agent came online or dropped.
+
+    Sent on a dedicated presence channel (not the per-channel chat rooms) so
+    the sidebar status dots can update live without a page reload. Fire-and-forget
+    on the running event loop: ``connect`` is async and ``disconnect`` is sync,
+    but both run inside the agent's live WebSocket loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(
+        manager.broadcast(
+            PRESENCE_ROOM,
+            {"type": "agent_presence", "agent_id": agent_id, "status": status},
+        )
+    )
+
+
 manager = ConnectionManager()
 agent_manager = AgentConnectionManager()
 thread_manager = ConnectionManager()  # per-thread side-panel WebSockets
+
+#: Broadcast channel that carries global agent-presence events to every open
+#: UI client (the sidebar status dots subscribe here so they update live
+#: without a page reload).
+PRESENCE_ROOM = "__presence__"
