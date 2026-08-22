@@ -142,6 +142,23 @@
         showTyping(data.author_id, avatar, name);
         return;
       }
+      if(data.type==="workflow_run_progress"){
+        const step=data.step_id||"workflow";
+        const text=data.status==="completed"
+          ?(data.run_status==="failed"?"Workflow failed":"Workflow complete")
+          :data.status==="waiting"
+            ?"Workflow awaiting approval"
+            :data.status==="started"
+              ?`Workflow · ${step} running…`
+              :data.status==="failed"
+                ?`Workflow failed · ${step}`
+                :`Workflow · ${step} ${data.status}`;
+        agentState.textContent=text;
+        if(data.status==="completed"&&data.run_status==="succeeded"){
+          setTimeout(()=>{if(agentState.textContent===text)agentState.textContent="Ready";},1500);
+        }
+        return;
+      }
       render(data);
     };
     ws.onclose=()=>{

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -13,6 +14,7 @@ from croniter import croniter
 from ..domain.entities import Workflow, WorkflowRun, WorkflowRunStatus
 from ..domain.identifiers import BUILTIN_ASSISTANT_ID
 from ..domain.ports import UnitOfWork
+logger = logging.getLogger(__name__)
 
 TRIGGER_TYPES = {"message_posted", "reaction_added", "diff_posted", "webhook", "schedule"}
 ACTION_TYPES = {
@@ -97,10 +99,35 @@ class WorkflowService:
         self, on_message: Callable[[Any], Awaitable[None]] | None = None,
         webhook_executor: WorkflowWebhookExecutor | None = None,
         mcp_executor: WorkflowMcpToolExecutor | None = None,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._on_message = on_message
         self._webhook_executor = webhook_executor
         self._mcp_executor = mcp_executor
+        self._on_progress = on_progress
+
+    async def _emit_progress(
+        self, run: WorkflowRun, *, step_index: int, step_id: str, action: str,
+        status: str,
+    ) -> None:
+        if self._on_progress is None:
+            return
+        event = {
+            "type": "workflow_run_progress",
+            "run_id": run.id,
+            "workflow_id": run.workflow_id,
+            "channel_id": run.event.get("channel_id") if run.event else None,
+            "step_index": step_index,
+            "step_id": step_id,
+            "action": action,
+            "status": status,
+            "current_step": run.current_step,
+            "run_status": run.status.value,
+        }
+        try:
+            await self._on_progress(event)
+        except Exception:
+            logger.exception("Workflow progress listener failed")
 
     async def _require_mcp_step_authorization(self, uow: UnitOfWork, owner_id: str) -> None:
         owner = await uow.auth.get_member(owner_id)
@@ -245,10 +272,11 @@ class WorkflowService:
     async def dispatch(self, uow: UnitOfWork, *, channel_id: str, trigger_type: str,
                        event: dict[str, Any]) -> list[WorkflowRun]:
         runs = []
+        scoped_event = {**event, "channel_id": channel_id}
         for workflow in await uow.workflows.list_enabled(channel_id, trigger_type):
-            if not matches_filter(workflow.filter_expression, event):
+            if not matches_filter(workflow.filter_expression, scoped_event):
                 continue
-            runs.append(await self.run(workflow, uow, event))
+            runs.append(await self.run(workflow, uow, scoped_event))
         return runs
 
     async def run(self, workflow: Workflow, uow: UnitOfWork, event: dict[str, Any],
@@ -283,17 +311,50 @@ class WorkflowService:
                         "step_id": step["id"], "status": "skipped",
                         "output": {"condition": step.get("condition")},
                     })
+                    await uow.workflows.update_run(run)
+                    await uow.commit()
+                    await self._emit_progress(
+                        run, step_index=index, step_id=step["id"],
+                        action=step.get("action", ""), status="skipped",
+                    )
                     continue
                 timeout = int(step.get("timeout_seconds") or 300)
-                output = await asyncio.wait_for(
-                    self._execute_action(workflow, step, run, uow, context), timeout=timeout
+                await self._emit_progress(
+                    run, step_index=index, step_id=step["id"],
+                    action=step.get("action", ""), status="started",
                 )
+                try:
+                    output = await asyncio.wait_for(
+                        self._execute_action(workflow, step, run, uow, context),
+                        timeout=timeout,
+                    )
+                except Exception as step_exc:
+                    run.current_step = index
+                    run.step_results.append({
+                        "step_id": step["id"], "status": "failed",
+                        "output": {"error": str(step_exc)},
+                    })
+                    await uow.workflows.update_run(run)
+                    await uow.commit()
+                    await self._emit_progress(
+                        run, step_index=index, step_id=step["id"],
+                        action=step.get("action", ""), status="failed",
+                    )
+                    raise
                 run.current_step = index + 1
                 run.step_results.append({"step_id": step["id"], "status": "succeeded", "output": output})
                 context[step["id"]] = output
+                await uow.workflows.update_run(run)
+                await uow.commit()
+                await self._emit_progress(
+                    run, step_index=index, step_id=step["id"],
+                    action=step.get("action", ""), status="succeeded",
+                )
                 if run.status == WorkflowRunStatus.WAITING:
-                    await uow.workflows.update_run(run)
-                    await uow.commit()
+                    await self._emit_progress(
+                        run, step_index=run.current_step, step_id="", action="",
+                        status="waiting",
+                    )
                     return run
             run.status = WorkflowRunStatus.SUCCEEDED
             run.finished_at = dt.datetime.now(UTC)
@@ -303,6 +364,10 @@ class WorkflowService:
             run.finished_at = dt.datetime.now(UTC)
         await uow.workflows.update_run(run)
         await uow.commit()
+        await self._emit_progress(
+            run, step_index=run.current_step, step_id="", action="",
+            status="completed",
+        )
         return run
 
     async def retry_failed(
@@ -477,12 +542,14 @@ class WorkflowSchedulerLoop:
         on_message: Callable[[Any], Awaitable[None]] | None = None,
         webhook_executor: WorkflowWebhookExecutor | None = None,
         mcp_executor: WorkflowMcpToolExecutor | None = None,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._db = db
         self._poll_seconds = poll_seconds
         self._on_message = on_message
         self._webhook_executor = webhook_executor
         self._mcp_executor = mcp_executor
+        self._on_progress = on_progress
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -510,6 +577,7 @@ class WorkflowSchedulerLoop:
             for workflow in workflows:
                 await WorkflowService(
                     on_message=self._on_message,
+                    on_progress=self._on_progress,
                     webhook_executor=self._webhook_executor,
                     mcp_executor=self._mcp_executor,
                 ).run(

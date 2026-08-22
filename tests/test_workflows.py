@@ -30,6 +30,24 @@ def _workflow_payload(**overrides):
     return payload
 
 
+def _next_message_frame(ws):
+    """Receive frames until a chat message frame (ignoring workflow progress events)."""
+    while True:
+        frame = ws.receive_json()
+        if frame.get("type") != "workflow_run_progress" and "body" in frame:
+            return frame
+
+
+def _next_progress_frame(ws, status: str | None = None):
+    """Receive frames until a workflow progress event with the requested status."""
+    while True:
+        frame = ws.receive_json()
+        if frame.get("type") == "workflow_run_progress" and (
+            status is None or frame.get("status") == status
+        ):
+            return frame
+
+
 def test_workflows_are_a_tool_with_a_dedicated_builder(client):
     listing = client.get("/workflows")
     assert listing.status_code == 200
@@ -70,6 +88,8 @@ def test_message_posted_workflow_filters_executes_and_logs(client, app):
         ws.send_json({"body": "please deploy api"})
         inbound = ws.receive_json()
         assert inbound["body"] == "please deploy api"
+        assert _next_progress_frame(ws, "succeeded")["step_id"] == "step_1"
+        assert _next_progress_frame(ws, "completed")["run_status"] == "succeeded"
 
     messages = client.get("/channels/chan_general/messages").json()
     assert any(message["body"] == "Deploy detected: please deploy api" for message in messages)
@@ -103,6 +123,81 @@ def test_workflow_schema_and_repository_round_trip(client, app):
     assert workflow.trigger_type == "message_posted"
     assert workflow.steps[0]["action"] == "send_message"
     assert workflow.enabled is False
+
+
+def test_run_emits_live_per_step_progress_and_persists_state(client, app):
+    from crewspace.application.workflows import WorkflowService
+
+    payload = _workflow_payload(
+        name="progress_demo",
+        filter_expression=None,
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "step one"}},
+            {"id": "second", "action": "add_reaction",
+             "config": {"message_id": "{{ message_id }}", "emoji": "🚀"}},
+        ],
+    )
+
+    async def build():
+        async with app.state.db.uow() as uow:
+            return await WorkflowService().create(
+                uow, creator_id="Bilal", data=payload
+            )
+
+    workflow = asyncio.run(build())
+
+    events: list[dict] = []
+
+    async def on_progress(event: dict) -> None:
+        events.append(event)
+        # While step 2 is starting, step 1 must already be persisted as succeeded.
+        if event.get("status") == "started" and event.get("step_id") == "second":
+            async with app.state.db.uow() as uow:
+                live = await uow.workflows.get_run(event["run_id"])
+                completed = [r for r in live.step_results if r["status"] == "succeeded"]
+                assert any(r["step_id"] == "first" for r in completed)
+
+    async def go():
+        async with app.state.db.uow() as uow:
+            wf = await uow.workflows.get(workflow.id)
+            return await WorkflowService(on_progress=on_progress).run(
+                wf, uow, {"text": "hi", "message_id": "msg_x"}
+            )
+
+    asyncio.run(go())
+
+    statuses = [(e["step_id"], e["status"]) for e in events]
+    assert ("first", "started") in statuses
+    assert ("first", "succeeded") in statuses
+    assert ("second", "started") in statuses
+    assert ("second", "succeeded") in statuses
+
+
+def test_manual_run_broadcasts_progress_frames_to_channel_and_ui_handles_them(client):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="live_progress",
+        filter_expression=None,
+        steps=[{"id": "pause", "action": "delay", "config": {"seconds": 0}}],
+    )).json()
+
+    with client.websocket_connect(
+        "/channels/chan_general/ws", headers={"Origin": "http://testserver"}
+    ) as ws:
+        response = client.post(f'/workflows/{workflow["id"]}/run')
+        assert response.status_code == 200
+        started = ws.receive_json()
+        step_completed = ws.receive_json()
+        run_completed = ws.receive_json()
+
+    assert started["type"] == "workflow_run_progress"
+    assert started["run_id"] == response.json()["id"]
+    assert started["step_id"] == "pause"
+    assert started["status"] == "started"
+    assert step_completed["type"] == "workflow_run_progress"
+    assert step_completed["status"] == "succeeded"
+    assert run_completed["status"] == "completed"
+    assert run_completed["run_status"] == "succeeded"
+    assert 'data.type==="workflow_run_progress"' in client.get("/").text
 
 
 def test_all_actions_execute_in_order_and_approval_resumes(client):
@@ -359,7 +454,9 @@ def test_message_trigger_templates_and_broadcasts_without_refresh(client):
     ) as ws:
         ws.send_json({"body": "hello realtime"})
         human = ws.receive_json()
-        automated = ws.receive_json()
+        automated = _next_message_frame(ws)
+        _next_progress_frame(ws, "succeeded")
+        _next_progress_frame(ws, "completed")
     assert human["body"] == "hello realtime"
     assert automated["body"] == "Message by user_bilal: hello realtime"
 
@@ -381,7 +478,9 @@ def test_reaction_trigger_templates_and_broadcasts_without_refresh(client):
             json={"emoji": "🚀"},
         )
         assert response.status_code == 200
-        automated = ws.receive_json()
+        automated = _next_message_frame(ws)
+        _next_progress_frame(ws, "succeeded")
+        _next_progress_frame(ws, "completed")
     assert automated["body"] == "Reaction 🚀 by user_bilal"
 
 
@@ -399,7 +498,9 @@ def test_diff_trigger_templates_and_broadcasts_without_refresh(client):
             "/channels/chan_general/diffs", json={"text": "diff --git a/a b/a"}
         )
         assert response.status_code == 201
-        automated = ws.receive_json()
+        automated = _next_message_frame(ws)
+        _next_progress_frame(ws, "succeeded")
+        _next_progress_frame(ws, "completed")
     assert automated["body"] == "Diff by user_bilal: diff --git a/a b/a"
 
 
@@ -469,7 +570,9 @@ def test_workflow_creator_can_run_now_with_realtime_delivery_and_history(client)
     ) as ws:
         response = client.post(f'/workflows/{workflow["id"]}/run')
         assert response.status_code == 200
-        live = ws.receive_json()
+        live = _next_message_frame(ws)
+        _next_progress_frame(ws, "succeeded")
+        _next_progress_frame(ws, "completed")
 
     assert response.json()["status"] == "succeeded"
     assert response.json()["trigger_type"] == "manual"
@@ -691,7 +794,9 @@ def test_workflow_can_be_edited_and_updated_definition_executes(client):
     ) as ws:
         ws.send_json({"body": "works now"})
         assert ws.receive_json()["body"] == "works now"
-        assert ws.receive_json()["body"] == "Edited works now"
+        assert _next_message_frame(ws)["body"] == "Edited works now"
+        _next_progress_frame(ws, "succeeded")
+        _next_progress_frame(ws, "completed")
 
 
 def test_workflow_can_be_disabled_and_enabled(client):
@@ -864,6 +969,7 @@ def test_workflow_step_calls_approved_mcp_tool_and_records_output(
     with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
         ws.send_json({"body": "trigger payload"})
         assert ws.receive_json()["body"] == "trigger payload"
+        assert _next_progress_frame(ws, "completed")["run_status"] == "succeeded"
     run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
     assert run["status"] == "succeeded"
     assert run["step_results"][0]["status"] == "succeeded"
@@ -895,6 +1001,7 @@ def test_workflow_step_rejects_unapproved_mcp_tool(client, app):
     with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
         ws.send_json({"body": "go"})
         assert ws.receive_json()["body"] == "go"
+        assert _next_progress_frame(ws, "completed")["run_status"] == "failed"
     run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
     assert run["status"] == "failed"
     assert "not approved" in run["error"]
@@ -913,6 +1020,7 @@ def test_workflow_step_fails_when_mcp_connection_missing(client):
     with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
         ws.send_json({"body": "go"})
         assert ws.receive_json()["body"] == "go"
+        assert _next_progress_frame(ws, "completed")["run_status"] == "failed"
     run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
     assert run["status"] == "failed"
     assert "connection" in run["error"].lower()
@@ -936,6 +1044,7 @@ def test_workflow_step_rejects_disabled_mcp_connection(client, app):
     ) as ws:
         ws.send_json({"body": "go"})
         assert ws.receive_json()["body"] == "go"
+        assert _next_progress_frame(ws, "completed")["run_status"] == "failed"
     run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
     assert run["status"] == "failed"
     assert "disabled" in run["error"].lower()
@@ -957,6 +1066,7 @@ def test_workflow_step_fails_closed_when_no_mcp_executor(client, app, monkeypatc
     with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
         ws.send_json({"body": "go"})
         assert ws.receive_json()["body"] == "go"
+        assert _next_progress_frame(ws, "completed")["run_status"] == "failed"
     run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
     assert run["status"] == "failed"
     assert "unavailable" in run["error"].lower()

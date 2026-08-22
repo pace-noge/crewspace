@@ -27,9 +27,16 @@ async def _broadcast_workflow_message(message) -> None:
     )
 
 
+async def _broadcast_workflow_progress(event: dict) -> None:
+    channel_id = event.get("channel_id")
+    if channel_id:
+        await manager.broadcast(channel_id, event)
+
+
 def _workflow_service() -> WorkflowService:
     return WorkflowService(
         on_message=_broadcast_workflow_message,
+        on_progress=_broadcast_workflow_progress,
         webhook_executor=build_workflow_webhook_executor(),
         mcp_executor=ExternalMcpToolExecutor(),
     )

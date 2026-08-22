@@ -51,9 +51,15 @@ async def lifespan(app: FastAPI):
             message.channel_id, to_message(message).model_dump(mode="json")
         )
 
+    async def broadcast_workflow_progress(event):
+        channel_id = event.get("channel_id")
+        if channel_id:
+            await manager.broadcast(channel_id, event)
+
     workflow_scheduler = WorkflowSchedulerLoop(
         db,
         on_message=broadcast_workflow_message,
+        on_progress=broadcast_workflow_progress,
         webhook_executor=build_workflow_webhook_executor(),
         mcp_executor=ExternalMcpToolExecutor(),
     )

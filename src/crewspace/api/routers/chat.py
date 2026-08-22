@@ -26,9 +26,16 @@ async def _broadcast_workflow_message(message) -> None:
     )
 
 
+async def _broadcast_workflow_progress(event: dict) -> None:
+    channel_id = event.get("channel_id")
+    if channel_id:
+        await manager.broadcast(channel_id, event)
+
+
 def _workflow_service() -> WorkflowService:
     return WorkflowService(
         on_message=_broadcast_workflow_message,
+        on_progress=_broadcast_workflow_progress,
         webhook_executor=build_workflow_webhook_executor(),
         mcp_executor=ExternalMcpToolExecutor(),
     )
@@ -161,16 +168,13 @@ async def chat_ws(
                     if not thread or thread[0].channel_id != channel_id:
                         continue
                 async def on_human_persisted(human_dto):
-                    workflow_frames: list[dict] = []
-
-                    async def buffer_workflow_message(message) -> None:
-                        workflow_frames.append(
-                            to_message(message).model_dump(mode="json")
-                        )
-
+                    # Echo the human message before running workflows, then stream
+                    # in-process workflow progress and generated messages directly.
+                    await manager.broadcast(channel_id, human_dto.model_dump(mode="json"))
                     try:
-                        runs = await WorkflowService(
-                            on_message=buffer_workflow_message,
+                        await WorkflowService(
+                            on_message=_broadcast_workflow_message,
+                            on_progress=_broadcast_workflow_progress,
                             webhook_executor=build_workflow_webhook_executor(),
                             mcp_executor=ExternalMcpToolExecutor(),
                         ).dispatch(
@@ -186,10 +190,7 @@ async def chat_ws(
                             },
                         )
                     except PermissionError:
-                        runs = []
-                    await manager.broadcast(channel_id, human_dto.model_dump(mode="json"))
-                    for frame in workflow_frames:
-                        await manager.broadcast(channel_id, frame)
+                        pass
 
                 new_msgs = await svc.post_and_respond(
                     channel_id,
