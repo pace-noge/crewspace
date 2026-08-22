@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import csv
 import hashlib
+import io
 import secrets
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from ...application.workflows import WorkflowService
@@ -379,6 +381,65 @@ async def enable_workflow(
     workflow_id: str, current_user: CurrentUserDep, uow: UowDep,
 ) -> RedirectResponse:
     return await _set_workflow_enabled(workflow_id, True, current_user, uow)
+
+
+def _run_audit_doc(workflow, run) -> dict:
+    return {
+        "workflow_id": workflow.id,
+        "workflow_name": workflow.name,
+        "run_id": run.id,
+        "trigger_type": run.trigger_type,
+        "status": run.status.value,
+        "started_at": run.started_at.isoformat(),
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "error": run.error,
+        "trigger_payload": run.event,
+        "steps": [
+            {
+                "step_id": result["step_id"],
+                "status": result["status"],
+                "output": result.get("output"),
+            }
+            for result in run.step_results
+        ],
+        "lineage": {
+            "attempt": run.attempt,
+            "parent_run_id": run.parent_run_id,
+            "root_run_id": run.root_run_id,
+            "retry_initiated_by": run.retry_initiated_by,
+        },
+    }
+
+
+@router.get("/{workflow_id}/runs/{run_id}/export")
+async def export_workflow_run(
+    workflow_id: str, run_id: str,
+    current_user: CurrentUserDep, uow: UowDep,
+    format: str = "json",
+) -> Response:
+    workflow = await _manageable_workflow(workflow_id, current_user, uow)
+    run = await uow.workflows.get_run(run_id)
+    if run is None or run.workflow_id != workflow.id:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    doc = _run_audit_doc(workflow, run)
+    if format == "csv":
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["step_id", "status", "workflow_id", "run_id"])
+        for step in doc["steps"]:
+            writer.writerow(
+                [step["step_id"], step["status"], doc["workflow_id"], doc["run_id"]]
+            )
+        return Response(
+            content=buffer.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="workflow_{workflow.id}_run_{run.id}.csv"'
+                )
+            },
+        )
+    return JSONResponse(doc)
 
 
 @router.post("/{workflow_id}/disable")

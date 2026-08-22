@@ -217,6 +217,7 @@ def test_all_actions_execute_in_order_and_approval_resumes(client):
     with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
         ws.send_json({"body": "release"})
         ws.receive_json()
+        assert _next_progress_frame(ws, "waiting")["run_status"] == "waiting"
 
     runs = client.get(f"/workflows/{workflow_id}/runs").json()
     assert runs[0]["status"] == "waiting"
@@ -555,6 +556,94 @@ def test_workflow_list_exposes_run_edit_toggle_and_delete_actions(client):
     assert 'class="list workflow-list"' in page.text
     assert '.workflow-list .workflow:last-child .menu-popover' in page.text
 
+
+
+def test_workflow_run_audit_export_returns_checkpointed_document(client, app):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="auditable", filter_expression='contains(text, "never")',
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "step one"}},
+            {"id": "second", "action": "add_reaction",
+             "config": {"message_id": "{{ message_id }}", "emoji": "🚀"}},
+        ],
+    )).json()
+    run = client.post(f'/workflows/{workflow["id"]}/run').json()
+    assert run["status"] == "succeeded"
+
+    response = client.get(f'/workflows/{workflow["id"]}/runs/{run["id"]}/export')
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    doc = response.json()
+    assert doc["workflow_id"] == workflow["id"]
+    assert doc["run_id"] == run["id"]
+    assert doc["trigger_type"] == "manual"
+    assert doc["status"] == "succeeded"
+    assert "started_at" in doc and "finished_at" in doc
+    assert doc["trigger_payload"] == run["event"]
+    assert [s["step_id"] for s in doc["steps"]] == ["first", "second"]
+    assert doc["steps"][0]["status"] == "succeeded"
+    assert doc["lineage"]["attempt"] == 1
+    assert doc["lineage"]["parent_run_id"] is None
+
+
+def test_workflow_run_audit_export_csv_flattens_steps(client, app):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="csv_auditable", filter_expression='contains(text, "never")',
+        steps=[
+            {"id": "first", "action": "send_message", "config": {"text": "step one"}},
+            {"id": "second", "action": "add_reaction",
+             "config": {"message_id": "{{ message_id }}", "emoji": "🚀"}},
+        ],
+    )).json()
+    run = client.post(f'/workflows/{workflow["id"]}/run').json()
+    assert run["status"] == "succeeded"
+
+    response = client.get(
+        f'/workflows/{workflow["id"]}/runs/{run["id"]}/export?format=csv'
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment" in response.headers["content-disposition"]
+    lines = response.text.strip().splitlines()
+    assert lines[0] == "step_id,status,workflow_id,run_id"
+    assert "first,succeeded" in lines[1]
+    assert "second,succeeded" in lines[2]
+
+
+def test_workflow_run_audit_export_forbidden_for_non_owner(client, app):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="owned_by_bilal", filter_expression='contains(text, "never")',
+        steps=[{"id": "only", "action": "send_message", "config": {"text": "x"}}],
+    )).json()
+    run = client.post(f'/workflows/{workflow["id"]}/run').json()
+
+    # Viewer is a channel member but not the creator and not a superadmin.
+    suffix = uuid.uuid4().hex[:8]
+    viewer_name = f"Audit Viewer {suffix}"
+    created = client.post("/management/humans", data={
+        "name": viewer_name, "password": "member123", "team_id": "team_acme",
+        "role": "member",
+    })
+    assert created.status_code == 200
+    management = client.get("/management/channels/chan_general/members")
+    member_match = re.search(
+        rf'<option value="(user_[^"]+)">{re.escape(viewer_name)}', management.text
+    )
+    assert member_match is not None
+    assert client.post(
+        "/management/channels/chan_general/members",
+        data={"member_id": member_match.group(1)},
+    ).status_code == 200
+    client.post("/auth/logout")
+    assert client.post("/auth/login", data={
+        "username": viewer_name, "password": "member123",
+    }).status_code == 200
+    response = client.get(f'/workflows/{workflow["id"]}/runs/{run["id"]}/export')
+    assert response.status_code == 403
+    client.post("/auth/logout")
+    assert client.post("/auth/login", data={
+        "username": "Bilal", "password": "admin123",
+    }).status_code == 200
 
 
 def test_workflow_creator_can_run_now_with_realtime_delivery_and_history(client):
