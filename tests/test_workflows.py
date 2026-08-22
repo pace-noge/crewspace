@@ -649,6 +649,22 @@ def test_workflow_run_audit_export_forbidden_for_non_owner(client, app):
     }).status_code == 200
 
 
+def test_workflow_detail_shows_audit_export_links_for_each_run(client, app):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="auditable_detail", filter_expression='contains(text, "never")',
+        steps=[{"id": "only", "action": "send_message", "config": {"text": "x"}}],
+    )).json()
+    run = client.post(f'/workflows/{workflow["id"]}/run').json()
+    assert run["status"] == "succeeded"
+
+    detail = client.get(f'/workflows/{workflow["id"]}')
+    assert detail.status_code == 200
+    body = detail.text
+    assert f'/workflows/{workflow["id"]}/runs/{run["id"]}/export?format=csv' in body
+    assert f'/workflows/{workflow["id"]}/runs/{run["id"]}/export?format=json' in body
+    assert 'Audit' in body
+
+
 def test_workflow_creator_can_run_now_with_realtime_delivery_and_history(client):
     workflow = client.post("/workflows", json=_workflow_payload(
         name="manual_flow", filter_expression='contains(text, "never")',
