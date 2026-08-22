@@ -92,7 +92,9 @@ class Database:
         # skipped for PostgreSQL, which keeps its default pool and semantics.
         if settings.database_url.startswith("sqlite+"):
             kwargs["connect_args"] = {"timeout": 30}
-        self.engine: AsyncEngine = create_async_engine(settings.database_url, **kwargs)
+        self.engine: AsyncEngine = create_async_engine(
+            settings.database_url, poolclass=NullPool, **kwargs
+        )
 
     @classmethod
     async def create(cls, settings: Settings) -> "Database":
@@ -138,7 +140,7 @@ class Database:
         if not target.exists():
             return
         assert settings.database_url is not None
-        engine = create_async_engine(settings.database_url)
+        engine = create_async_engine(settings.database_url, poolclass=NullPool)
         try:
             async with engine.connect() as raw:
                 conn = SqlAlchemyConnection(raw)

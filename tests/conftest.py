@@ -16,6 +16,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from crewspace.main import create_app
+
 from crewspace.config import Settings
 from crewspace.infrastructure.db import Database
 
@@ -30,7 +31,10 @@ def app():
     application.state.settings = settings
     application.state.start_schedulers = False
     yield application
-    asyncio.run(database.close())
+    # TestClient runs lifespan and closes the injected DB on its serving loop.
+    # App-only tests never enter lifespan, so the fixture closes their DB here.
+    if not getattr(application.state, "db_closed_by_lifespan", False):
+        asyncio.run(database.close())
 
 
 @pytest.fixture

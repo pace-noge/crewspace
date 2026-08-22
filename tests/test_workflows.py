@@ -376,6 +376,7 @@ def test_step_run_condition_skips_only_the_non_matching_step(client):
     with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
         ws.send_json({"body": "hello team"})
         ws.receive_json()
+        assert _next_progress_frame(ws, "completed")["run_status"] == "succeeded"
     messages = client.get("/channels/chan_general/messages").json()
     assert not any(item["body"] == "should not send" for item in messages)
     assert any(item["body"] == "always sent" for item in messages)
@@ -434,7 +435,9 @@ def test_webhook_send_message_broadcasts_to_an_open_channel_socket(client):
             headers={"X-Webhook-Secret": webhook["secret"]},
         )
         assert response.status_code == 202
-        live = ws.receive_json()
+        live = _next_message_frame(ws)
+        _next_progress_frame(ws, "succeeded")
+        _next_progress_frame(ws, "completed")
 
     assert live["body"] == "Live Nasa: Lagi nyoba"
     assert live["channel_id"] == "chan_general"

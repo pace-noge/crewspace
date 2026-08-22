@@ -9,6 +9,27 @@ import re
 from starlette.testclient import TestClient
 
 from crewspace.application.services import agent_routable_text
+from crewspace.main import create_app
+
+
+def test_lifespan_closes_an_injected_database_once():
+    class InjectedDatabase:
+        def __init__(self):
+            self.close_calls = 0
+
+        async def close(self):
+            self.close_calls += 1
+
+    database = InjectedDatabase()
+    app = create_app()
+    app.state.db = database
+    app.state.start_schedulers = False
+
+    with TestClient(app):
+        pass
+
+    assert database.close_calls == 1
+    assert app.state.db_closed_by_lifespan is True
 
 def _create_card(client: TestClient, title: str, column: str = "col_todo") -> str:
     # Create through the real HTTP endpoint (single event loop) and parse the

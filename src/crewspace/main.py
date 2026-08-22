@@ -20,7 +20,7 @@ from .infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools, workflows
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
-from .api.connection import manager
+from .api.connection import agent_manager, manager, thread_manager
 from .dto.mappers import to_message
 from .security import is_same_origin
 from .infrastructure.db import logger as db_logger
@@ -32,7 +32,7 @@ _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
-    # Allow tests to inject a pre-configured Database (e.g., against a temp file)
+    # Allow tests to inject a pre-configured Database (e.g., against a temp file).
     if not hasattr(app.state, "db"):
         db = await Database.create(settings)
         app.state.db = db
@@ -71,7 +71,11 @@ async def lifespan(app: FastAPI):
     finally:
         await scheduler.stop()
         await workflow_scheduler.stop()
+        manager.reset()
+        thread_manager.reset()
+        agent_manager.reset()
         await db.close()
+        app.state.db_closed_by_lifespan = True
 
 
 def create_app() -> FastAPI:

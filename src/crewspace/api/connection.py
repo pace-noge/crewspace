@@ -34,6 +34,11 @@ class ConnectionManager:
             if not room:
                 self._rooms.pop(channel_id, None)
 
+    def reset(self) -> None:
+        """Drop socket bookkeeping when the owning application shuts down."""
+        self._rooms.clear()
+
+
     async def broadcast(self, channel_id: str, payload: dict) -> None:
         for ws in list(self._rooms.get(channel_id, set())):
             try:
@@ -60,6 +65,15 @@ class AgentConnectionManager:
     def disconnect(self, agent_id: str, ws: WebSocket) -> None:
         if self._conns.get(agent_id) is ws:
             self._conns.pop(agent_id, None)
+
+    def reset(self) -> None:
+        """Drop live connections and cancel unresolved waits on app shutdown."""
+        self._conns.clear()
+        for future in self._waiters.values():
+            if not future.done():
+                future.cancel()
+        self._waiters.clear()
+
 
     async def close(self, agent_id: str, code: int = 4004) -> None:
         ws = self._conns.pop(agent_id, None)
