@@ -145,7 +145,7 @@ def test_team_leader_can_rename_workspace(client):
     assert "Acme Platform" in response.text
 
 
-def test_register_agent_has_cancel_button(client):
+def test_register_agent_form_matches_websocket_dial_in_model(client):
     response = client.get("/auth/agents/register")
     assert response.status_code == 200
     assert 'class="sidebar"' in response.text
@@ -153,6 +153,9 @@ def test_register_agent_has_cancel_button(client):
     assert "Acme OS" in response.text
     assert 'href="/management"' in response.text
     assert ">Cancel<" in response.text
+    assert 'name="base_url"' not in response.text
+    assert "Base URL" not in response.text
+    assert "connects over WebSocket" in response.text
 
 
 def test_add_human_uses_dedicated_form_page(client):

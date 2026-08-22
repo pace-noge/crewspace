@@ -16,7 +16,6 @@
   <form method="post" action="/auth/agents/register">
     <label>Agent name<input name="name" required placeholder="Coder"></label>
     <label>Avatar<input name="avatar" value="🤖" placeholder="🤖"></label>
-    <label>Remote base URL<input name="base_url" placeholder="Leave blank for local"></label>
     <label>Fallback backend<select name="backend"><option value="stub">Stub · canned replies</option><option value="llm">LLM · server credentials</option></select></label>
     <div class="actions"><a class="cancel" href="/management">Cancel</a><button class="primary" type="submit">Register agent</button></div>
   </form>

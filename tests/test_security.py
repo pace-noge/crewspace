@@ -333,7 +333,6 @@ def test_agent_private_key_response_escapes_name_and_disables_caching(client):
         data={
             "name": '<script id="stolen">alert(1)</script>',
             "avatar": "🤖",
-            "base_url": "",
             "backend": "stub",
         },
     )

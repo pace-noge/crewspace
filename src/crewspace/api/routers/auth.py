@@ -133,7 +133,6 @@ async def agent_register(
     current_user: CurrentUserDep,
     name: str = Form(...),
     avatar: str = Form("🤖"),
-    base_url: str = Form(""),
     uses_app_llm: str = Form(""),
 ):
     """Register an agent member.
@@ -169,7 +168,7 @@ async def agent_register(
         # Builtin agent: runs in-process with the server's LLM; no keypair.
         await uow.auth.register_member(
             member_id, name.strip(), "agent", avatar or "🤖", "agent",
-            base_url.strip() or None, pubkey=None, backend="llm", uses_app_llm=1,
+            None, pubkey=None, backend="llm", uses_app_llm=1,
         )
         await uow.commit()
         return templates.TemplateResponse(
@@ -190,7 +189,7 @@ async def agent_register(
     priv_b64u, pub_b64u = generate_agent_keypair()
     await uow.auth.register_member(
         member_id, name.strip(), "agent", avatar or "🤖", "agent",
-        base_url.strip() or None, pub_b64u, backend="stub", uses_app_llm=0,
+        None, pub_b64u, backend="stub", uses_app_llm=0,
     )
     await uow.commit()
     ws_url = f"ws://{_settings(request).host}:{_settings(request).port}/agents/ws"
@@ -227,7 +226,6 @@ h2{margin:0 0 4px}.actions{display:flex;gap:8px}.actions button,.actions .cancel
 <form method="post" action="/auth/agents/register">
 <input name="name" placeholder="Agent name (e.g. Coder)" required />
 <input name="avatar" placeholder="Avatar emoji (🤖)" value="🤖" />
-<input name="base_url" placeholder="Base URL if remote (leave blank = local)" />
 <select name="backend">
   <option value="stub">stub (canned replies)</option>
   <option value="llm">llm (uses server CREWSPACE_LLM_* creds)</option>
