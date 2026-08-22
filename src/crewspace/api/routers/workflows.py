@@ -248,6 +248,27 @@ async def update_workflow(
     return _workflow_json(updated)
 
 
+@router.post("/{workflow_id}/run", response_model=None)
+async def run_workflow_now(
+    workflow_id: str, current_user: CurrentUserDep, uow: UowDep,
+    redirect: bool = False,
+) -> dict | RedirectResponse:
+    workflow = await _manageable_workflow(workflow_id, current_user, uow)
+    run = await _workflow_service().run(
+        workflow,
+        uow,
+        {
+            "channel_id": workflow.channel_id,
+            "initiated_by": current_user["id"],
+            "text": "",
+        },
+        trigger_type="manual",
+    )
+    if redirect:
+        return RedirectResponse("/workflows", status_code=303)
+    return _run_json(run)
+
+
 async def _set_workflow_enabled(workflow_id: str, enabled: bool, user: dict, uow):
     workflow = await _manageable_workflow(workflow_id, user, uow)
     workflow.enabled = enabled

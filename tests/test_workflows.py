@@ -402,17 +402,47 @@ def test_schedule_trigger_templates_and_emits_message_callback(client, app):
     assert emitted[0].body.endswith(" in chan_general")
 
 
-def test_workflow_list_exposes_edit_toggle_and_delete_actions(client):
+def test_workflow_list_exposes_run_edit_toggle_and_delete_actions(client):
     workflow = client.post("/workflows", json=_workflow_payload(
         name="managed_flow"
     )).json()
     page = client.get("/workflows")
     assert page.status_code == 200
+    assert f'/workflows/{workflow["id"]}/run' in page.text
+    browser_run = client.post(
+        f'/workflows/{workflow["id"]}/run?redirect=1', follow_redirects=False
+    )
+    assert browser_run.status_code == 303
+    assert browser_run.headers["location"] == "/workflows"
     assert f'/workflows/{workflow["id"]}/edit' in page.text
     assert f'/workflows/{workflow["id"]}/disable' in page.text
     assert f'/workflows/{workflow["id"]}/delete' in page.text
     assert 'class="list workflow-list"' in page.text
     assert '.workflow-list .workflow:last-child .menu-popover' in page.text
+
+
+
+def test_workflow_creator_can_run_now_with_realtime_delivery_and_history(client):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="manual_flow", filter_expression='contains(text, "never")',
+        steps=[{"id": "notify", "action": "send_message", "config": {
+            "text": "Manual run by {{trigger.initiated_by}}",
+        }}],
+    )).json()
+
+    with client.websocket_connect(
+        "/channels/chan_general/ws", headers={"Origin": "http://testserver"}
+    ) as ws:
+        response = client.post(f'/workflows/{workflow["id"]}/run')
+        assert response.status_code == 200
+        live = ws.receive_json()
+
+    assert response.json()["status"] == "succeeded"
+    assert response.json()["trigger_type"] == "manual"
+    assert live["body"] == "Manual run by user_bilal"
+    runs = client.get(f'/workflows/{workflow["id"]}/runs').json()
+    assert runs[0]["id"] == response.json()["id"]
+    assert runs[0]["event"]["initiated_by"] == "user_bilal"
 
 
 def test_workflow_can_be_edited_and_updated_definition_executes(client):
@@ -527,6 +557,7 @@ def test_non_creator_channel_member_cannot_manage_workflow(client):
     assert client.put(
         f'/workflows/{workflow["id"]}', json=_workflow_payload(name="stolen_flow")
     ).status_code == 403
+    assert client.post(f'/workflows/{workflow["id"]}/run').status_code == 403
     assert client.post(f'/workflows/{workflow["id"]}/disable').status_code == 403
     assert client.get(f'/workflows/{workflow["id"]}/delete').status_code == 403
     assert client.post(

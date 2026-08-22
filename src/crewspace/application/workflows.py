@@ -215,11 +215,13 @@ class WorkflowService:
         return runs
 
     async def run(self, workflow: Workflow, uow: UnitOfWork, event: dict[str, Any],
-                  *, start_step: int = 0, existing_run: WorkflowRun | None = None) -> WorkflowRun:
+                  *, start_step: int = 0, existing_run: WorkflowRun | None = None,
+                  trigger_type: str | None = None) -> WorkflowRun:
         now = dt.datetime.now(UTC)
         run = existing_run or WorkflowRun(
             id=f"wfr_{uuid.uuid4().hex[:12]}", workflow_id=workflow.id,
-            trigger_type=workflow.trigger_type, event=event, status=WorkflowRunStatus.RUNNING,
+            trigger_type=trigger_type or workflow.trigger_type, event=event,
+            status=WorkflowRunStatus.RUNNING,
             current_step=start_step, step_results=[], started_at=now,
         )
         if existing_run is None:
