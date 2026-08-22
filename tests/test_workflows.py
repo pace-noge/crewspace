@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from typing import Any
 
 
 def _workflow_payload(**overrides):
@@ -45,7 +46,7 @@ def test_workflows_are_a_tool_with_a_dedicated_builder(client):
     assert "Webhook" in builder.text
     assert "Schedule" in builder.text
     for action in (
-        "Send Message", "Send DM", "Call Webhook", "Request Approval",
+        "Send Message", "Send DM", "Call Webhook", "Call MCP Tool", "Request Approval",
         "Add Reaction", "Set Channel Topic", "Delay",
     ):
         assert action in builder.text
@@ -784,3 +785,216 @@ def test_non_creator_channel_member_cannot_manage_workflow(client):
     assert client.post(
         f'/workflows/{workflow["id"]}/delete', data={"confirmation": "owned_flow"}
     ).status_code == 403
+
+
+async def _seed_approved_mcp_tool(app, *, connection_id, tool_name, enabled=True):
+    import datetime as _dt
+    from crewspace.domain.entities import McpConnection, McpDiscoveredTool
+
+    connection = McpConnection(
+        id=connection_id, name=connection_id, namespace=f"ns_{connection_id}",
+        transport="streamable_http", endpoint_or_command="https://mcp.example.com/mcp",
+        enabled=enabled, auth_secret_ref=None, created_by="user_bilal",
+        created_at=_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc),
+        updated_at=_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc),
+    )
+    tool = McpDiscoveredTool(
+        connection_id=connection_id, tool_name=tool_name,
+        description="demo", input_schema={"type": "object", "properties": {}},
+        schema_hash="sha256:demo",
+        discovered_at=_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc),
+        approval_state="approved",
+    )
+    async with app.state.db.uow() as uow:
+        await uow.mcp_connections.create(connection)
+        await uow.mcp_connections.upsert_discovered_tool(tool)
+        await uow.mcp_connections.set_tool_approval_state(
+            connection_id, tool_name, "approved"
+        )
+        await uow.commit()
+
+
+class FakeMcpExecutor:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def call_tool(self, connection, tool_name, arguments):
+        self.calls.append({
+            "connection_id": connection.id, "tool_name": tool_name,
+            "arguments": arguments,
+        })
+        return {"ok": True, "echo": arguments}
+
+
+async def _seed_pending_mcp_tool(app, *, connection_id, tool_name):
+    import datetime as _dt
+    from crewspace.domain.entities import McpDiscoveredTool
+
+    pending = McpDiscoveredTool(
+        connection_id=connection_id, tool_name=tool_name,
+        description="demo", input_schema={"type": "object", "properties": {}},
+        schema_hash="sha256:demo2",
+        discovered_at=_dt.datetime(2026, 1, 1, tzinfo=_dt.timezone.utc),
+        approval_state="pending",
+    )
+    async with app.state.db.uow() as uow:
+        await uow.mcp_connections.upsert_discovered_tool(pending)
+        await uow.commit()
+
+
+def test_workflow_step_calls_approved_mcp_tool_and_records_output(
+    client, app, monkeypatch,
+):
+    import crewspace.api.routers.chat as chat_router
+
+    asyncio.run(_seed_approved_mcp_tool(app, connection_id="mcp_demo", tool_name="ping"))
+    executor = FakeMcpExecutor()
+    monkeypatch.setattr(
+        chat_router, "ExternalMcpToolExecutor", lambda: executor,
+    )
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="mcp_step",
+        filter_expression=None,
+        steps=[{
+            "id": "invoke", "action": "call_mcp_tool",
+            "config": {"connection_id": "mcp_demo", "tool_name": "ping",
+                       "arguments": {"input": "{{ text }}"}},
+        }],
+    )).json()
+    with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
+        ws.send_json({"body": "trigger payload"})
+        assert ws.receive_json()["body"] == "trigger payload"
+    run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
+    assert run["status"] == "succeeded"
+    assert run["step_results"][0]["status"] == "succeeded"
+    assert run["step_results"][0]["output"] == {
+        "connection_id": "mcp_demo",
+        "tool_name": "ping",
+        "result": {"ok": True, "echo": {"input": "trigger payload"}},
+    }
+    assert executor.calls == [{
+        "connection_id": "mcp_demo", "tool_name": "ping",
+        "arguments": {"input": "trigger payload"},
+    }]
+
+
+def test_workflow_step_rejects_unapproved_mcp_tool(client, app):
+    asyncio.run(_seed_approved_mcp_tool(app, connection_id="mcp_demo", tool_name="ping"))
+    asyncio.run(_seed_pending_mcp_tool(
+        app, connection_id="mcp_demo", tool_name="unapproved"
+    ))
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="mcp_unapproved",
+        filter_expression=None,
+        steps=[{
+            "id": "invoke", "action": "call_mcp_tool",
+            "config": {"connection_id": "mcp_demo", "tool_name": "unapproved",
+                       "arguments": {"input": "x"}},
+        }],
+    )).json()
+    with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
+        ws.send_json({"body": "go"})
+        assert ws.receive_json()["body"] == "go"
+    run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
+    assert run["status"] == "failed"
+    assert "not approved" in run["error"]
+
+
+def test_workflow_step_fails_when_mcp_connection_missing(client):
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="mcp_missing",
+        filter_expression=None,
+        steps=[{
+            "id": "invoke", "action": "call_mcp_tool",
+            "config": {"connection_id": "mcp_absent", "tool_name": "ping",
+                       "arguments": {}},
+        }],
+    )).json()
+    with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
+        ws.send_json({"body": "go"})
+        assert ws.receive_json()["body"] == "go"
+    run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
+    assert run["status"] == "failed"
+    assert "connection" in run["error"].lower()
+
+
+def test_workflow_step_rejects_disabled_mcp_connection(client, app):
+    asyncio.run(_seed_approved_mcp_tool(
+        app, connection_id="mcp_disabled", tool_name="ping", enabled=False
+    ))
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="mcp_disabled",
+        filter_expression=None,
+        steps=[{
+            "id": "invoke", "action": "call_mcp_tool",
+            "config": {"connection_id": "mcp_disabled", "tool_name": "ping",
+                       "arguments": {}},
+        }],
+    )).json()
+    with client.websocket_connect(
+        "/channels/chan_general/ws", headers={"Origin": "http://testserver"}
+    ) as ws:
+        ws.send_json({"body": "go"})
+        assert ws.receive_json()["body"] == "go"
+    run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
+    assert run["status"] == "failed"
+    assert "disabled" in run["error"].lower()
+
+
+def test_workflow_step_fails_closed_when_no_mcp_executor(client, app, monkeypatch):
+    import crewspace.api.routers.chat as chat_router
+
+    asyncio.run(_seed_approved_mcp_tool(app, connection_id="mcp_demo", tool_name="ping"))
+    monkeypatch.setattr(chat_router, "ExternalMcpToolExecutor", lambda: None)
+    workflow = client.post("/workflows", json=_workflow_payload(
+        name="mcp_noexec",
+        filter_expression=None,
+        steps=[{
+            "id": "invoke", "action": "call_mcp_tool",
+            "config": {"connection_id": "mcp_demo", "tool_name": "ping", "arguments": {}},
+        }],
+    )).json()
+    with client.websocket_connect("/channels/chan_general/ws", headers={"Origin": "http://testserver"}) as ws:
+        ws.send_json({"body": "go"})
+        assert ws.receive_json()["body"] == "go"
+    run = client.get(f'/workflows/{workflow["id"]}/runs').json()[0]
+    assert run["status"] == "failed"
+    assert "unavailable" in run["error"].lower()
+
+
+def test_non_superadmin_cannot_create_mcp_tool_workflow(client):
+    suffix = uuid.uuid4().hex[:8]
+    viewer_name = f"MCP Member {suffix}"
+    created = client.post("/management/humans", data={
+        "name": viewer_name, "password": "member123", "team_id": "team_acme",
+        "role": "member",
+    })
+    assert created.status_code == 200
+    management = client.get("/management/channels/chan_general/members")
+    member_match = re.search(
+        rf'<option value="(user_[^"]+)">{re.escape(viewer_name)}', management.text
+    )
+    assert member_match is not None
+    assert client.post(
+        "/management/channels/chan_general/members",
+        data={"member_id": member_match.group(1)},
+    ).status_code == 200
+    client.post("/auth/logout")
+    assert client.post("/auth/login", data={
+        "username": viewer_name, "password": "member123",
+    }).status_code == 200
+
+    response = client.post("/workflows", json=_workflow_payload(
+        name=f"member_mcp_{suffix}", filter_expression=None,
+        steps=[{
+            "id": "invoke", "action": "call_mcp_tool",
+            "config": {"connection_id": "mcp_demo", "tool_name": "ping",
+                       "arguments": {}},
+        }],
+    ))
+    assert response.status_code == 403
+
+
+def test_workflow_builder_exposes_call_mcp_tool_action(client):
+    builder = client.get("/workflows/new")
+    assert "Call MCP Tool" in builder.text

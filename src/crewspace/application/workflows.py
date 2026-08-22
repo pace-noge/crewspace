@@ -16,7 +16,7 @@ from ..domain.ports import UnitOfWork
 
 TRIGGER_TYPES = {"message_posted", "reaction_added", "diff_posted", "webhook", "schedule"}
 ACTION_TYPES = {
-    "send_message", "send_dm", "call_webhook", "request_approval",
+    "send_message", "send_dm", "call_webhook", "call_mcp_tool", "request_approval",
     "add_reaction", "set_channel_topic", "delay",
 }
 UTC = dt.timezone.utc
@@ -27,6 +27,12 @@ class WorkflowWebhookExecutor(Protocol):
         self, *, url: str, method: str, body: Any, headers: dict[str, str],
         timeout_seconds: int,
     ) -> dict[str, Any]: ...
+
+
+class WorkflowMcpToolExecutor(Protocol):
+    async def call_tool(
+        self, connection: Any, tool_name: str, arguments: dict[str, Any],
+    ) -> Any: ...
 
 
 def interval_seconds(value: str) -> int:
@@ -90,15 +96,24 @@ class WorkflowService:
     def __init__(
         self, on_message: Callable[[Any], Awaitable[None]] | None = None,
         webhook_executor: WorkflowWebhookExecutor | None = None,
+        mcp_executor: WorkflowMcpToolExecutor | None = None,
     ) -> None:
         self._on_message = on_message
         self._webhook_executor = webhook_executor
+        self._mcp_executor = mcp_executor
+
+    async def _require_mcp_step_authorization(self, uow: UnitOfWork, owner_id: str) -> None:
+        owner = await uow.auth.get_member(owner_id)
+        if owner is None or owner["role"] != "superadmin":
+            raise PermissionError("Only a superadmin may use external MCP tools in workflows")
 
     async def create(self, uow: UnitOfWork, *, creator_id: str, data: dict[str, Any]) -> Workflow:
         name = str(data.get("name", "")).strip()
         channel_id = str(data.get("channel_id", "")).strip()
         trigger_type = str(data.get("trigger_type", "")).strip()
         steps = data.get("steps") or []
+        if any(step.get("action") == "call_mcp_tool" for step in steps):
+            await self._require_mcp_step_authorization(uow, creator_id)
         if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
             raise ValueError("Name must use lowercase letters, numbers, and underscores")
         if await uow.channels.get_channel(channel_id) is None:
@@ -185,6 +200,9 @@ class WorkflowService:
             if timeout is not None and int(timeout) < 1:
                 raise ValueError("Step timeout must be positive")
             matches_step_condition(step.get("condition"), {})
+
+        if any(step.get("action") == "call_mcp_tool" for step in steps):
+            await self._require_mcp_step_authorization(uow, workflow.creator_id)
 
         workflow.name = name
         workflow.description = str(data.get("description", "")).strip() or None
@@ -385,6 +403,39 @@ class WorkflowService:
             run.status = WorkflowRunStatus.WAITING
             run.approval_token = uuid.uuid4().hex
             return {"prompt": render_template(str(config.get("prompt", "Approval required")), context)}
+        if action == "call_mcp_tool":
+            await self._require_mcp_step_authorization(uow, workflow.creator_id)
+            connection_id = render_template(
+                str(config.get("connection_id", "")), context
+            ).strip()
+            tool_name = render_template(
+                str(config.get("tool_name", "")), context
+            ).strip()
+            if not connection_id or not tool_name:
+                raise ValueError("Call MCP Tool requires connection and tool names")
+            connection = await uow.mcp_connections.get(connection_id)
+            if connection is None:
+                raise ValueError("MCP connection not found")
+            if not connection.enabled:
+                raise ValueError("MCP connection is disabled")
+            tool = await uow.mcp_connections.get_discovered_tool(
+                connection.id, tool_name
+            )
+            if tool is None or tool.approval_state != "approved":
+                raise PermissionError("MCP tool is not approved")
+            if self._mcp_executor is None:
+                raise RuntimeError("Workflow MCP tool transport is unavailable")
+            arguments = _render_value(config.get("arguments") or {}, context)
+            if not isinstance(arguments, dict):
+                raise ValueError("MCP tool arguments must be a JSON object")
+            result = await self._mcp_executor.call_tool(
+                connection, tool_name, arguments
+            )
+            return {
+                "connection_id": connection.id,
+                "tool_name": tool_name,
+                "result": result,
+            }
         if action == "call_webhook":
             if self._webhook_executor is None:
                 raise RuntimeError("Workflow webhook transport is unavailable")
@@ -425,11 +476,13 @@ class WorkflowSchedulerLoop:
         self, db, poll_seconds: int = 30,
         on_message: Callable[[Any], Awaitable[None]] | None = None,
         webhook_executor: WorkflowWebhookExecutor | None = None,
+        mcp_executor: WorkflowMcpToolExecutor | None = None,
     ) -> None:
         self._db = db
         self._poll_seconds = poll_seconds
         self._on_message = on_message
         self._webhook_executor = webhook_executor
+        self._mcp_executor = mcp_executor
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -458,6 +511,7 @@ class WorkflowSchedulerLoop:
                 await WorkflowService(
                     on_message=self._on_message,
                     webhook_executor=self._webhook_executor,
+                    mcp_executor=self._mcp_executor,
                 ).run(
                     workflow, uow,
                     {"channel_id": workflow.channel_id, "scheduled_at": now.isoformat(), "text": now.isoformat()},

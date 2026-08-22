@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ...application.workflows import WorkflowService
 from ...dto.mappers import to_message
+from ...infrastructure.mcp_client import ExternalMcpToolExecutor
 from ...infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from ..connection import manager
 from ..deps import CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
@@ -30,6 +31,7 @@ def _workflow_service() -> WorkflowService:
     return WorkflowService(
         on_message=_broadcast_workflow_message,
         webhook_executor=build_workflow_webhook_executor(),
+        mcp_executor=ExternalMcpToolExecutor(),
     )
 
 
@@ -275,6 +277,8 @@ async def create_workflow(
         await uow.commit()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     result = _workflow_json(workflow)
     if webhook_secret and hook_id:
         result["webhook"] = {
@@ -307,6 +311,8 @@ async def update_workflow(
         await uow.commit()
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return _workflow_json(updated)
 
 

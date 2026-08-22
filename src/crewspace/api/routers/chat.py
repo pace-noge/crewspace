@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ...application.workspace_service import WorkspaceService
 from ...application.workflows import WorkflowService
 from ...dto.mappers import to_message
+from ...infrastructure.mcp_client import ExternalMcpToolExecutor
 from ...infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from ..connection import manager
 from ..deps import ChatServiceDep, CurrentUserDep, UowDep, WorkspaceServiceDep
@@ -29,6 +30,7 @@ def _workflow_service() -> WorkflowService:
     return WorkflowService(
         on_message=_broadcast_workflow_message,
         webhook_executor=build_workflow_webhook_executor(),
+        mcp_executor=ExternalMcpToolExecutor(),
     )
 
 
@@ -166,21 +168,25 @@ async def chat_ws(
                             to_message(message).model_dump(mode="json")
                         )
 
-                    await WorkflowService(
-                        on_message=buffer_workflow_message,
-                        webhook_executor=build_workflow_webhook_executor(),
-                    ).dispatch(
-                        uow,
-                        channel_id=channel_id,
-                        trigger_type="message_posted",
-                        event={
-                            "message_id": human_dto.id,
-                            "channel_id": channel_id,
-                            "author_id": member_id,
-                            "text": body,
-                            "thread_id": thread_id,
-                        },
-                    )
+                    try:
+                        runs = await WorkflowService(
+                            on_message=buffer_workflow_message,
+                            webhook_executor=build_workflow_webhook_executor(),
+                            mcp_executor=ExternalMcpToolExecutor(),
+                        ).dispatch(
+                            uow,
+                            channel_id=channel_id,
+                            trigger_type="message_posted",
+                            event={
+                                "message_id": human_dto.id,
+                                "channel_id": channel_id,
+                                "author_id": member_id,
+                                "text": body,
+                                "thread_id": thread_id,
+                            },
+                        )
+                    except PermissionError:
+                        runs = []
                     await manager.broadcast(channel_id, human_dto.model_dump(mode="json"))
                     for frame in workflow_frames:
                         await manager.broadcast(channel_id, frame)
