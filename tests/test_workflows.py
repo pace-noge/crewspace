@@ -165,20 +165,15 @@ def test_reaction_diff_and_webhook_triggers(client):
     assert "webhook: external" in bodies
 
 
-def test_schedule_trigger_and_call_webhook_action(client, app, monkeypatch):
-    import urllib.request
+def test_schedule_trigger_and_call_webhook_action(client, app):
     from crewspace.application.workflows import WorkflowSchedulerLoop
 
     calls = []
-    class Response:
-        status = 204
-        def __enter__(self): return self
-        def __exit__(self, *args): return None
-        def read(self, limit): return b"ok"
-    def fake_urlopen(request, timeout):
-        calls.append((request.full_url, request.data, timeout))
-        return Response()
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    class Executor:
+        async def call(self, **kwargs):
+            calls.append(kwargs)
+            return {"status": 204, "body": "ok"}
 
     created = client.post("/workflows", json=_workflow_payload(
         name="scheduled_hook", trigger_type="schedule", trigger_config={"every_seconds": 60},
@@ -197,11 +192,13 @@ def test_schedule_trigger_and_call_webhook_action(client, app, monkeypatch):
                 ("2000-01-01T00:00:00+00:00", workflow_id),
             )
             await uow.commit()
-        return await WorkflowSchedulerLoop(app.state.db).run_due_once()
+        return await WorkflowSchedulerLoop(
+            app.state.db, webhook_executor=Executor()
+        ).run_due_once()
 
     assert asyncio.run(due()) == 1
-    assert calls[0][0] == "https://example.test/hook"
-    assert b"chan_general" in calls[0][1]
+    assert calls[0]["url"] == "https://example.test/hook"
+    assert calls[0]["body"] == {"channel": "chan_general"}
     assert client.get(f"/workflows/{workflow_id}/runs").json()[0]["status"] == "succeeded"
 
 

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ...application.workflows import WorkflowService
 from ...dto.mappers import to_message
+from ...infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from ..connection import manager
 from ..deps import CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import navigation_context, templates
@@ -26,7 +27,10 @@ async def _broadcast_workflow_message(message) -> None:
 
 
 def _workflow_service() -> WorkflowService:
-    return WorkflowService(on_message=_broadcast_workflow_message)
+    return WorkflowService(
+        on_message=_broadcast_workflow_message,
+        webhook_executor=build_workflow_webhook_executor(),
+    )
 
 
 class WorkflowStepInput(BaseModel):

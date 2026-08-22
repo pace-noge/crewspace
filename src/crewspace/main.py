@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .infrastructure.db import Database
 from .infrastructure.mcp_client import build_external_tool_executor
+from .infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from .api.routers import agents, auth, boards, cards, chat, cronjobs, pages, teams, tools, workflows
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
@@ -47,7 +48,9 @@ async def lifespan(app: FastAPI):
         )
 
     workflow_scheduler = WorkflowSchedulerLoop(
-        db, on_message=broadcast_workflow_message
+        db,
+        on_message=broadcast_workflow_message,
+        webhook_executor=build_workflow_webhook_executor(),
     )
     scheduler.start()
     workflow_scheduler.start()

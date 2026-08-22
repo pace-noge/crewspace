@@ -5,10 +5,8 @@ import asyncio
 import datetime as dt
 import re
 import uuid
-import json
-import urllib.request
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 from croniter import croniter
 
@@ -22,6 +20,13 @@ ACTION_TYPES = {
     "add_reaction", "set_channel_topic", "delay",
 }
 UTC = dt.timezone.utc
+
+
+class WorkflowWebhookExecutor(Protocol):
+    async def call(
+        self, *, url: str, method: str, body: Any, headers: dict[str, str],
+        timeout_seconds: int,
+    ) -> dict[str, Any]: ...
 
 
 def interval_seconds(value: str) -> int:
@@ -42,6 +47,16 @@ def render_template(value: str, context: dict[str, Any]) -> str:
             current = current.get(part, "") if isinstance(current, dict) else ""
         return str(current)
     return re.sub(r"{{\s*([^{}]+?)\s*}}", replace, value)
+
+
+def _render_value(value: Any, context: dict[str, Any]) -> Any:
+    if isinstance(value, str):
+        return render_template(value, context)
+    if isinstance(value, dict):
+        return {str(key): _render_value(item, context) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_render_value(item, context) for item in value]
+    return value
 
 
 def matches_filter(expression: str | None, event: dict[str, Any]) -> bool:
@@ -72,8 +87,12 @@ def matches_step_condition(expression: str | None, event: dict[str, Any]) -> boo
 
 
 class WorkflowService:
-    def __init__(self, on_message: Callable[[Any], Awaitable[None]] | None = None) -> None:
+    def __init__(
+        self, on_message: Callable[[Any], Awaitable[None]] | None = None,
+        webhook_executor: WorkflowWebhookExecutor | None = None,
+    ) -> None:
         self._on_message = on_message
+        self._webhook_executor = webhook_executor
 
     async def create(self, uow: UnitOfWork, *, creator_id: str, data: dict[str, Any]) -> Workflow:
         name = str(data.get("name", "")).strip()
@@ -312,15 +331,19 @@ class WorkflowService:
             run.approval_token = uuid.uuid4().hex
             return {"prompt": render_template(str(config.get("prompt", "Approval required")), context)}
         if action == "call_webhook":
+            if self._webhook_executor is None:
+                raise RuntimeError("Workflow webhook transport is unavailable")
             url = render_template(str(config.get("url", "")), context)
             method = str(config.get("method", "POST")).upper()
-            body = render_template(json.dumps(config.get("body", context)), context).encode()
-            headers = {"Content-Type": "application/json", **(config.get("headers") or {})}
-            def call() -> dict[str, Any]:
-                request = urllib.request.Request(url, data=body, headers=headers, method=method)
-                with urllib.request.urlopen(request, timeout=30) as response:
-                    return {"status": response.status, "body": response.read(65536).decode(errors="replace")}
-            return await asyncio.to_thread(call)
+            body = _render_value(config.get("body", context), context)
+            headers = _render_value(config.get("headers") or {}, context)
+            return await self._webhook_executor.call(
+                url=url,
+                method=method,
+                body=body,
+                headers=headers,
+                timeout_seconds=int(step.get("timeout_seconds") or 30),
+            )
         raise ValueError(f"Action {action} is not implemented")
 
     async def approve(self, token: str, uow: UnitOfWork, approved: bool) -> WorkflowRun:
@@ -346,10 +369,12 @@ class WorkflowSchedulerLoop:
     def __init__(
         self, db, poll_seconds: int = 30,
         on_message: Callable[[Any], Awaitable[None]] | None = None,
+        webhook_executor: WorkflowWebhookExecutor | None = None,
     ) -> None:
         self._db = db
         self._poll_seconds = poll_seconds
         self._on_message = on_message
+        self._webhook_executor = webhook_executor
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -375,7 +400,10 @@ class WorkflowSchedulerLoop:
             )
             await uow.commit()
             for workflow in workflows:
-                await WorkflowService(on_message=self._on_message).run(
+                await WorkflowService(
+                    on_message=self._on_message,
+                    webhook_executor=self._webhook_executor,
+                ).run(
                     workflow, uow,
                     {"channel_id": workflow.channel_id, "scheduled_at": now.isoformat(), "text": now.isoformat()},
                 )

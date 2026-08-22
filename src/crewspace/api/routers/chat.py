@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ...application.workspace_service import WorkspaceService
 from ...application.workflows import WorkflowService
 from ...dto.mappers import to_message
+from ...infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from ..connection import manager
 from ..deps import ChatServiceDep, CurrentUserDep, UowDep, WorkspaceServiceDep
 
@@ -25,7 +26,10 @@ async def _broadcast_workflow_message(message) -> None:
 
 
 def _workflow_service() -> WorkflowService:
-    return WorkflowService(on_message=_broadcast_workflow_message)
+    return WorkflowService(
+        on_message=_broadcast_workflow_message,
+        webhook_executor=build_workflow_webhook_executor(),
+    )
 
 
 class ReactionInput(BaseModel):
@@ -162,7 +166,10 @@ async def chat_ws(
                             to_message(message).model_dump(mode="json")
                         )
 
-                    await WorkflowService(on_message=buffer_workflow_message).dispatch(
+                    await WorkflowService(
+                        on_message=buffer_workflow_message,
+                        webhook_executor=build_workflow_webhook_executor(),
+                    ).dispatch(
                         uow,
                         channel_id=channel_id,
                         trigger_type="message_posted",
