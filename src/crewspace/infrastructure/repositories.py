@@ -464,6 +464,11 @@ class SqlAlchemyCodingRepositoryRepository:
 
 
 class SqlAlchemyCodingRunRepository:
+    _TRANSITIONS = {
+        "queued": frozenset({"running", "failed", "cancelled", "timed_out", "interrupted"}),
+        "running": frozenset({"succeeded", "failed", "cancelled", "timed_out", "interrupted"}),
+    }
+
     def __init__(self, conn: SqlAlchemyConnection) -> None:
         self._conn = conn
 
@@ -479,6 +484,9 @@ class SqlAlchemyCodingRunRepository:
             instruction=row["instruction"],
             status=row["status"],
             created_at=_parse(row["created_at"]),
+            updated_at=_parse(row["updated_at"]),
+            started_at=_parse(row["started_at"]) if row["started_at"] else None,
+            finished_at=_parse(row["finished_at"]) if row["finished_at"] else None,
         )
 
     async def create(self, run: CodingRun) -> CodingRun:
@@ -488,10 +496,25 @@ class SqlAlchemyCodingRunRepository:
         )
         if await access.fetchone() is None:
             raise PermissionError("Team is not authorized for this repository")
+        normalized = CodingRun(
+            id=run.id,
+            team_id=run.team_id,
+            repository_id=run.repository_id,
+            requested_by=run.requested_by,
+            agent_id=run.agent_id,
+            request_id=run.request_id,
+            instruction=run.instruction,
+            status=run.status,
+            created_at=run.created_at,
+            updated_at=run.updated_at or run.created_at,
+            started_at=None if run.status == "queued" else run.started_at,
+            finished_at=run.finished_at,
+        )
         await self._conn.execute(
             "INSERT INTO coding_run "
             "(id, team_id, repository_id, requested_by, agent_id, request_id, "
-            "instruction, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "instruction, status, created_at, updated_at, started_at, finished_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run.id,
                 run.team_id,
@@ -502,19 +525,44 @@ class SqlAlchemyCodingRunRepository:
                 run.instruction,
                 run.status,
                 _iso(run.created_at),
+                _iso(normalized.updated_at),
+                _iso(normalized.started_at) if normalized.started_at else None,
+                _iso(normalized.finished_at) if normalized.finished_at else None,
             ),
         )
-        return run
+        return normalized
 
     async def get(self, run_id: str) -> CodingRun | None:
         cur = await self._conn.execute("SELECT * FROM coding_run WHERE id=?", (run_id,))
         row = await cur.fetchone()
         return self._map(row) if row else None
 
-    async def set_status(self, run_id: str, status: str) -> None:
-        await self._conn.execute(
-            "UPDATE coding_run SET status=? WHERE id=?", (status, run_id)
+    async def transition(
+        self,
+        run_id: str,
+        *,
+        expected: str,
+        status: str,
+        updated_at: dt.datetime,
+        started_at: dt.datetime | None,
+        finished_at: dt.datetime | None,
+    ) -> bool:
+        if status not in self._TRANSITIONS.get(expected, frozenset()):
+            raise ValueError("Invalid coding-run transition")
+        result = await self._conn.execute(
+            "UPDATE coding_run SET status=?, updated_at=?, "
+            "started_at=COALESCE(?, started_at), finished_at=COALESCE(?, finished_at) "
+            "WHERE id=? AND status=?",
+            (
+                status,
+                _iso(updated_at),
+                _iso(started_at) if started_at else None,
+                _iso(finished_at) if finished_at else None,
+                run_id,
+                expected,
+            ),
         )
+        return result.rowcount == 1
 
 
 class SqlAlchemyChangeSetRepository:

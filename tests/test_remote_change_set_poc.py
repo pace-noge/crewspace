@@ -91,6 +91,7 @@ async def test_real_repository_change_set_is_captured_reviewed_and_cleaned(
                 instruction="Produce a real verified change set",
                 status="running",
                 created_at=now,
+                updated_at=now,
             )
         )
         stored = await ChangeSetService().record_capture(

@@ -379,7 +379,10 @@ class TeamCodingRepositoryModel(Base):
 class CodingRunModel(Base):
     __tablename__ = "coding_run"
     __table_args__ = (
-        CheckConstraint("status IN ('running','captured','failed')", name="ck_coding_run_status"),
+        CheckConstraint(
+            "status IN ('queued','running','succeeded','failed','cancelled','timed_out','interrupted')",
+            name="ck_coding_run_status",
+        ),
         UniqueConstraint("agent_id", "request_id", name="uq_coding_run_agent_request"),
     )
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -391,6 +394,9 @@ class CodingRunModel(Base):
     instruction: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    started_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class StoredChangeSetModel(Base):

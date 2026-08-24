@@ -14,6 +14,334 @@ from crewspace.domain.entities import CodingRepository, CodingRun, TeamRepositor
 from crewspace.dto.change_sets import ChangeSetDTO
 
 
+def test_coding_run_lifecycle_migration_preserves_legacy_captured_row(tmp_path):
+    import sqlite3
+
+    from alembic import command
+    from alembic.config import Config
+
+    db_path = tmp_path / "legacy-coding-run.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
+    command.upgrade(config, "head")
+    command.downgrade(config, "20260824_02")
+    created_at = "2026-08-24T12:00:00+00:00"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute(
+            "INSERT INTO coding_run "
+            "(id, team_id, repository_id, requested_by, agent_id, request_id, "
+            "instruction, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "run_legacy_captured",
+                "team_legacy",
+                "repo_legacy",
+                "user_legacy",
+                "agent_legacy",
+                "request_legacy",
+                "Legacy capture",
+                "captured",
+                created_at,
+            ),
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT status, created_at, updated_at, started_at, finished_at "
+            "FROM coding_run WHERE id='run_legacy_captured'"
+        ).fetchone()
+    assert row == ("succeeded", created_at, created_at, None, created_at)
+
+
+def test_coding_run_lifecycle_downgrade_maps_new_terminal_states(tmp_path):
+    import sqlite3
+
+    from alembic import command
+    from alembic.config import Config
+
+    db_path = tmp_path / "new-coding-runs.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{db_path}")
+    command.upgrade(config, "head")
+    created_at = "2026-08-24T12:00:00+00:00"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        for status in ("queued", "succeeded", "cancelled", "timed_out", "interrupted"):
+            conn.execute(
+                "INSERT INTO coding_run "
+                "(id, team_id, repository_id, requested_by, agent_id, request_id, "
+                "instruction, status, created_at, updated_at, started_at, finished_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"run_{status}",
+                    "team_legacy",
+                    "repo_legacy",
+                    "user_legacy",
+                    "agent_legacy",
+                    f"request_{status}",
+                    "Downgrade lifecycle",
+                    status,
+                    created_at,
+                    created_at,
+                    None,
+                    created_at,
+                ),
+            )
+        conn.commit()
+
+    command.downgrade(config, "20260824_02")
+
+    with sqlite3.connect(db_path) as conn:
+        rows = dict(conn.execute("SELECT id, status FROM coding_run").fetchall())
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(coding_run)")}
+    assert rows == {
+        "run_queued": "running",
+        "run_succeeded": "captured",
+        "run_cancelled": "failed",
+        "run_timed_out": "failed",
+        "run_interrupted": "running",
+    }
+    assert {"updated_at", "started_at", "finished_at"}.isdisjoint(columns)
+
+
+@pytest.mark.asyncio
+async def test_coding_run_compare_and_set_tracks_lifecycle_timestamps(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    started = now + dt.timedelta(seconds=1)
+    finished = started + dt.timedelta(seconds=2)
+    async with app.state.db.uow() as uow:
+        await uow.coding_repositories.create(
+            CodingRepository(
+                id="repo_run_lifecycle",
+                name="Run lifecycle",
+                default_branch="master",
+                created_by="user_bilal",
+                created_at=now,
+            )
+        )
+        await uow.coding_repositories.grant_team(
+            TeamRepositoryAccess(
+                team_id="team_acme",
+                repository_id="repo_run_lifecycle",
+                granted_by="user_bilal",
+                granted_at=now,
+            )
+        )
+        await uow.coding_runs.create(
+            CodingRun(
+                id="run_lifecycle",
+                team_id="team_acme",
+                repository_id="repo_run_lifecycle",
+                requested_by="user_bilal",
+                agent_id="agent_planner",
+                request_id="request_lifecycle",
+                instruction="Track lifecycle",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+                started_at=None,
+                finished_at=None,
+            )
+        )
+        assert await uow.coding_runs.transition(
+            "run_lifecycle",
+            expected="queued",
+            status="running",
+            updated_at=started,
+            started_at=started,
+            finished_at=None,
+        ) is True
+        assert await uow.coding_runs.transition(
+            "run_lifecycle",
+            expected="queued",
+            status="cancelled",
+            updated_at=finished,
+            started_at=None,
+            finished_at=finished,
+        ) is False
+        assert await uow.coding_runs.transition(
+            "run_lifecycle",
+            expected="running",
+            status="succeeded",
+            updated_at=finished,
+            started_at=None,
+            finished_at=finished,
+        ) is True
+        await uow.commit()
+
+    async with app.state.db.uow() as uow:
+        run = await uow.coding_runs.get("run_lifecycle")
+    assert run is not None
+    assert run.status == "succeeded"
+    assert run.created_at == now
+    assert run.updated_at == finished
+    assert run.started_at == started
+    assert run.finished_at == finished
+
+
+@pytest.mark.asyncio
+async def test_coding_run_create_normalizes_and_returns_consistent_timestamps(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as uow:
+        await uow.coding_repositories.create(
+            CodingRepository(
+                id="repo_create_norm",
+                name="Create normalization",
+                default_branch="master",
+                created_by="user_bilal",
+                created_at=now,
+            )
+        )
+        await uow.coding_repositories.grant_team(
+            TeamRepositoryAccess(
+                team_id="team_acme",
+                repository_id="repo_create_norm",
+                granted_by="user_bilal",
+                granted_at=now,
+            )
+        )
+        created = await uow.coding_runs.create(
+            CodingRun(
+                id="run_create_norm",
+                team_id="team_acme",
+                repository_id="repo_create_norm",
+                requested_by="user_bilal",
+                agent_id="agent_planner",
+                request_id="request_create_norm",
+                instruction="Normalize on create",
+                status="queued",
+                created_at=now,
+                updated_at=None,
+                started_at=now,
+                finished_at=None,
+            )
+        )
+        await uow.commit()
+
+    assert created.updated_at == now
+    assert created.started_at is None
+    assert created.finished_at is None
+    async with app.state.db.uow() as uow:
+        stored = await uow.coding_runs.get("run_create_norm")
+    assert stored is not None
+    assert stored.status == "queued"
+    assert stored.updated_at == now
+    assert stored.started_at is None
+    assert stored.finished_at is None
+
+
+@pytest.mark.asyncio
+async def test_coding_run_rejects_invalid_lifecycle_edge(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as uow:
+        await uow.coding_repositories.create(
+            CodingRepository(
+                id="repo_invalid_edge",
+                name="Invalid edge",
+                default_branch="master",
+                created_by="user_bilal",
+                created_at=now,
+            )
+        )
+        await uow.coding_repositories.grant_team(
+            TeamRepositoryAccess(
+                team_id="team_acme",
+                repository_id="repo_invalid_edge",
+                granted_by="user_bilal",
+                granted_at=now,
+            )
+        )
+        await uow.coding_runs.create(
+            CodingRun(
+                id="run_invalid_edge",
+                team_id="team_acme",
+                repository_id="repo_invalid_edge",
+                requested_by="user_bilal",
+                agent_id="agent_planner",
+                request_id="request_invalid_edge",
+                instruction="Reject invalid edge",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        with pytest.raises(ValueError, match="Invalid coding-run transition"):
+            await uow.coding_runs.transition(
+                "run_invalid_edge",
+                expected="queued",
+                status="succeeded",
+                updated_at=now,
+                started_at=None,
+                finished_at=now,
+            )
+        await uow.commit()
+
+    async with app.state.db.uow() as uow:
+        run = await uow.coding_runs.get("run_invalid_edge")
+    assert run is not None
+    assert run.status == "queued"
+    assert run.started_at is None
+    assert run.finished_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", ["failed", "cancelled", "timed_out", "interrupted"])
+async def test_coding_run_accepts_each_non_success_terminal_status(app, terminal_status):
+    now = dt.datetime.now(dt.timezone.utc)
+    run_id = f"run_terminal_{terminal_status}"
+    async with app.state.db.uow() as uow:
+        await uow.coding_repositories.create(
+            CodingRepository(
+                id=f"repo_terminal_{terminal_status}",
+                name=f"Terminal {terminal_status}",
+                default_branch="master",
+                created_by="user_bilal",
+                created_at=now,
+            )
+        )
+        await uow.coding_repositories.grant_team(
+            TeamRepositoryAccess(
+                team_id="team_acme",
+                repository_id=f"repo_terminal_{terminal_status}",
+                granted_by="user_bilal",
+                granted_at=now,
+            )
+        )
+        await uow.coding_runs.create(
+            CodingRun(
+                id=run_id,
+                team_id="team_acme",
+                repository_id=f"repo_terminal_{terminal_status}",
+                requested_by="user_bilal",
+                agent_id="agent_planner",
+                request_id=f"request_terminal_{terminal_status}",
+                instruction="Reach terminal state",
+                status="running",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        assert await uow.coding_runs.transition(
+            run_id,
+            expected="running",
+            status=terminal_status,
+            updated_at=now,
+            started_at=None,
+            finished_at=now,
+        ) is True
+        await uow.commit()
+
+    async with app.state.db.uow() as uow:
+        run = await uow.coding_runs.get(run_id)
+    assert run is not None
+    assert run.status == terminal_status
+    assert run.started_at is None
+    assert run.finished_at == now
+
+
 @pytest.mark.asyncio
 async def test_coding_change_set_handler_persists_before_completing_waiter(app):
     class Manager:
@@ -47,6 +375,7 @@ async def test_coding_change_set_handler_persists_before_completing_waiter(app):
             requested_by="user_bilal", agent_id="agent_planner",
             request_id="request_handler", instruction="Handle ingress",
             status="running", created_at=now,
+                updated_at=now,
         ))
         await uow.commit()
 
@@ -126,6 +455,7 @@ async def test_authenticated_coding_result_ingress_persists_bound_change_set(app
             requested_by="user_bilal", agent_id="agent_planner",
             request_id="request_ingress", instruction="Persist ingress",
             status="running", created_at=now,
+                updated_at=now,
         ))
         await uow.commit()
 
@@ -146,7 +476,12 @@ async def test_authenticated_coding_result_ingress_persists_bound_change_set(app
         records = await uow.change_sets.list_for_teams(["team_acme"])
         assert len(records) == 1
         assert records[0].run_id == "run_ingress"
-        assert (await uow.coding_runs.get("run_ingress")).status == "captured"
+        run = await uow.coding_runs.get("run_ingress")
+        assert run is not None
+        assert run.status == "succeeded"
+        assert run.started_at is None
+        assert run.finished_at is not None
+        assert run.updated_at == run.finished_at
         audit = await uow.change_sets.list_audit(records[0].id)
         assert [event.action for event in audit] == ["captured"]
 
@@ -208,6 +543,7 @@ async def test_validated_remote_change_set_is_persisted_for_bound_team_run(app):
                 instruction="Implement the requested feature",
                 status="running",
                 created_at=now,
+                updated_at=now,
             )
         )
 
@@ -278,6 +614,7 @@ def test_change_set_detail_uses_app_shell_and_renders_path_free_metadata(app):
                 requested_by="user_bilal", agent_id="agent_planner",
                 request_id="request_detail", instruction="Render change-set details",
                 status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id="request_detail",
@@ -338,6 +675,7 @@ def test_change_set_detail_rejects_user_without_team_management_scope(app):
                 requested_by="user_bilal", agent_id="agent_planner",
                 request_id="request_scope", instruction="Scoped change",
                 status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id="request_scope",
@@ -396,6 +734,7 @@ def test_team_manager_can_review_captured_change_set_once(app):
                 requested_by="user_bilal", agent_id="agent_planner",
                 request_id="request_review", instruction="Review me",
                 status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id="request_review",
@@ -465,6 +804,7 @@ def test_captured_detail_offers_governed_review_action(app):
                 requested_by="user_bilal", agent_id="agent_planner",
                 request_id="request_button", instruction="Show action",
                 status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id="request_button",
@@ -566,6 +906,7 @@ async def test_workspace_decision_commits_intent_then_remote_result(
             requested_by="user_bilal", agent_id="agent_planner",
             request_id=request_id, instruction="Remote lifecycle",
             status="running", created_at=now,
+                updated_at=now,
         ))
         stored = await ChangeSetService().record_capture(
             agent_id="agent_planner", request_id=request_id,
@@ -648,6 +989,7 @@ async def test_workspace_decision_failure_returns_to_reviewed_for_retry(app):
             requested_by="user_bilal", agent_id="agent_planner",
             request_id="request_retry", instruction="Retry lifecycle",
             status="running", created_at=now,
+                updated_at=now,
         ))
         stored = await ChangeSetService().record_capture(
             agent_id="agent_planner", request_id="request_retry",
@@ -707,6 +1049,7 @@ def test_retain_route_waits_for_remote_acknowledgement(
                 repository_id="repo_route_retain", requested_by="user_bilal",
                 agent_id="agent_planner", request_id="request_route_retain",
                 instruction="Retain remotely", status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id="request_route_retain",
@@ -787,6 +1130,7 @@ async def test_workspace_decision_rechecks_team_authorization_before_intent(app)
             requested_by="user_bilal", agent_id="agent_planner",
             request_id="request_revoked", instruction="Do not dispatch",
             status="running", created_at=now,
+                updated_at=now,
         ))
         stored = await ChangeSetService().record_capture(
             agent_id="agent_planner", request_id="request_revoked",
@@ -844,6 +1188,7 @@ async def test_workspace_decision_cancellation_returns_to_reviewed(app):
             requested_by="user_bilal", agent_id="agent_planner",
             request_id="request_cancel", instruction="Cancel lifecycle",
             status="running", created_at=now,
+                updated_at=now,
         ))
         stored = await ChangeSetService().record_capture(
             agent_id="agent_planner", request_id="request_cancel",
@@ -904,6 +1249,7 @@ async def test_workspace_decision_rejects_wrong_remote_terminal_status(app):
             repository_id="repo_wrong_status", requested_by="user_bilal",
             agent_id="agent_planner", request_id="request_wrong_status",
             instruction="Reject wrong status", status="running", created_at=now,
+                updated_at=now,
         ))
         stored = await ChangeSetService().record_capture(
             agent_id="agent_planner", request_id="request_wrong_status",
@@ -969,6 +1315,7 @@ def test_reviewed_change_set_accepts_one_governed_decision(
                 requested_by="user_bilal", agent_id="agent_planner",
                 request_id=request_id, instruction="Govern me",
                 status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id=request_id,
@@ -1028,6 +1375,7 @@ async def test_coding_run_requires_team_repository_authorization(app):
                 repository_id="repo_unauthorized", requested_by="user_bilal",
                 agent_id="agent_planner", request_id="request_unauthorized",
                 instruction="Must not dispatch", status="running", created_at=now,
+                updated_at=now,
             ))
 
 
@@ -1062,6 +1410,7 @@ async def test_capture_rejects_mismatched_run_ownership(
             requested_by="user_bilal", agent_id="agent_planner",
             request_id="request_bound", instruction="Bound request",
             status="running", created_at=now,
+                updated_at=now,
         ))
         forged = ChangeSetDTO.model_validate({
             "repository_id": repository_id, "run_id": "run_bound",
@@ -1105,6 +1454,7 @@ def test_change_set_index_lists_only_manageable_team_records(app):
                 requested_by="user_bilal", agent_id="agent_planner",
                 request_id="request_index", instruction="List me",
                 status="running", created_at=now,
+                updated_at=now,
             ))
             stored = await ChangeSetService().record_capture(
                 agent_id="agent_planner", request_id="request_index",

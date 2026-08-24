@@ -11,6 +11,7 @@ knowing whether they're backed by sqlite, postgres, or an RPC.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from .entities import (
@@ -388,7 +389,16 @@ class CodingRepositoryRepository(Protocol):
 class CodingRunRepository(Protocol):
     async def create(self, run: CodingRun) -> CodingRun: ...
     async def get(self, run_id: str) -> CodingRun | None: ...
-    async def set_status(self, run_id: str, status: str) -> None: ...
+    async def transition(
+        self,
+        run_id: str,
+        *,
+        expected: str,
+        status: str,
+        updated_at: datetime,
+        started_at: datetime | None,
+        finished_at: datetime | None,
+    ) -> bool: ...
 
 
 @runtime_checkable

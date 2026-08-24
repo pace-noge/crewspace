@@ -58,7 +58,16 @@ class ChangeSetService:
             created_at=now,
         )
         await uow.change_sets.create(stored, event)
-        await uow.coding_runs.set_status(run.id, "captured")
+        transitioned = await uow.coding_runs.transition(
+            run.id,
+            expected="running",
+            status="succeeded",
+            updated_at=now,
+            started_at=None,
+            finished_at=now,
+        )
+        if not transitioned:
+            raise ValueError("Coding run is no longer accepting a change set")
         return stored
 
     async def review(

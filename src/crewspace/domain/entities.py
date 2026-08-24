@@ -82,6 +82,9 @@ class CodingRun:
     instruction: str
     status: str
     created_at: datetime
+    updated_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 @dataclass
