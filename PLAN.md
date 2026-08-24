@@ -178,7 +178,7 @@ Last updated: 2026-08-24 (WIB)
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
-| M6.2 | Isolated worktrees and structured change sets | PLANNED | 0/7 | M6.1 | — | Coding output becomes inspectable delivery artifacts |
+| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 0/7 | M6.1 | 7 real-Git allocation tests + independent review | Allocator tracer complete; server integration next |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
@@ -206,7 +206,7 @@ Acceptance (6/6):
   - [x] Verified slice committed and pushed; commit evidence is recorded in the
         M6 progress log.
 
-M6.2 — Isolated worktrees and structured change sets         [L]  PLANNED
+M6.2 — Isolated worktrees and structured change sets         [L]  IN PROGRESS
 Scope:
   - Allocate one isolated git worktree/branch per coding run.
   - Prevent two agents from mutating the same checkout.
@@ -327,6 +327,13 @@ Acceptance (0/7):
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
+  - 2026-08-24 — M6.2 allocation tracer GREEN: server-supplied repository
+    allowlist, strict run-id validation, random branch/worktree allocation,
+    bounded collision retry, and rollback after partial Git failures. Seven
+    real-Git tests pass; independent re-review passed with no blockers.
+  - 2026-08-24 — M6.2 moved to IN PROGRESS. First RED/GREEN slice defines the
+    structured workspace contract and allocates unique validated branches and
+    worktrees from an explicit server-side repository allowlist.
   - 2026-08-24 — M6.1 DONE (6/6), verified implementation commit `e7aba78`.
     Independent final review found no blockers or
     suggestions after directly verifying reconnect/disconnect teardown and the

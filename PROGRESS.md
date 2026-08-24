@@ -59,7 +59,12 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.2 — Isolated worktrees and structured change sets.
+M6.2 — Isolated worktrees and structured change sets is IN PROGRESS. Current
+vertical slice: define the contract and allocate one unique validated branch and
+worktree per coding run from an explicit server-side repository allowlist. The
+infrastructure tracer is GREEN with seven real-Git tests, including collision
+retry and rollback after a failing checkout hook; independent re-review passed
+with no blockers.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
