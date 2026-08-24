@@ -55,6 +55,58 @@ class WorkflowRunStatus(str, Enum):
 
 
 @dataclass
+class CodingRepository:
+    id: str
+    name: str
+    default_branch: str
+    created_by: str
+    created_at: datetime
+
+
+@dataclass
+class TeamRepositoryAccess:
+    team_id: str
+    repository_id: str
+    granted_by: str
+    granted_at: datetime
+
+
+@dataclass
+class CodingRun:
+    id: str
+    team_id: str
+    repository_id: str
+    requested_by: str
+    agent_id: str
+    request_id: str
+    instruction: str
+    status: str
+    created_at: datetime
+
+
+@dataclass
+class StoredChangeSet:
+    id: str
+    team_id: str
+    repository_id: str
+    run_id: str
+    agent_id: str
+    request_id: str
+    status: str
+    payload: dict
+    created_at: datetime
+
+
+@dataclass
+class ChangeSetAuditEvent:
+    id: str
+    change_set_id: str
+    action: str
+    actor_id: str
+    created_at: datetime
+
+
+@dataclass
 class AgentToolCall:
     id: str
     agent_id: str | None

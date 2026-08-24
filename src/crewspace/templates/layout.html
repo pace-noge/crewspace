@@ -133,7 +133,7 @@
     {% if current_user %}
       <details class="user-menu">
         <summary><div class="me"><span class="ava">{{ current_user.avatar or "🧑" }}</span> {{ current_user.name }}<span class="role">{{ current_user.role|replace('_', ' ') }}</span><span style="margin-left:auto">•••</span></div></summary>
-        <div class="menu-popover" style="bottom:46px;top:auto;right:8px;">{% if can_manage %}<a href="/management">Management</a>{% endif %}{% if can_add_human %}<a href="/management/humans/new">Add human</a>{% endif %}<a href="/auth/agents/register">Register agent</a></div>
+        <div class="menu-popover" style="bottom:46px;top:auto;right:8px;">{% if can_manage %}<a href="/management">Management</a><a href="/management/change-sets">Coding change sets</a>{% endif %}{% if can_add_human %}<a href="/management/humans/new">Add human</a>{% endif %}<a href="/auth/agents/register">Register agent</a></div>
       </details>
       <form method="post" action="/auth/logout" style="margin:0 8px 12px;">
         <button type="submit" style="width:100%;">Log out</button>

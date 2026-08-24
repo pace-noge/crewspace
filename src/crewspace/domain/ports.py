@@ -36,6 +36,11 @@ from .entities import (
     WorkspaceRole,
     Workflow,
     WorkflowRun,
+    CodingRepository,
+    CodingRun,
+    TeamRepositoryAccess,
+    StoredChangeSet,
+    ChangeSetAuditEvent,
 )
 
 
@@ -374,6 +379,33 @@ class McpConnectionRepository(Protocol):
 
 
 @runtime_checkable
+class CodingRepositoryRepository(Protocol):
+    async def create(self, repository: CodingRepository) -> CodingRepository: ...
+    async def grant_team(self, access: TeamRepositoryAccess) -> None: ...
+
+
+@runtime_checkable
+class CodingRunRepository(Protocol):
+    async def create(self, run: CodingRun) -> CodingRun: ...
+    async def get(self, run_id: str) -> CodingRun | None: ...
+    async def set_status(self, run_id: str, status: str) -> None: ...
+
+
+@runtime_checkable
+class ChangeSetRepository(Protocol):
+    async def create(
+        self, change_set: StoredChangeSet, event: ChangeSetAuditEvent
+    ) -> StoredChangeSet: ...
+    async def get(self, change_set_id: str) -> StoredChangeSet | None: ...
+    async def list_for_teams(self, team_ids: list[str]) -> list[StoredChangeSet]: ...
+    async def list_audit(self, change_set_id: str) -> list[ChangeSetAuditEvent]: ...
+    async def transition(
+        self, change_set_id: str, *, expected: str, status: str,
+        event: ChangeSetAuditEvent,
+    ) -> bool: ...
+
+
+@runtime_checkable
 class UnitOfWork(Protocol):
     """Bundles repositories over one consistent storage session."""
 
@@ -389,6 +421,9 @@ class UnitOfWork(Protocol):
     agent_policies: AgentPolicyRepository
     agent_tool_calls: AgentToolCallRepository
     mcp_connections: McpConnectionRepository
+    coding_repositories: CodingRepositoryRepository
+    coding_runs: CodingRunRepository
+    change_sets: ChangeSetRepository
 
     def queue_agent_tool_call(self, call: AgentToolCall) -> None: ...
 

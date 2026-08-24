@@ -19,6 +19,7 @@ import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..connection import agent_manager
+from ...application.change_sets import ChangeSetService
 from ...application.tools import build_registry
 from ...config import get_settings
 from ...security import verify_connect_claim
@@ -142,11 +143,16 @@ async def agent_ws(websocket: WebSocket):
                         }
                     )
                     continue
-                agent_manager.deliver_coding_change_set(
-                    agent_id,
-                    frame.get("request_id", ""),
-                    frame.get("change_set"),
+                request_id = frame.get("request_id", "")
+                error = await _handle_coding_change_set(
+                    agent_manager,
+                    websocket.app.state.db,
+                    agent_id=agent_id,
+                    request_id=request_id,
+                    value=frame.get("change_set"),
                 )
+                if error:
+                    await websocket.send_json({"type": "error", "error": error})
             elif ftype == "coding_run_failed":
                 if not agent_manager.supports(agent_id, "coding_workspace"):
                     await websocket.send_json(
@@ -187,6 +193,46 @@ async def _pubkey_for(websocket: WebSocket, agent_id: str | None) -> str | None:
         if not member or member["kind"] != "agent":
             return None
         return await uow.auth.get_pubkey(agent_id)
+
+
+async def _persist_coding_change_set(
+    db, *, agent_id: str, request_id: str, change_set
+) -> None:
+    async with db.uow() as uow:
+        await ChangeSetService().record_capture(
+            agent_id=agent_id,
+            request_id=request_id,
+            change_set=change_set,
+            uow=uow,
+        )
+        await uow.commit()
+
+
+async def _handle_coding_change_set(
+    manager, db, *, agent_id: str, request_id: str, value
+) -> str | None:
+    try:
+        change_set = manager.validate_coding_change_set(
+            agent_id, request_id, value
+        )
+    except ValueError as exc:
+        manager.deliver_coding_change_set(agent_id, request_id, value)
+        return str(exc)
+    if change_set is None:
+        return None
+    try:
+        await _persist_coding_change_set(
+            db,
+            agent_id=agent_id,
+            request_id=request_id,
+            change_set=change_set,
+        )
+    except Exception:
+        error = "change set persistence failed"
+        manager.deliver_coding_failure(agent_id, request_id, error)
+        return error
+    manager.complete_coding_change_set(agent_id, request_id, change_set)
+    return None
 
 
 def _verify_frame(pubkey: str, frame: dict) -> bool:

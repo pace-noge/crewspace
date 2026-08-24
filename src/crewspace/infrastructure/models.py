@@ -357,3 +357,64 @@ class WorkflowRunModel(Base):
     root_run_id: Mapped[str | None] = mapped_column(String)
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     retry_initiated_by: Mapped[str | None] = mapped_column(String)
+
+
+class CodingRepositoryModel(Base):
+    __tablename__ = "coding_repository"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    default_branch: Mapped[str] = mapped_column(String, nullable=False)
+    created_by: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class TeamCodingRepositoryModel(Base):
+    __tablename__ = "team_coding_repository"
+    team_id: Mapped[str] = mapped_column(ForeignKey("team.id", ondelete="CASCADE"), primary_key=True)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("coding_repository.id", ondelete="CASCADE"), primary_key=True)
+    granted_by: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    granted_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class CodingRunModel(Base):
+    __tablename__ = "coding_run"
+    __table_args__ = (
+        CheckConstraint("status IN ('running','captured','failed')", name="ck_coding_run_status"),
+        UniqueConstraint("agent_id", "request_id", name="uq_coding_run_agent_request"),
+    )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    team_id: Mapped[str] = mapped_column(ForeignKey("team.id"), nullable=False)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("coding_repository.id"), nullable=False)
+    requested_by: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    request_id: Mapped[str] = mapped_column(String, nullable=False)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class StoredChangeSetModel(Base):
+    __tablename__ = "stored_change_set"
+    __table_args__ = (
+        CheckConstraint("status IN ('captured','reviewed','pr_requested','retained','discard_requested')", name="ck_stored_change_set_status"),
+        UniqueConstraint("run_id", name="uq_stored_change_set_run"),
+    )
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    team_id: Mapped[str] = mapped_column(ForeignKey("team.id"), nullable=False)
+    repository_id: Mapped[str] = mapped_column(ForeignKey("coding_repository.id"), nullable=False)
+    run_id: Mapped[str] = mapped_column(ForeignKey("coding_run.id"), nullable=False)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    request_id: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class ChangeSetAuditEventModel(Base):
+    __tablename__ = "change_set_audit_event"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    change_set_id: Mapped[str] = mapped_column(ForeignKey("stored_change_set.id", ondelete="CASCADE"), nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    __table_args__ = (Index("ix_change_set_audit_created", "change_set_id", "created_at"),)

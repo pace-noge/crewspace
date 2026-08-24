@@ -178,7 +178,7 @@ Last updated: 2026-08-24 (WIB)
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
-| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 3/7 | M6.1 | 21 real-Git tests within 136-test remote architecture gate | Remote execution relocation ready to commit; detail UI next |
+| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 5/7 | M6.1 | 152-test bounded persistence/UI/protocol/security gate; migration round trip; live HTTP UI proof; independent review | Remote cleanup and real-repository end-to-end POC remain |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
@@ -214,12 +214,12 @@ Scope:
   - Render a compact change-set card with review, PR, and discard actions.
   - Clean up worktrees safely after merge, cancellation, or explicit retention.
 
-Acceptance (3/7):
+Acceptance (5/7):
   - [x] Every coding run receives a unique validated worktree and branch on its remote execution host.
   - [x] Execution-host repository/path authorization prevents traversal and cross-project writes.
   - [x] Concurrent remote runs cannot share a mutable checkout.
-  - [ ] Change-set DTO/UI shows files, commits, verification, and artifacts.
-  - [ ] Review/open-PR/discard are dedicated governed actions with audit events.
+  - [x] Change-set DTO/UI shows files, commits, verification, and artifacts.
+  - [x] Review/open-PR/discard are dedicated governed actions with audit events.
   - [ ] Cleanup is idempotent and never deletes an unmerged retained workspace.
   - [ ] Integration POC produces, verifies, reviews, and cleans a real change set.
 
@@ -327,6 +327,20 @@ Acceptance (0/7):
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
+  - 2026-08-24 — M6.2 durable change-set governance GREEN: logical repositories
+    are authorized many-to-many per team; coding runs bind team, repository,
+    requester, remote agent, request, and instruction. Authenticated signed ingress
+    validates the active request/repository/run correlation, then atomically stores
+    the path-free change set, capture audit, and run status before completing the
+    remote waiter. Team-scoped list/detail pages render commits, files, verification,
+    artifact metadata, and audit history. Review, request-PR, retain, and
+    request-discard each use a dedicated app-shell workflow with compare-and-set
+    transitions and authenticated actor audit. A 152-test bounded management,
+    protocol, real-Git, and security gate passes; schema drift, compilation, and
+    diff checks pass; fresh migration upgrade/downgrade/upgrade and live HTTP UI
+    proofs pass. Browser-DOM proof was blocked by Chrome's local remote-debugging
+    approval prompt. Final independent verdict: no blockers. Physical remote PR and
+    cleanup execution, run-start UI, and the full real-repository POC remain pending.
   - 2026-08-24 — M6.2 structured capture GREEN: immutable DTOs capture ordered
     commits, file status and line totals, verification records, and metadata-only
     workspace artifacts. Allocation provenance, branch/workspace identity, clean

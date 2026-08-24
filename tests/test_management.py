@@ -15,6 +15,7 @@ def test_superadmin_sees_management_navigation(client):
     assert "Agentic Kanban" not in response.text
     assert 'class="user-menu"' in response.text
     assert 'href="/management"' in response.text
+    assert 'href="/management/change-sets"' in response.text
     assert "superadmin" in response.text
 
 

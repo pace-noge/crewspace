@@ -488,19 +488,37 @@ class AgentConnectionManager:
     def deliver_coding_change_set(
         self, agent_id: str, request_id: str, value: Any
     ) -> bool:
+        try:
+            change_set = self.validate_coding_change_set(agent_id, request_id, value)
+        except ValueError as exc:
+            future = self._coding_waiters.get((agent_id, request_id))
+            if future is not None and not future.done():
+                future.set_exception(exc)
+            return False
+        if change_set is None:
+            return False
+        return self.complete_coding_change_set(agent_id, request_id, change_set)
+
+    def validate_coding_change_set(
+        self, agent_id: str, request_id: str, value: Any
+    ):
         from ..dto.change_sets import ChangeSetDTO
 
         key = (agent_id, request_id)
         future = self._coding_waiters.get(key)
         if future is None or future.done():
-            return False
+            return None
         expected = self._coding_expectations.get(key)
-        try:
-            change_set = ChangeSetDTO.model_validate(value)
-            if expected != (change_set.repository_id, change_set.run_id):
-                raise ValueError("coding change set does not match its request")
-        except (TypeError, ValueError) as exc:
-            future.set_exception(ValueError(str(exc)))
+        change_set = ChangeSetDTO.model_validate(value)
+        if expected != (change_set.repository_id, change_set.run_id):
+            raise ValueError("coding change set does not match its request")
+        return change_set
+
+    def complete_coding_change_set(
+        self, agent_id: str, request_id: str, change_set: Any
+    ) -> bool:
+        future = self._coding_waiters.get((agent_id, request_id))
+        if future is None or future.done():
             return False
         future.set_result(change_set)
         return True

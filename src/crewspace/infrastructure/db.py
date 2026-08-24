@@ -32,6 +32,9 @@ from .repositories import (
     SqlAlchemyBoardRepository,
     SqlAlchemyChannelRepository,
     SqlAlchemyChatRepository,
+    SqlAlchemyChangeSetRepository,
+    SqlAlchemyCodingRepositoryRepository,
+    SqlAlchemyCodingRunRepository,
     SqlAlchemyMcpConnectionRepository,
     SqlAlchemyScheduledJobRepository,
     SqlAlchemyTeamRepository,
@@ -63,6 +66,9 @@ class SqlAlchemyUnitOfWork:
         self.lifecycle = SqlAlchemyLifecycleRepository(conn)
         self.scheduled_jobs = SqlAlchemyScheduledJobRepository(conn)
         self.workflows = SqlAlchemyWorkflowRepository(conn)
+        self.coding_repositories = SqlAlchemyCodingRepositoryRepository(conn)
+        self.coding_runs = SqlAlchemyCodingRunRepository(conn)
+        self.change_sets = SqlAlchemyChangeSetRepository(conn)
 
     def queue_agent_tool_call(self, call) -> None:
         self.pending_agent_tool_calls.append(call)

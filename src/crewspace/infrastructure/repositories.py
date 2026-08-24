@@ -42,6 +42,11 @@ from ..domain.entities import (
     Workflow,
     WorkflowRun,
     WorkflowRunStatus,
+    CodingRepository,
+    CodingRun,
+    TeamRepositoryAccess,
+    StoredChangeSet,
+    ChangeSetAuditEvent,
 )
 from ..domain.identifiers import DEFAULT_BOARD_ID, COLUMN_IDS
 from ..domain.ports import (
@@ -425,6 +430,209 @@ class SqlAlchemyAgentToolCallRepository:
             "ORDER BY created_at DESC, id DESC LIMIT ?)",
             (keep,),
         )
+
+
+class SqlAlchemyCodingRepositoryRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    async def create(self, repository: CodingRepository) -> CodingRepository:
+        await self._conn.execute(
+            "INSERT INTO coding_repository "
+            "(id, name, default_branch, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                repository.id,
+                repository.name,
+                repository.default_branch,
+                repository.created_by,
+                _iso(repository.created_at),
+            ),
+        )
+        return repository
+
+    async def grant_team(self, access: TeamRepositoryAccess) -> None:
+        await self._conn.execute(
+            "INSERT INTO team_coding_repository "
+            "(team_id, repository_id, granted_by, granted_at) VALUES (?, ?, ?, ?)",
+            (
+                access.team_id,
+                access.repository_id,
+                access.granted_by,
+                _iso(access.granted_at),
+            ),
+        )
+
+
+class SqlAlchemyCodingRunRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    @staticmethod
+    def _map(row) -> CodingRun:
+        return CodingRun(
+            id=row["id"],
+            team_id=row["team_id"],
+            repository_id=row["repository_id"],
+            requested_by=row["requested_by"],
+            agent_id=row["agent_id"],
+            request_id=row["request_id"],
+            instruction=row["instruction"],
+            status=row["status"],
+            created_at=_parse(row["created_at"]),
+        )
+
+    async def create(self, run: CodingRun) -> CodingRun:
+        access = await self._conn.execute(
+            "SELECT 1 FROM team_coding_repository WHERE team_id=? AND repository_id=?",
+            (run.team_id, run.repository_id),
+        )
+        if await access.fetchone() is None:
+            raise PermissionError("Team is not authorized for this repository")
+        await self._conn.execute(
+            "INSERT INTO coding_run "
+            "(id, team_id, repository_id, requested_by, agent_id, request_id, "
+            "instruction, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run.id,
+                run.team_id,
+                run.repository_id,
+                run.requested_by,
+                run.agent_id,
+                run.request_id,
+                run.instruction,
+                run.status,
+                _iso(run.created_at),
+            ),
+        )
+        return run
+
+    async def get(self, run_id: str) -> CodingRun | None:
+        cur = await self._conn.execute("SELECT * FROM coding_run WHERE id=?", (run_id,))
+        row = await cur.fetchone()
+        return self._map(row) if row else None
+
+    async def set_status(self, run_id: str, status: str) -> None:
+        await self._conn.execute(
+            "UPDATE coding_run SET status=? WHERE id=?", (status, run_id)
+        )
+
+
+class SqlAlchemyChangeSetRepository:
+    def __init__(self, conn: SqlAlchemyConnection) -> None:
+        self._conn = conn
+
+    @staticmethod
+    def _map(row) -> StoredChangeSet:
+        return StoredChangeSet(
+            id=row["id"],
+            team_id=row["team_id"],
+            repository_id=row["repository_id"],
+            run_id=row["run_id"],
+            agent_id=row["agent_id"],
+            request_id=row["request_id"],
+            status=row["status"],
+            payload=json.loads(row["payload"]),
+            created_at=_parse(row["created_at"]),
+        )
+
+    async def create(
+        self, change_set: StoredChangeSet, event: ChangeSetAuditEvent
+    ) -> StoredChangeSet:
+        await self._conn.execute(
+            "INSERT INTO stored_change_set "
+            "(id, team_id, repository_id, run_id, agent_id, request_id, status, payload, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                change_set.id,
+                change_set.team_id,
+                change_set.repository_id,
+                change_set.run_id,
+                change_set.agent_id,
+                change_set.request_id,
+                change_set.status,
+                json.dumps(change_set.payload, separators=(",", ":"), sort_keys=True),
+                _iso(change_set.created_at),
+            ),
+        )
+        await self._conn.execute(
+            "INSERT INTO change_set_audit_event "
+            "(id, change_set_id, action, actor_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                event.id,
+                event.change_set_id,
+                event.action,
+                event.actor_id,
+                _iso(event.created_at),
+            ),
+        )
+        return change_set
+
+    async def get(self, change_set_id: str) -> StoredChangeSet | None:
+        cur = await self._conn.execute(
+            "SELECT * FROM stored_change_set WHERE id=?", (change_set_id,)
+        )
+        row = await cur.fetchone()
+        return self._map(row) if row else None
+
+    async def list_for_teams(self, team_ids: list[str]) -> list[StoredChangeSet]:
+        records: dict[str, StoredChangeSet] = {}
+        for team_id in team_ids:
+            cur = await self._conn.execute(
+                "SELECT * FROM stored_change_set WHERE team_id=?",
+                (team_id,),
+            )
+            records.update(
+                (record.id, record)
+                for row in await cur.fetchall()
+                if (record := self._map(row))
+            )
+        return sorted(
+            records.values(), key=lambda item: (item.created_at, item.id), reverse=True
+        )
+
+    async def list_audit(self, change_set_id: str) -> list[ChangeSetAuditEvent]:
+        cur = await self._conn.execute(
+            "SELECT * FROM change_set_audit_event WHERE change_set_id=? "
+            "ORDER BY created_at, id",
+            (change_set_id,),
+        )
+        return [
+            ChangeSetAuditEvent(
+                id=row["id"],
+                change_set_id=row["change_set_id"],
+                action=row["action"],
+                actor_id=row["actor_id"],
+                created_at=_parse(row["created_at"]),
+            )
+            for row in await cur.fetchall()
+        ]
+
+    async def transition(
+        self,
+        change_set_id: str,
+        *,
+        expected: str,
+        status: str,
+        event: ChangeSetAuditEvent,
+    ) -> bool:
+        result = await self._conn.execute(
+            "UPDATE stored_change_set SET status=? WHERE id=? AND status=?",
+            (status, change_set_id, expected),
+        )
+        if result.rowcount != 1:
+            return False
+        await self._conn.execute(
+            "INSERT INTO change_set_audit_event "
+            "(id, change_set_id, action, actor_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                event.id,
+                event.change_set_id,
+                event.action,
+                event.actor_id,
+                _iso(event.created_at),
+            ),
+        )
+        return True
 
 
 class SqlAlchemyMcpConnectionRepository:

@@ -1,0 +1,7 @@
+{% extends "layout.html" %}
+{% block title %}Coding change sets — Crewspace{% endblock %}
+{% block topbar %}Coding change sets{% endblock %}
+{% block head %}<style>
+.page{padding:28px;overflow:auto}.shell{max-width:1000px}.head h1{margin:0 0 5px}.muted{color:var(--muted)}.list{display:grid;gap:9px;margin-top:18px}.record{display:flex;justify-content:space-between;gap:18px;padding:15px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elev);color:inherit;text-decoration:none}.record:hover{border-color:var(--accent)}.main{min-width:0}.main strong,.main span{display:block;overflow-wrap:anywhere}.meta{color:var(--muted);font-size:13px}.status{font-weight:650;text-transform:capitalize;white-space:nowrap}.empty{padding:20px;border:1px dashed var(--border);border-radius:10px;color:var(--muted)}
+</style>{% endblock %}
+{% block content %}<div class="page"><main class="shell"><header class="head"><h1>Coding change sets</h1><p class="muted">Review path-free results captured from authorized remote coding runs.</p></header><section class="list">{% for record in records %}<a class="record" href="/management/change-sets/{{ record.id }}"><span class="main"><strong>{{ record.repository_id }}</strong><span class="meta">{{ record.run_id }} · {{ record.agent_id }} · {{ record.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC</span></span><span class="status">{{ record.status|replace('_',' ')|title }}</span></a>{% else %}<p class="empty">No coding change sets are available for your managed teams.</p>{% endfor %}</section></main></div>{% endblock %}

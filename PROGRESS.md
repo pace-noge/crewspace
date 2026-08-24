@@ -59,21 +59,23 @@ milestone commits are ahead of `origin/master` and will be pushed at the slice g
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.2 — Isolated worktrees and structured change sets is IN PROGRESS (3/7).
-Architecture correction is active: Crewspace now owns opaque dispatch, signed
-correlation, path-free schema validation, governance, and future persistence/UI;
-the remote Claude execution host owns repository mapping, Git worktrees, coding
-execution, capture, and future cleanup. Structured capture is GREEN with
-immutable DTOs for commits, changed files/line totals, verification, and artifact
-metadata. Capture rejects forged/replaced workspaces, changed branches, dirty
-tracked state, undeclared untracked files, artifact traversal, and external
-symlinks. Frozen provenance, ignored and odd filenames, mutation fingerprints,
-deep-frozen collections, lossless NUL parsing, normalized path-free wire metadata,
-and bounded subprocess output/time are enforced. Signed correlated success/failure
-frames preserve socket and capacity ownership. Twenty-one real-Git tests pass
-within a 136-test bounded protocol/security gate; compilation, diff, and added-line
-security scans pass. Final independent verdict found no blockers. Commit the
-relocation slice, then continue to the dedicated detail UI.
+M6.2 — Isolated worktrees and structured change sets is IN PROGRESS (5/7).
+Durable control-plane metadata and governed UI are GREEN. Logical repositories are
+authorized many-to-many per team; coding runs bind team, repository, requester,
+remote agent, request, and instruction. Authenticated signed result ingress validates
+the active request/repository/run correlation and atomically stores the path-free
+change set, capture audit, and run status before completing the waiter. Team-scoped
+list/detail pages show commits, files, verification, artifact metadata, and audit.
+Review, request-PR, retain, and request-discard use dedicated app-shell confirmation
+workflows with authenticated actor audit and compare-and-set state transitions.
+The final bounded gate passed 152 management, signed-protocol, real-Git, and security
+tests; schema drift, compilation, and diff checks passed; a fresh migration
+upgrade/downgrade/upgrade round trip and live HTTP UI proof passed. Chrome's local
+remote-debugging approval blocked browser-DOM proof and is recorded as an environment
+constraint, not a product pass. Final independent review found no blockers. Commit
+this slice, then implement signed remote idempotent cleanup that protects retained
+and unmerged workspaces; run-start UI/service and physical PR execution remain
+separate pending integration work and are not claimed complete.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
