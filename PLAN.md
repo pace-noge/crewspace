@@ -177,7 +177,7 @@ Last updated: 2026-08-24 (WIB)
 
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
-| M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers; commit evidence recorded below |
+| M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
 | M6.2 | Isolated worktrees and structured change sets | PLANNED | 0/7 | M6.1 | — | Coding output becomes inspectable delivery artifacts |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
@@ -327,10 +327,11 @@ Acceptance (0/7):
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
-  - 2026-08-24 — M6.1 DONE (6/6). Independent final review found no blockers or
+  - 2026-08-24 — M6.1 DONE (6/6), verified implementation commit `e7aba78`.
+    Independent final review found no blockers or
     suggestions after directly verifying reconnect/disconnect teardown and the
-    explicit legacy activity boundary. Verified commit/push evidence follows in
-    the milestone documentation commit.
+    explicit legacy activity boundary. Pushed to `origin/master` with the
+    milestone documentation update.
   - 2026-08-24 — M6.1 implementation complete: versioned signed `hello`, explicit
     legacy profile, capability gating for progress/tools, busy-slot routing with
     server-reserved vs agent-reported separation, and live sidebar/management UI.

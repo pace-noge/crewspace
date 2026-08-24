@@ -69,7 +69,7 @@ session-bound monotonic sequencing. Final evidence: 107 focused tests passed; al
 remaining suite files passed sequentially with one key-gated skip; compile,
 diff, and added-line security scans passed; hardened live POC passed; independent
 final review reported no blockers or suggestions. Commit evidence is recorded in
-the M6 milestone log.
+the M6 milestone log: verified implementation commit `e7aba78`.
 
 ## Test/run reminders (from prior sessions)
 - `export CREWSPACE_DATABASE_URL=` persists across tool calls and overrides pytest fixtures'
