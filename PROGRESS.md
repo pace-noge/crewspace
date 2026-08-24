@@ -65,7 +65,7 @@ milestone commits are ready for the slice-gate push.
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.3 — Durable and cancellable agent runs is IN PROGRESS (3/8). Slice 1 (durable
+M6.3 — Durable and cancellable agent runs — 7/8). Slice 1 (durable
 run lifecycle + timestamps + fail-closed compare-and-set transitions + reversible
 migration 20260824_03) is committed as `4b199be`; 142-test bounded gate and an
 independent fail-closed re-review returned BLOCKERS: none. Next implement M6.3 item
