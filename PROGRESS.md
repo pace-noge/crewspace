@@ -59,12 +59,13 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.2 — Isolated worktrees and structured change sets is IN PROGRESS. Current
-vertical slice: define the contract and allocate one unique validated branch and
-worktree per coding run from an explicit server-side repository allowlist. The
-infrastructure tracer is GREEN with seven real-Git tests, including collision
-retry and rollback after a failing checkout hook; independent re-review passed
-with no blockers.
+M6.2 — Isolated worktrees and structured change sets is IN PROGRESS (3/7).
+Authorized allocation and concurrent isolation are GREEN: operators configure
+opaque repository IDs through `CREWSPACE_CODING_*`; canonical Git root/common-dir
+identity is revalidated for each allocation; nested/swap paths are rejected; and
+parallel runs receive distinct branches/checkouts. Twelve real-Git/settings tests
+plus security regressions pass. Independent final review found no blockers;
+structured change-set capture follows after the second verified M6.2 commit.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

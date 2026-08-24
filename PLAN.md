@@ -178,7 +178,7 @@ Last updated: 2026-08-24 (WIB)
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
-| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 0/7 | M6.1 | 7 real-Git allocation tests + independent review | Allocator tracer complete; server integration next |
+| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 3/7 | M6.1 | 12 real-Git allocation/auth tests + independent review | Authorized concurrent isolation complete; structured capture next |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
@@ -214,10 +214,10 @@ Scope:
   - Render a compact change-set card with review, PR, and discard actions.
   - Clean up worktrees safely after merge, cancellation, or explicit retention.
 
-Acceptance (0/7):
-  - [ ] Every coding run receives a unique validated worktree and branch.
-  - [ ] Repository/path authorization prevents traversal and cross-project writes.
-  - [ ] Concurrent runs cannot share a mutable checkout.
+Acceptance (3/7):
+  - [x] Every coding run receives a unique validated worktree and branch.
+  - [x] Repository/path authorization prevents traversal and cross-project writes.
+  - [x] Concurrent runs cannot share a mutable checkout.
   - [ ] Change-set DTO/UI shows files, commits, verification, and artifacts.
   - [ ] Review/open-PR/discard are dedicated governed actions with audit events.
   - [ ] Cleanup is idempotent and never deletes an unmerged retained workspace.
@@ -327,6 +327,12 @@ Acceptance (0/7):
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
+  - 2026-08-24 — M6.2 authorization/concurrency slice GREEN: typed
+    `CREWSPACE_CODING_*` settings expose only opaque repository IDs; configured
+    Git roots and common-directory filesystem identity are revalidated before
+    allocation; nested roots and path replacement are rejected. Eight parallel
+    real-Git allocations use distinct branches/checkouts. Twelve focused tests
+    plus security regressions pass; independent final review found no blockers.
   - 2026-08-24 — M6.2 allocation tracer GREEN: server-supplied repository
     allowlist, strict run-id validation, random branch/worktree allocation,
     bounded collision retry, and rollback after partial Git failures. Seven
