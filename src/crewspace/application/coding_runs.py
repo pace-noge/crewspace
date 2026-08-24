@@ -206,5 +206,7 @@ async def mark_run_failed(
         finished_at=now,
     )
     if moved:
+        if error:
+            await uow.coding_runs.set_failure_reason(run_id, str(error))
         await uow.commit()
     return moved

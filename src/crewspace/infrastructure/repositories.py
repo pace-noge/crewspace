@@ -474,6 +474,7 @@ class SqlAlchemyCodingRepositoryRepository:
 
 class SqlAlchemyCodingRunRepository:
     MAX_OUTPUT_BYTES = 65_536
+    MAX_FAILURE_REASON_CHARS = 1_024
     _TRANSITIONS = {
         "queued": frozenset({"running", "failed", "cancelled", "timed_out", "interrupted"}),
         "running": frozenset({"succeeded", "failed", "cancelled", "timed_out", "interrupted"}),
@@ -498,6 +499,7 @@ class SqlAlchemyCodingRunRepository:
             started_at=_parse(row["started_at"]) if row["started_at"] else None,
             finished_at=_parse(row["finished_at"]) if row["finished_at"] else None,
             recent_output=row["recent_output"] if "recent_output" in row.keys() else "",
+            failure_reason=row["failure_reason"] if "failure_reason" in row.keys() else "",
         )
 
     async def create(self, run: CodingRun) -> CodingRun:
@@ -520,12 +522,13 @@ class SqlAlchemyCodingRunRepository:
             updated_at=run.updated_at or run.created_at,
             started_at=None if run.status == "queued" else run.started_at,
             finished_at=run.finished_at,
+            failure_reason=run.failure_reason if run.failure_reason else "",
         )
         await self._conn.execute(
             "INSERT INTO coding_run "
             "(id, team_id, repository_id, requested_by, agent_id, request_id, "
-            "instruction, status, created_at, updated_at, started_at, finished_at, recent_output) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "instruction, status, created_at, updated_at, started_at, finished_at, recent_output, failure_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run.id,
                 run.team_id,
@@ -540,6 +543,7 @@ class SqlAlchemyCodingRunRepository:
                 _iso(normalized.started_at) if normalized.started_at else None,
                 _iso(normalized.finished_at) if normalized.finished_at else None,
                 "",
+                normalized.failure_reason,
             ),
         )
         return normalized
@@ -630,6 +634,14 @@ class SqlAlchemyCodingRunRepository:
             (merged, _iso(dt.datetime.now(dt.timezone.utc)), run_id),
         )
 
+    async def set_failure_reason(self, run_id: str, reason: str) -> None:
+        """Persist a bounded failure reason for a failed run."""
+        bounded = reason[: self.MAX_FAILURE_REASON_CHARS]
+        await self._conn.execute(
+            "UPDATE coding_run SET failure_reason=? WHERE id=?",
+            (bounded, run_id),
+        )
+
 
 class SqlAlchemyChangeSetRepository:
     def __init__(self, conn: SqlAlchemyConnection) -> None:
@@ -684,6 +696,13 @@ class SqlAlchemyChangeSetRepository:
     async def get(self, change_set_id: str) -> StoredChangeSet | None:
         cur = await self._conn.execute(
             "SELECT * FROM stored_change_set WHERE id=?", (change_set_id,)
+        )
+        row = await cur.fetchone()
+        return self._map(row) if row else None
+
+    async def get_by_run_id(self, run_id: str) -> StoredChangeSet | None:
+        cur = await self._conn.execute(
+            "SELECT * FROM stored_change_set WHERE run_id=?", (run_id,)
         )
         row = await cur.fetchone()
         return self._map(row) if row else None

@@ -76,8 +76,8 @@ def test_coding_run_lifecycle_downgrade_maps_new_terminal_states(tmp_path):
             conn.execute(
                 "INSERT INTO coding_run "
                 "(id, team_id, repository_id, requested_by, agent_id, request_id, "
-                "instruction, status, created_at, updated_at, started_at, finished_at, recent_output) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "instruction, status, created_at, updated_at, started_at, finished_at, recent_output, failure_reason) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     f"run_{status}",
                     "team_legacy",
@@ -91,6 +91,7 @@ def test_coding_run_lifecycle_downgrade_maps_new_terminal_states(tmp_path):
                     created_at,
                     None,
                     created_at,
+                    "",
                     "",
                 ),
             )
@@ -2335,3 +2336,176 @@ async def test_coding_run_failed_handler_noop_for_already_cancelled_run(app):
     assert manager.delivered == 0
     async with app.state.db.uow() as uow:
         assert (await uow.coding_runs.get(run_id)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_mark_run_failed_stores_bounded_failure_reason(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_fail_reason",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    await arrange()
+    run_id = "run_fail_reason"
+    async with app.state.db.uow() as uow:
+        await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_fail_reason",
+            run_id=run_id,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+    from crewspace.application.coding_runs import mark_run_failed
+
+    async with app.state.db.uow() as uow:
+        await mark_run_failed(uow, run_id=run_id, error="explicit boom")
+    async with app.state.db.uow() as uow:
+        run = await uow.coding_runs.get(run_id)
+        assert run.status == "failed"
+        assert run.failure_reason == "explicit boom"
+
+    # Over-long reason is bounded (no overflow).
+    big = "x" * 5000
+    run_id2 = "run_fail_reason2"
+    async with app.state.db.uow() as uow:
+        await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_fail_reason",
+            run_id=run_id2,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+    async with app.state.db.uow() as uow:
+        await mark_run_failed(uow, run_id=run_id2, error=big)
+    async with app.state.db.uow() as uow:
+        run2 = await uow.coding_runs.get(run_id2)
+        assert len(run2.failure_reason) <= 1024
+
+
+def test_coding_run_detail_includes_timeline_duration_result_failure_reason(client, app):
+    from crewspace.api.connection import agent_manager
+    async def arrange() -> str:
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_detail",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+            run = await dispatch_coding_run(
+                uow,
+                agent_id="agent_planner",
+                team_id="team_acme",
+                repository_id="repo_detail",
+                run_id="run_detail",
+                instruction="work",
+                requested_by="user_bilal",
+                agent_manager=_FakeManager(),
+            )
+        return run.request_id
+
+    original = agent_manager.send_coding_run
+    try:
+        agent_manager.send_coding_run = lambda *a, **k: None
+        request_id = asyncio.run(arrange())
+
+        from crewspace.application.coding_runs import mark_run_failed
+
+        async def fail():
+            async with app.state.db.uow() as uow:
+                run = await uow.coding_runs.get_by_request_id(request_id)
+                await mark_run_failed(uow, run_id=run.id, error="detail boom")
+
+        asyncio.run(fail())
+
+        assert client.post(
+            "/auth/login", data={"username": "Bilal", "password": "admin123"}
+        ).status_code == 200
+        response = client.get("/api/coding/runs/run_detail", headers={"Origin": "http://testserver"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert "timeline" in body and isinstance(body["timeline"], list)
+        assert body["timeline"][0]["event"] == "created"
+        assert any(ev["event"] == "finished" for ev in body["timeline"])
+        assert isinstance(body["duration_ms"], int)
+        assert body["failure_reason"] == "detail boom"
+        assert body["result"]["status"] == "failed"
+        assert body["result"]["failure_reason"] == "detail boom"
+    finally:
+        agent_manager.send_coding_run = original
+
+
+def test_coding_run_detail_succeeded_includes_change_set_id(client, app):
+    from crewspace.api.connection import agent_manager
+    async def arrange() -> tuple[str, str]:
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_detail_cs",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+            run = await dispatch_coding_run(
+                uow,
+                agent_id="agent_planner",
+                team_id="team_acme",
+                repository_id="repo_detail_cs",
+                run_id="run_detail_cs",
+                instruction="work",
+                requested_by="user_bilal",
+                agent_manager=_FakeManager(),
+            )
+        return run.id, run.request_id
+
+    original = agent_manager.send_coding_run
+    try:
+        agent_manager.send_coding_run = lambda *a, **k: None
+        run_id, request_id = asyncio.run(arrange())
+
+        change_set = _make_cs(run_id, "repo_detail_cs")
+
+        async def capture() -> str:
+            async with app.state.db.uow() as uow:
+                stored = await ChangeSetService().record_capture(
+                    agent_id="agent_planner",
+                    request_id=request_id,
+                    change_set=change_set,
+                    uow=uow,
+                )
+                await uow.commit()
+                return stored.id
+
+        cs_id = asyncio.run(capture())
+
+        assert client.post(
+            "/auth/login", data={"username": "Bilal", "password": "admin123"}
+        ).status_code == 200
+        response = client.get(
+            f"/api/coding/runs/{run_id}", headers={"Origin": "http://testserver"}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "succeeded"
+        assert body["result"]["status"] == "succeeded"
+        assert body["result"]["change_set_id"] == cs_id
+    finally:
+        agent_manager.send_coding_run = original

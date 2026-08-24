@@ -86,6 +86,7 @@ class CodingRun:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     recent_output: str = ""
+    failure_reason: str = ""
 
 
 @dataclass

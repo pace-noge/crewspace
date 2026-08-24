@@ -8,6 +8,7 @@ to manage that team, before any run is persisted or dispatched.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
@@ -65,6 +66,26 @@ async def get_coding_run(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict
         raise HTTPException(status_code=404, detail="Coding run not found")
     if not await is_team_member(user, run.team_id, uow):
         raise HTTPException(status_code=403, detail="Not authorized for this team")
+
+    timeline = [{"event": "created", "at": run.created_at.isoformat()}]
+    if run.started_at:
+        timeline.append({"event": "started", "at": run.started_at.isoformat()})
+    if run.finished_at:
+        timeline.append({"event": "finished", "at": run.finished_at.isoformat()})
+
+    duration_ms = None
+    if run.started_at:
+        end = run.finished_at or datetime.now(timezone.utc)
+        duration_ms = int((end - run.started_at).total_seconds() * 1000)
+
+    result: dict = {"status": run.status}
+    if run.status == "failed":
+        result["failure_reason"] = run.failure_reason
+    elif run.status == "succeeded":
+        change_set = await uow.change_sets.get_by_run_id(run.id)
+        if change_set is not None:
+            result["change_set_id"] = change_set.id
+
     return {
         "run_id": run.id,
         "team_id": run.team_id,
@@ -77,6 +98,10 @@ async def get_coding_run(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "recent_output": run.recent_output,
+        "failure_reason": run.failure_reason,
+        "timeline": timeline,
+        "duration_ms": duration_ms,
+        "result": result,
     }
 
 

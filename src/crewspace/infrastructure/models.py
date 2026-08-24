@@ -398,6 +398,7 @@ class CodingRunModel(Base):
     started_at: Mapped[str | None] = mapped_column(String, nullable=True)
     finished_at: Mapped[str | None] = mapped_column(String, nullable=True)
     recent_output: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    failure_reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
 
 class StoredChangeSetModel(Base):
