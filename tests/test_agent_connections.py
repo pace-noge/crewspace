@@ -8,6 +8,7 @@ import pytest
 from fastapi import WebSocket
 
 from crewspace.api.connection import AgentConnectionManager, ConnectionManager
+from crewspace.api.routers.agents import _handle_workspace_action_frame
 from crewspace.dto.change_sets import ChangeSetDTO
 
 
@@ -358,6 +359,221 @@ async def test_coding_run_returns_correlated_remote_change_set():
     result = await pending
     assert isinstance(result, ChangeSetDTO)
     assert result.model_dump(mode="json") == change_set
+
+
+@pytest.mark.asyncio
+async def test_workspace_action_result_requires_reserved_socket():
+    manager = AgentConnectionManager()
+    reserved = FakeWebSocket()
+    other = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, reserved))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, reserved),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+    pending = asyncio.create_task(
+        manager.send_workspace_action(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_socket",
+            branch="crewspace/run_socket-deadbeef",
+            action="discard",
+            timeout=0.1,
+        )
+    )
+    await asyncio.sleep(0)
+    request = reserved.sent[0]
+    result = {
+        "repository_id": "crewspace",
+        "run_id": "run_socket",
+        "branch": "crewspace/run_socket-deadbeef",
+        "action": "discard",
+        "status": "removed",
+    }
+    assert manager.deliver_workspace_action_result(
+        "agent_a", request["request_id"], result, cast(WebSocket, other)
+    ) is False
+    assert manager.deliver_workspace_action_result(
+        "agent_a", request["request_id"], result, cast(WebSocket, reserved)
+    ) is True
+    assert await pending == result
+
+
+@pytest.mark.asyncio
+async def test_workspace_action_returns_correlated_path_free_result():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+
+    pending = asyncio.create_task(
+        manager.send_workspace_action(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            branch="crewspace/run_123-deadbeef",
+            action="discard",
+            timeout=0.1,
+        )
+    )
+    await asyncio.sleep(0)
+    request = socket.sent[0]
+
+    assert request == {
+        "type": "coding_workspace_action",
+        "request_id": request["request_id"],
+        "repository_id": "crewspace",
+        "run_id": "run_123",
+        "branch": "crewspace/run_123-deadbeef",
+        "action": "discard",
+    }
+    assert "path" not in request
+    assert manager.deliver_workspace_action_result(
+        "agent_a",
+        request["request_id"],
+        {
+            "repository_id": "crewspace",
+            "run_id": "run_123",
+            "branch": "crewspace/run_123-deadbeef",
+            "action": "discard",
+            "status": "removed",
+        },
+        cast(WebSocket, socket),
+    ) is True
+    assert await pending == {
+        "repository_id": "crewspace",
+        "run_id": "run_123",
+        "branch": "crewspace/run_123-deadbeef",
+        "action": "discard",
+        "status": "removed",
+    }
+    assert manager.capability_profile("agent_a")["active_runs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_workspace_action_frame_resolves_only_correlated_lifecycle_waiter():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+    pending = asyncio.create_task(
+        manager.send_workspace_action(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            branch="crewspace/run_123-deadbeef",
+            action="cleanup",
+            timeout=0.1,
+        )
+    )
+    await asyncio.sleep(0)
+    request_id = socket.sent[0]["request_id"]
+
+    assert _handle_workspace_action_frame(
+        manager,
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "type": "coding_workspace_action_result",
+            "request_id": request_id,
+            "result": {
+                "repository_id": "crewspace",
+                "run_id": "run_123",
+                "branch": "crewspace/run_123-deadbeef",
+                "action": "cleanup",
+                "status": "removed",
+            },
+        },
+    ) is True
+    assert (await pending)["status"] == "removed"
+
+
+def test_workspace_action_frame_rejects_unknown_frame_type():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    assert _handle_workspace_action_frame(
+        manager,
+        "agent_a",
+        cast(WebSocket, socket),
+        {"type": "coding_workspace_action_unknown", "request_id": "request"},
+    ) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("repository_id", "other"),
+        ("run_id", "other_run"),
+        ("branch", "crewspace/other-branch"),
+        ("action", "retain"),
+        ("status", "deleted_everything"),
+    ],
+)
+async def test_workspace_action_rejects_mismatched_or_invalid_result(field, value):
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+    pending = asyncio.create_task(
+        manager.send_workspace_action(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            branch="crewspace/run_123-deadbeef",
+            action="discard",
+            timeout=0.1,
+        )
+    )
+    await asyncio.sleep(0)
+    result = {
+        "repository_id": "crewspace",
+        "run_id": "run_123",
+        "branch": "crewspace/run_123-deadbeef",
+        "action": "discard",
+        "status": "removed",
+    }
+    result[field] = value
+
+    assert manager.deliver_workspace_action_result(
+        "agent_a", socket.sent[0]["request_id"], result, cast(WebSocket, socket)
+    ) is False
+    with pytest.raises(ValueError):
+        await pending
+    assert manager.capability_profile("agent_a")["active_runs"] == 0
 
 
 @pytest.mark.asyncio

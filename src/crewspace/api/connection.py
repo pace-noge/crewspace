@@ -92,6 +92,11 @@ class AgentConnectionManager:
         self._coding_waiters: dict[tuple[str, str], asyncio.Future[Any]] = {}
         self._coding_waiter_sockets: dict[tuple[str, str], WebSocket] = {}
         self._coding_expectations: dict[tuple[str, str], tuple[str, str]] = {}
+        self._workspace_waiters: dict[tuple[str, str], asyncio.Future[Any]] = {}
+        self._workspace_waiter_sockets: dict[tuple[str, str], WebSocket] = {}
+        self._workspace_expectations: dict[
+            tuple[str, str], tuple[str, str, str, str]
+        ] = {}
 
     async def connect(self, agent_id: str, ws: WebSocket) -> None:
         await ws.accept()
@@ -132,6 +137,12 @@ class AgentConnectionManager:
         self._coding_waiters.clear()
         self._coding_waiter_sockets.clear()
         self._coding_expectations.clear()
+        for future in self._workspace_waiters.values():
+            if not future.done():
+                future.cancel()
+        self._workspace_waiters.clear()
+        self._workspace_waiter_sockets.clear()
+        self._workspace_expectations.clear()
         for future in self._waiters.values():
             if not future.done():
                 future.cancel()
@@ -182,6 +193,14 @@ class AgentConnectionManager:
             self._coding_waiter_sockets.pop(waiter_key, None)
             self._coding_expectations.pop(waiter_key, None)
             future = self._coding_waiters.pop(waiter_key, None)
+            if future is not None and not future.done():
+                future.set_exception(ConnectionError(reason))
+        for waiter_key, owner in list(self._workspace_waiter_sockets.items()):
+            if waiter_key[0] != agent_id or owner is not ws:
+                continue
+            self._workspace_waiter_sockets.pop(waiter_key, None)
+            self._workspace_expectations.pop(waiter_key, None)
+            future = self._workspace_waiters.pop(waiter_key, None)
             if future is not None and not future.done():
                 future.set_exception(ConnectionError(reason))
         self._reserved_slots.pop((agent_id, ws), None)
@@ -532,6 +551,124 @@ class AgentConnectionManager:
             return False
         if not isinstance(error, str) or not error or len(error) > 4096:
             future.set_exception(ValueError("invalid coding failure payload"))
+            return False
+        future.set_exception(RuntimeError(error))
+        return True
+
+    async def send_workspace_action(
+        self,
+        agent_id: str,
+        *,
+        repository_id: str,
+        run_id: str,
+        branch: str,
+        action: str,
+        timeout: float,
+    ) -> Any:
+        if not self.supports(agent_id, "coding_workspace"):
+            raise RuntimeError("unsupported capability: coding_workspace")
+        if _SAFE_CODING_ID.fullmatch(repository_id) is None:
+            raise ValueError("repository id contains unsafe characters")
+        if _SAFE_CODING_ID.fullmatch(run_id) is None:
+            raise ValueError("run id contains unsafe characters")
+        if (
+            not isinstance(branch, str)
+            or len(branch) > 255
+            or not branch.startswith("crewspace/")
+            or any(part in {"", ".", ".."} for part in branch.split("/"))
+        ):
+            raise ValueError("invalid coding workspace branch")
+        if action not in {"cleanup", "discard", "retain"}:
+            raise ValueError("invalid coding workspace action")
+        reserved_socket = self._reserve_slot(agent_id)
+        request_id = self.new_message_id()
+        key = (agent_id, request_id)
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._workspace_waiters[key] = future
+        self._workspace_waiter_sockets[key] = reserved_socket
+        self._workspace_expectations[key] = (
+            repository_id,
+            run_id,
+            branch,
+            action,
+        )
+        try:
+            if self._conns.get(agent_id) is not reserved_socket:
+                raise ConnectionError("agent connection replaced")
+            await reserved_socket.send_json(
+                {
+                    "type": "coding_workspace_action",
+                    "request_id": request_id,
+                    "repository_id": repository_id,
+                    "run_id": run_id,
+                    "branch": branch,
+                    "action": action,
+                },
+            )
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._workspace_waiters.pop(key, None)
+            self._workspace_waiter_sockets.pop(key, None)
+            self._workspace_expectations.pop(key, None)
+            self._release_slot(agent_id, reserved_socket)
+
+    def deliver_workspace_action_result(
+        self, agent_id: str, request_id: str, value: Any, socket: WebSocket
+    ) -> bool:
+        key = (agent_id, request_id)
+        future = self._workspace_waiters.get(key)
+        expected = self._workspace_expectations.get(key)
+        if (
+            future is None
+            or future.done()
+            or expected is None
+            or self._workspace_waiter_sockets.get(key) is not socket
+        ):
+            return False
+        if not isinstance(value, dict) or set(value) != {
+            "repository_id", "run_id", "branch", "action", "status"
+        }:
+            future.set_exception(ValueError("invalid workspace action result"))
+            return False
+        received = (
+            value["repository_id"],
+            value["run_id"],
+            value["branch"],
+            value["action"],
+        )
+        allowed_statuses = {
+            "cleanup": {"removed", "already_removed"},
+            "discard": {"removed", "already_removed"},
+            "retain": {"retained", "already_retained"},
+        }
+        if received != expected or value["status"] not in allowed_statuses[expected[3]]:
+            future.set_exception(ValueError("workspace action result does not match request"))
+            return False
+        future.set_result(
+            dict(
+                zip(
+                    ("repository_id", "run_id", "branch", "action"),
+                    expected,
+                    strict=True,
+                )
+            )
+            | {"status": value["status"]}
+        )
+        return True
+
+    def deliver_workspace_action_failure(
+        self, agent_id: str, request_id: str, error: Any, socket: WebSocket
+    ) -> bool:
+        key = (agent_id, request_id)
+        future = self._workspace_waiters.get(key)
+        if (
+            future is None
+            or future.done()
+            or self._workspace_waiter_sockets.get(key) is not socket
+        ):
+            return False
+        if not isinstance(error, str) or not error or len(error) > 4096:
+            future.set_exception(ValueError("invalid workspace action failure payload"))
             return False
         future.set_exception(RuntimeError(error))
         return True

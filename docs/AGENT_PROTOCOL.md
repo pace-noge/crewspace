@@ -198,6 +198,28 @@ All frames are JSON objects with a `type` field.
   operator-controlled configuration, allocates an isolated worktree, runs the
   coding tool there, and correlates the result with `request_id`.
 
+**coding_workspace_action** (governed lifecycle command; sent only to the agent
+that produced the correlated change set):
+```json
+{ "type": "coding_workspace_action", "request_id": "wa1",
+  "repository_id": "crewspace", "run_id": "run_123",
+  "branch": "crewspace/run_123-deadbeef", "action": "discard" }
+```
+- `action` is exactly one of `retain`, `cleanup`, or `discard`.
+- The frame is path-free. The remote host resolves the exact allocator-owned
+  `(repository_id, run_id, branch)` tuple; it must not accept a filesystem path
+  from Crewspace.
+- `cleanup` removes only clean workspaces whose branch is already merged.
+  `discard` is the explicit authorization to remove clean unmerged work, but it
+  must still reject retained workspaces. `retain` protects the workspace from
+  both cleanup and discard.
+- Repeated operations are idempotent and return `already_retained` or
+  `already_removed` where applicable while the same remote allocator process is
+  alive. The reference agent currently keeps allocation, retention, partial-cleanup,
+  and tombstone state in memory; it does not claim restart-safe idempotence. Durable
+  reconstruction after an agent restart belongs to M6.3. A restart must not be
+  interpreted as authorization to discover or remove an unowned workspace.
+
 **card_created** (sent to **every** connected agent when any card is created):
 ```json
 { "type": "card_created",
@@ -293,6 +315,33 @@ All frames are JSON objects with a `type` field.
 ```
 - The error is bounded to 4096 characters and resolves only the active request for
   the authenticated agent identity. Unknown request IDs are ignored.
+
+**coding_workspace_action_result** (complete a lifecycle command; signed):
+```json
+{ "type": "coding_workspace_action_result", "request_id": "wa1",
+  "result": { "repository_id": "crewspace", "run_id": "run_123",
+    "branch": "crewspace/run_123-deadbeef", "action": "discard",
+    "status": "removed" },
+  "session_id": "...", "seq": 6, "sig": "..." }
+```
+- The result must exactly match the active request's repository, run, branch,
+  and action. Allowed statuses are `retained`, `already_retained`, `removed`,
+  and `already_removed`; Crewspace additionally enforces action-specific status
+  compatibility before finalizing governance state.
+- Crewspace commits `retain_requested` or `discard_requested` before waiting,
+  then commits `retained` or `discarded` plus an agent-authored audit event only
+  after a valid acknowledgement. Remote waits never hold a database transaction.
+
+**coding_workspace_action_failed** (fail a lifecycle command; signed):
+```json
+{ "type": "coding_workspace_action_failed", "request_id": "wa1",
+  "error": "ValueError: workspace is retained",
+  "session_id": "...", "seq": 7, "sig": "..." }
+```
+- The error is bounded and resolves only the authenticated agent's active
+  lifecycle request. The control plane records a generic failure audit, returns
+  the change set to `reviewed` for an authorized retry, and does not persist the
+  private remote error detail.
 
 **tool** (ask the app to run one of its tools; must be signed):
 ```json

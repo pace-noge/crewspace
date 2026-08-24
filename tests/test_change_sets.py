@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 
 from crewspace.dto.change_sets import VerificationResultDTO
+from claude_code_agent import _workspace_action_response
 from remote_coding_workspace import CodingWorkspaceDTO, GitWorktreeAllocator
 import remote_coding_workspace as git_worktrees
 
@@ -61,6 +62,341 @@ def test_allocate_creates_unique_branch_and_worktree_for_each_run(tmp_path: Path
     assert second.path.is_dir()
     assert _git(first.path, "branch", "--show-current") == first.branch
     assert _git(second.path, "branch", "--show-current") == second.branch
+
+
+def test_cleanup_requires_merge_or_explicit_unretained_discard(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_cleanup")
+    (workspace.path / "change.txt").write_text("change\n")
+    _git(workspace.path, "add", "change.txt")
+    _git(workspace.path, "commit", "-m", "unmerged change")
+
+    with pytest.raises(ValueError, match="not merged"):
+        allocator.cleanup(workspace)
+    assert workspace.path.is_dir()
+    assert allocator.retain(workspace) == "retained"
+    assert allocator.retain(workspace) == "already_retained"
+    with pytest.raises(ValueError, match="retained"):
+        allocator.cleanup(workspace, discard=True)
+
+    other = allocator.allocate(repository_id="crewspace", run_id="run_discard")
+    (other.path / "discard.txt").write_text("discard\n")
+    _git(other.path, "add", "discard.txt")
+    _git(other.path, "commit", "-m", "discard me")
+
+    assert allocator.cleanup(other, discard=True) == "removed"
+    assert not other.path.exists()
+    assert _git(repository, "branch", "--list", other.branch) == ""
+    assert allocator.cleanup(other, discard=True) == "already_removed"
+
+
+def test_cleanup_retry_finishes_branch_after_partial_removal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_partial")
+    original_git = allocator._git
+    failed_once = False
+
+    def fail_first_branch_delete(path: Path, *args: str, **kwargs) -> str:
+        nonlocal failed_once
+        if args[:2] == ("branch", "-D") and not failed_once:
+            failed_once = True
+            raise ValueError("simulated branch delete failure")
+        return original_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(allocator, "_git", fail_first_branch_delete)
+    with pytest.raises(ValueError, match="simulated branch delete failure"):
+        allocator.cleanup(workspace, discard=True)
+    assert not workspace.path.exists()
+    assert _git(repository, "branch", "--list", workspace.branch)
+
+    assert allocator.cleanup(workspace, discard=True) == "removed"
+    assert _git(repository, "branch", "--list", workspace.branch) == ""
+    assert allocator.cleanup(workspace, discard=True) == "already_removed"
+
+
+def test_partial_cleanup_retry_rejects_moved_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_moved")
+    original_head = _git(workspace.path, "rev-parse", "HEAD")
+    original_git = allocator._git
+    failed_once = False
+
+    def fail_first_branch_delete(path: Path, *args: str, **kwargs) -> str:
+        nonlocal failed_once
+        if args[:2] == ("branch", "-D") and not failed_once:
+            failed_once = True
+            raise ValueError("simulated branch delete failure")
+        return original_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(allocator, "_git", fail_first_branch_delete)
+    with pytest.raises(ValueError, match="simulated branch delete failure"):
+        allocator.cleanup(workspace, discard=True)
+    (repository / "replacement.txt").write_text("replacement\n")
+    _git(repository, "add", "replacement.txt")
+    _git(repository, "commit", "-m", "replacement head")
+    replacement_head = _git(repository, "rev-parse", "HEAD")
+    assert replacement_head != original_head
+    _git(repository, "branch", "-f", workspace.branch, replacement_head)
+
+    with pytest.raises(ValueError, match="branch changed"):
+        allocator.cleanup(workspace, discard=True)
+    assert _git(repository, "rev-parse", workspace.branch) == replacement_head
+
+
+def test_capture_rejects_direct_branch_replacement_to_different_commit(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_capture_move")
+    _git(repository, "commit", "--allow-empty", "-m", "replacement")
+    replacement_head = _git(repository, "rev-parse", "HEAD")
+    branch_ref = repository / ".git" / "refs" / "heads" / Path(
+        *workspace.branch.split("/")
+    )
+    branch_ref.unlink()
+    branch_ref.write_text(f"{replacement_head}\n")
+
+    with pytest.raises(ValueError, match="branch provenance changed"):
+        allocator.capture(workspace, verification=[], artifact_paths=[])
+
+
+def test_capture_rejects_branch_recreated_at_same_commit(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_capture_ref")
+    authorized_head = _git(workspace.path, "rev-parse", "HEAD")
+    branch_ref = repository / ".git" / "refs" / "heads" / Path(
+        *workspace.branch.split("/")
+    )
+    branch_ref.unlink()
+    branch_ref.write_text(f"{authorized_head}\n")
+
+    with pytest.raises(ValueError, match="branch identity changed"):
+        allocator.capture(workspace, verification=[], artifact_paths=[])
+
+
+def test_retain_uses_one_workspace_head_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_retain_head")
+    original_git = allocator._git
+    head_reads = 0
+
+    def count_workspace_head_reads(path: Path, *args: str, **kwargs) -> str:
+        nonlocal head_reads
+        if path == workspace.path and args == ("rev-parse", "HEAD"):
+            head_reads += 1
+        return original_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(allocator, "_git", count_workspace_head_reads)
+
+    assert allocator.retain(workspace) == "retained"
+    assert head_reads == 1
+
+
+def test_retain_rejects_branch_recreated_at_same_commit(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_retain_ref")
+    authorized_head = _git(workspace.path, "rev-parse", "HEAD")
+    branch_ref = repository / ".git" / "refs" / "heads" / Path(
+        *workspace.branch.split("/")
+    )
+    branch_ref.unlink()
+    branch_ref.write_text(f"{authorized_head}\n")
+
+    with pytest.raises(ValueError, match="branch identity changed"):
+        allocator.retain(workspace)
+
+
+def test_cleanup_rejects_branch_recreated_at_same_commit_before_first_action(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_precleanup")
+    authorized_head = _git(workspace.path, "rev-parse", "HEAD")
+    branch_ref = repository / ".git" / "refs" / "heads" / Path(
+        *workspace.branch.split("/")
+    )
+    branch_ref.unlink()
+    branch_ref.write_text(f"{authorized_head}\n")
+
+    with pytest.raises(ValueError, match="branch identity changed"):
+        allocator.cleanup(workspace, discard=True)
+    assert workspace.path.exists()
+    assert _git(repository, "rev-parse", workspace.branch) == authorized_head
+
+
+def test_partial_cleanup_retry_rejects_recreated_branch_at_same_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_recreated")
+    authorized_head = _git(workspace.path, "rev-parse", "HEAD")
+    original_git = allocator._git
+    failed_once = False
+
+    def fail_first_branch_delete(path: Path, *args: str, **kwargs) -> str:
+        nonlocal failed_once
+        if args[:2] == ("branch", "-D") and not failed_once:
+            failed_once = True
+            raise ValueError("simulated branch delete failure")
+        return original_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(allocator, "_git", fail_first_branch_delete)
+    with pytest.raises(ValueError, match="simulated branch delete failure"):
+        allocator.cleanup(workspace, discard=True)
+    _git(repository, "branch", "-D", workspace.branch)
+    _git(repository, "branch", workspace.branch, authorized_head)
+    assert _git(repository, "rev-parse", workspace.branch) == authorized_head
+
+    with pytest.raises(ValueError, match="branch identity changed"):
+        allocator.cleanup(workspace, discard=True)
+    assert _git(repository, "rev-parse", workspace.branch) == authorized_head
+
+
+def test_workspace_action_resolves_only_allocator_owned_opaque_identity(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_action")
+
+    assert allocator.apply_workspace_action(
+        repository_id="crewspace",
+        run_id="run_action",
+        branch=workspace.branch,
+        action="retain",
+    ) == "retained"
+    assert allocator.apply_workspace_action(
+        repository_id="crewspace",
+        run_id="run_action",
+        branch=workspace.branch,
+        action="retain",
+    ) == "already_retained"
+    with pytest.raises(ValueError, match="not allocated"):
+        allocator.apply_workspace_action(
+            repository_id="crewspace",
+            run_id="other_run",
+            branch=workspace.branch,
+            action="discard",
+        )
+    with pytest.raises(ValueError, match="invalid"):
+        allocator.apply_workspace_action(
+            repository_id="crewspace",
+            run_id="run_action",
+            branch=workspace.branch,
+            action="delete_everything",
+        )
+
+
+def test_reference_agent_builds_path_free_workspace_action_result(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_agent")
+    frame = {
+        "type": "coding_workspace_action",
+        "request_id": "request_action",
+        "repository_id": "crewspace",
+        "run_id": "run_agent",
+        "branch": workspace.branch,
+        "action": "retain",
+    }
+
+    response = _workspace_action_response(allocator, frame)
+
+    assert response == {
+        "type": "coding_workspace_action_result",
+        "request_id": "request_action",
+        "result": {
+            "repository_id": "crewspace",
+            "run_id": "run_agent",
+            "branch": workspace.branch,
+            "action": "retain",
+            "status": "retained",
+        },
+    }
+    assert "path" not in repr(response)
+
+
+def test_cleanup_removes_merged_workspace_but_rejects_dirty_or_replaced_state(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    merged = allocator.allocate(repository_id="crewspace", run_id="run_merged")
+    (merged.path / "merged.txt").write_text("merged\n")
+    _git(merged.path, "add", "merged.txt")
+    _git(merged.path, "commit", "-m", "merged change")
+    _git(repository, "merge", "--ff-only", merged.branch)
+
+    assert allocator.cleanup(merged) == "removed"
+    assert allocator.cleanup(merged) == "already_removed"
+
+    dirty = allocator.allocate(repository_id="crewspace", run_id="run_dirty")
+    (dirty.path / "dirty.txt").write_text("dirty\n")
+    with pytest.raises(ValueError, match="uncommitted"):
+        allocator.cleanup(dirty, discard=True)
+    assert dirty.path.exists()
+
+    replaced = allocator.allocate(repository_id="crewspace", run_id="run_replaced")
+    original = replaced.path.with_name(replaced.path.name + "-original")
+    replaced.path.rename(original)
+    replaced.path.mkdir()
+    with pytest.raises(ValueError, match="identity"):
+        allocator.cleanup(replaced, discard=True)
+    assert replaced.path.exists()
+    assert original.exists()
 
 
 def test_allocate_retries_an_allocation_id_collision(

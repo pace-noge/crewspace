@@ -396,7 +396,11 @@ class CodingRunModel(Base):
 class StoredChangeSetModel(Base):
     __tablename__ = "stored_change_set"
     __table_args__ = (
-        CheckConstraint("status IN ('captured','reviewed','pr_requested','retained','discard_requested')", name="ck_stored_change_set_status"),
+        CheckConstraint(
+            "status IN ('captured','reviewed','pr_requested','retain_requested',"
+            "'retained','discard_requested','discarded')",
+            name="ck_stored_change_set_status",
+        ),
         UniqueConstraint("run_id", name="uq_stored_change_set_run"),
     )
     id: Mapped[str] = mapped_column(String, primary_key=True)

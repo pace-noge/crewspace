@@ -6,8 +6,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import ValidationError
 
 from ...application.access import can_manage_team, manageable_teams
-from ...application.change_sets import ChangeSetService
+from ...application.change_sets import ChangeSetService, execute_workspace_decision
+from ...config import get_settings
 from ...dto.change_sets import ChangeSetDTO
+from ..connection import agent_manager
 from ..deps import CurrentUserDep, UowDep
 from ..rendering import navigation_context, templates
 
@@ -179,15 +181,47 @@ async def request_change_set_pr(
 
 @router.post("/{change_set_id}/retain")
 async def retain_change_set_workspace(
-    change_set_id: str, current_user: CurrentUserDep, uow: UowDep
+    request: Request, change_set_id: str, current_user: CurrentUserDep
 ) -> RedirectResponse:
-    return await _record_decision(change_set_id, "retain", current_user, uow)
+    try:
+        await execute_workspace_decision(
+            db=request.app.state.db,
+            manager=agent_manager,
+            change_set_id=change_set_id,
+            decision="retain",
+            current_user=current_user,
+            timeout=get_settings().agent_reply_timeout,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (KeyError, ConnectionError, RuntimeError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail="Remote workspace action failed") from exc
+    return RedirectResponse(
+        f"/management/change-sets/{change_set_id}", status_code=303
+    )
 
 
 @router.post("/{change_set_id}/request-discard")
 async def request_change_set_discard(
-    change_set_id: str, current_user: CurrentUserDep, uow: UowDep
+    request: Request, change_set_id: str, current_user: CurrentUserDep
 ) -> RedirectResponse:
-    return await _record_decision(
-        change_set_id, "request_discard", current_user, uow
+    try:
+        await execute_workspace_decision(
+            db=request.app.state.db,
+            manager=agent_manager,
+            change_set_id=change_set_id,
+            decision="request_discard",
+            current_user=current_user,
+            timeout=get_settings().agent_reply_timeout,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (KeyError, ConnectionError, RuntimeError, TimeoutError) as exc:
+        raise HTTPException(status_code=502, detail="Remote workspace action failed") from exc
+    return RedirectResponse(
+        f"/management/change-sets/{change_set_id}", status_code=303
     )

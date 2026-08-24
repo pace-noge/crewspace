@@ -147,6 +147,26 @@ async def _run_claude(
     return full[-8000:] if len(full) > 8000 else full
 
 
+def _workspace_action_response(allocator: GitWorktreeAllocator, frame: dict) -> dict:
+    status = allocator.apply_workspace_action(
+        repository_id=frame["repository_id"],
+        run_id=frame["run_id"],
+        branch=frame["branch"],
+        action=frame["action"],
+    )
+    return {
+        "type": "coding_workspace_action_result",
+        "request_id": frame["request_id"],
+        "result": {
+            "repository_id": frame["repository_id"],
+            "run_id": frame["run_id"],
+            "branch": frame["branch"],
+            "action": frame["action"],
+            "status": status,
+        },
+    }
+
+
 async def main() -> None:
     agent_id = os.environ["AGENT_ID"]
     ws_url = os.environ["AGENT_WS_URL"]
@@ -260,6 +280,19 @@ async def main() -> None:
                         }
                     )
                 await ws.send(json.dumps(response))
+
+            elif ftype == "coding_workspace_action":
+                try:
+                    response = await asyncio.to_thread(
+                        _workspace_action_response, allocator, frame
+                    )
+                except Exception as exc:
+                    response = {
+                        "type": "coding_workspace_action_failed",
+                        "request_id": frame.get("request_id", ""),
+                        "error": f"{type(exc).__name__}: {exc}"[-4096:],
+                    }
+                await ws.send(json.dumps(signer.sign_frame(response)))
 
             elif ftype == "card_created":
                 # Fire-and-forget: a card was created elsewhere. Ignore for this bridge.

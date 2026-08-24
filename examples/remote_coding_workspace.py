@@ -55,9 +55,21 @@ class GitWorktreeAllocator:
             str, tuple[tuple[int, int], tuple[int, int]]
         ] = {}
         self._allocated_workspaces: dict[
-            Path, tuple[CodingWorkspaceDTO, tuple[tuple[int, int], tuple[int, int]]]
+            Path,
+            tuple[
+                CodingWorkspaceDTO,
+                tuple[tuple[int, int], tuple[int, int]],
+                tuple[int, int, int],
+                str,
+                tuple[int, int],
+            ],
         ] = {}
         self._capture_locks: dict[Path, threading.Lock] = {}
+        self._retained_workspaces: set[Path] = set()
+        self._removed_workspaces: set[tuple[str, str, Path, str]] = set()
+        self._pending_branch_cleanup: dict[
+            Path, tuple[bool, str, tuple[int, int, int]]
+        ] = {}
         for repository_id, path in repositories.items():
             if _SAFE_ID.fullmatch(repository_id) is None:
                 raise ValueError("Repository id contains unsafe characters")
@@ -135,6 +147,9 @@ class GitWorktreeAllocator:
                 self._allocated_workspaces[path] = (
                     workspace.model_copy(deep=True),
                     self._workspace_identity(path),
+                    self._branch_ref_identity(repository, branch),
+                    base_commit,
+                    self._branch_reflog_identity(repository, branch),
                 )
                 self._capture_locks[path] = threading.Lock()
                 return workspace
@@ -158,9 +173,299 @@ class GitWorktreeAllocator:
         if allocated is None or allocated[0] != workspace:
             raise ValueError("Coding workspace was not allocated by this allocator")
         with self._capture_locks[path]:
-            if allocated[1] != self._workspace_identity(path):
-                raise ValueError("Coding workspace identity changed")
+            self._validate_workspace_identity(workspace, allocated)
+            head_commit = self._git(path, "rev-parse", "HEAD")
+            branch_identity = self._validated_branch_ref_identity(
+                self._repositories[workspace.repository_id],
+                workspace.branch,
+                head_commit,
+            )
+            self._validate_branch_reflog(
+                self._repositories[workspace.repository_id],
+                workspace.branch,
+                expected_identity=allocated[4],
+                expected_oid=head_commit,
+            )
+            if head_commit == allocated[3] and branch_identity != allocated[2]:
+                raise ValueError("Coding workspace branch identity changed")
+            self._allocated_workspaces[path] = (
+                allocated[0],
+                allocated[1],
+                branch_identity,
+                head_commit,
+                allocated[4],
+            )
             return self._capture_locked(workspace, verification, artifact_paths)
+
+    def apply_workspace_action(
+        self,
+        *,
+        repository_id: str,
+        run_id: str,
+        branch: str,
+        action: str,
+    ) -> str:
+        if action not in {"cleanup", "discard", "retain"}:
+            raise ValueError("Workspace action is invalid")
+        workspace = next(
+            (
+                allocated[0]
+                for allocated in self._allocated_workspaces.values()
+                if (
+                    allocated[0].repository_id,
+                    allocated[0].run_id,
+                    allocated[0].branch,
+                )
+                == (repository_id, run_id, branch)
+            ),
+            None,
+        )
+        if workspace is None:
+            removed = next(
+                (
+                    key
+                    for key in self._removed_workspaces
+                    if (key[0], key[1], key[3]) == (repository_id, run_id, branch)
+                ),
+                None,
+            )
+            if removed is not None and action in {"cleanup", "discard"}:
+                return "already_removed"
+            raise ValueError("Coding workspace was not allocated by this allocator")
+        if action == "retain":
+            return self.retain(workspace)
+        return self.cleanup(workspace, discard=action == "discard")
+
+    @staticmethod
+    def _workspace_key(workspace: CodingWorkspaceDTO) -> tuple[str, str, Path, str]:
+        return (
+            workspace.repository_id,
+            workspace.run_id,
+            workspace.path.resolve(),
+            workspace.branch,
+        )
+
+    def retain(self, workspace: CodingWorkspaceDTO) -> str:
+        path = workspace.path.resolve()
+        allocated = self._allocated_workspaces.get(path)
+        if allocated is None or allocated[0] != workspace:
+            if self._workspace_key(workspace) in self._removed_workspaces:
+                raise ValueError("Coding workspace was already removed")
+            raise ValueError("Coding workspace was not allocated by this allocator")
+        with self._capture_locks[path]:
+            self._validate_workspace_identity(workspace, allocated)
+            repository = self._repositories[workspace.repository_id]
+            head_commit = self._git(path, "rev-parse", "HEAD")
+            branch_identity = self._validated_branch_ref_identity(
+                repository,
+                workspace.branch,
+                head_commit,
+            )
+            self._validate_branch_reflog(
+                repository,
+                workspace.branch,
+                expected_identity=allocated[4],
+                expected_oid=head_commit,
+            )
+            if head_commit == allocated[3] and branch_identity != allocated[2]:
+                raise ValueError("Coding workspace branch identity changed")
+            self._allocated_workspaces[path] = (
+                allocated[0], allocated[1], branch_identity, head_commit, allocated[4]
+            )
+            if path in self._retained_workspaces:
+                return "already_retained"
+            self._retained_workspaces.add(path)
+            return "retained"
+
+    def cleanup(self, workspace: CodingWorkspaceDTO, *, discard: bool = False) -> str:
+        key = self._workspace_key(workspace)
+        if key in self._removed_workspaces:
+            return "already_removed"
+        path = workspace.path.resolve()
+        allocated = self._allocated_workspaces.get(path)
+        if allocated is None or allocated[0] != workspace:
+            raise ValueError("Coding workspace was not allocated by this allocator")
+        repository = self._repositories[workspace.repository_id]
+        with self._capture_locks[path]:
+            pending = self._pending_branch_cleanup.get(path)
+            if pending is not None:
+                pending_discard, authorized_head, branch_identity = pending
+                if pending_discard != discard:
+                    raise ValueError("Coding workspace cleanup mode changed")
+                self._finish_branch_cleanup(
+                    workspace,
+                    repository,
+                    discard=discard,
+                    key=key,
+                    authorized_head=authorized_head,
+                    branch_identity=branch_identity,
+                )
+                return "removed"
+            self._validate_workspace_identity(workspace, allocated)
+            if path in self._retained_workspaces:
+                raise ValueError("Coding workspace is retained")
+            if self._git(path, "status", "--porcelain=v1", "-z", preserve=True):
+                raise ValueError("Coding workspace has uncommitted changes")
+            head_commit = self._git(path, "rev-parse", "HEAD")
+            branch_identity = self._validated_branch_ref_identity(
+                repository, workspace.branch, head_commit
+            )
+            self._validate_branch_reflog(
+                repository,
+                workspace.branch,
+                expected_identity=allocated[4],
+                expected_oid=head_commit,
+            )
+            if head_commit == allocated[3] and branch_identity != allocated[2]:
+                raise ValueError("Coding workspace branch identity changed")
+            if not discard and not self._is_ancestor(
+                repository, head_commit, self._git(repository, "rev-parse", "HEAD")
+            ):
+                raise ValueError("Coding workspace branch is not merged")
+            self._git(repository, "worktree", "remove", str(path))
+            self._pending_branch_cleanup[path] = (
+                discard,
+                head_commit,
+                branch_identity,
+            )
+            self._finish_branch_cleanup(
+                workspace,
+                repository,
+                discard=discard,
+                key=key,
+                authorized_head=head_commit,
+                branch_identity=branch_identity,
+            )
+            return "removed"
+
+    def _finish_branch_cleanup(
+        self,
+        workspace: CodingWorkspaceDTO,
+        repository: Path,
+        *,
+        discard: bool,
+        key: tuple[str, str, Path, str],
+        authorized_head: str,
+        branch_identity: tuple[int, int, int],
+    ) -> None:
+        path = workspace.path.resolve()
+        if self._repository_identity(repository) != self._repository_identities[
+            workspace.repository_id
+        ]:
+            raise ValueError("Authorized repository identity changed")
+        if self._git(repository, "rev-parse", workspace.branch) != authorized_head:
+            raise ValueError("Coding workspace branch changed")
+        if self._branch_ref_identity(repository, workspace.branch) != branch_identity:
+            raise ValueError("Coding workspace branch identity changed")
+        self._git(repository, "branch", "-D" if discard else "-d", workspace.branch)
+        self._pending_branch_cleanup.pop(path, None)
+        self._allocated_workspaces.pop(path, None)
+        self._removed_workspaces.add(key)
+        self._capture_locks.pop(path, None)
+
+    @staticmethod
+    def _branch_ref_path(repository: Path, branch: str) -> Path:
+        return repository / ".git" / "refs" / "heads" / Path(*branch.split("/"))
+
+    @classmethod
+    def _branch_ref_identity(
+        cls, repository: Path, branch: str
+    ) -> tuple[int, int, int]:
+        try:
+            stat = cls._branch_ref_path(repository, branch).lstat()
+        except OSError as exc:
+            raise ValueError("Coding workspace branch identity changed") from exc
+        return stat.st_dev, stat.st_ino, stat.st_ctime_ns
+
+    @staticmethod
+    def _branch_reflog_path(repository: Path, branch: str) -> Path:
+        return repository / ".git" / "logs" / "refs" / "heads" / Path(
+            *branch.split("/")
+        )
+
+    @classmethod
+    def _branch_reflog_identity(
+        cls, repository: Path, branch: str
+    ) -> tuple[int, int]:
+        try:
+            stat = cls._branch_reflog_path(repository, branch).lstat()
+        except OSError as exc:
+            raise ValueError("Coding workspace branch provenance changed") from exc
+        return stat.st_dev, stat.st_ino
+
+    @classmethod
+    def _validate_branch_reflog(
+        cls,
+        repository: Path,
+        branch: str,
+        *,
+        expected_identity: tuple[int, int],
+        expected_oid: str,
+    ) -> None:
+        if cls._branch_reflog_identity(repository, branch) != expected_identity:
+            raise ValueError("Coding workspace branch provenance changed")
+        try:
+            last_line = cls._branch_reflog_path(repository, branch).read_bytes().splitlines()[-1]
+            new_oid = last_line.split(b" ", 2)[1].decode("ascii")
+        except (OSError, IndexError, UnicodeDecodeError) as exc:
+            raise ValueError("Coding workspace branch provenance changed") from exc
+        if re.fullmatch(r"[0-9a-f]{40}", new_oid) is None or new_oid != expected_oid:
+            raise ValueError("Coding workspace branch provenance changed")
+
+    def _validate_workspace_identity(
+        self,
+        workspace: CodingWorkspaceDTO,
+        allocated: tuple[
+            CodingWorkspaceDTO,
+            tuple[tuple[int, int], tuple[int, int]],
+            tuple[int, int, int],
+            str,
+            tuple[int, int],
+        ],
+    ) -> None:
+        repository = self._repositories.get(workspace.repository_id)
+        if repository is None or self._repository_identity(repository) != self._repository_identities[
+            workspace.repository_id
+        ]:
+            raise ValueError("Authorized repository identity changed")
+        path = workspace.path.resolve()
+        path_stat = path.stat()
+        if allocated[1][0] != (path_stat.st_dev, path_stat.st_ino):
+            raise ValueError("Coding workspace identity changed")
+        if allocated[1] != self._workspace_identity(path):
+            raise ValueError("Coding workspace identity changed")
+        if self._git(path, "branch", "--show-current") != workspace.branch:
+            raise ValueError("Coding workspace branch changed")
+
+    def _validated_branch_ref_identity(
+        self, repository: Path, branch: str, expected_oid: str
+    ) -> tuple[int, int, int]:
+        before = self._branch_ref_identity(repository, branch)
+        if self._git(repository, "rev-parse", branch) != expected_oid:
+            raise ValueError("Coding workspace branch changed")
+        after = self._branch_ref_identity(repository, branch)
+        if after != before:
+            raise ValueError("Coding workspace branch identity changed")
+        return after
+
+    @staticmethod
+    def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
+        try:
+            result = subprocess.run(
+                [
+                    "git", "-C", str(repository), "merge-base", "--is-ancestor",
+                    ancestor, descendant,
+                ],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_GIT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("git command timed out") from exc
+        if result.returncode not in {0, 1}:
+            raise ValueError("Could not verify whether coding workspace is merged")
+        return result.returncode == 0
 
     def _capture_locked(
         self,

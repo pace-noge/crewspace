@@ -44,6 +44,27 @@ export AGENT_CODING_WORKTREE_ROOT="$HOME/.local/share/crewspace-agent/worktrees"
 The repository mapping is configured only on this execution host. Crewspace sends
 opaque repository IDs and never receives or chooses these local filesystem paths.
 
+The same private mapping owns workspace lifecycle operations. A
+`coding_workspace_action` received on the authenticated socket contains only
+repository ID, run ID, branch, and one of
+`retain`, `cleanup`, or `discard`:
+
+- `retain` is idempotent and prevents later cleanup or discard.
+- `cleanup` removes only a clean workspace whose branch is already merged.
+- `discard` may remove clean unmerged work only after explicit control-plane
+  approval, but never removes a retained workspace.
+- repeated successful removal returns `already_removed`.
+
+Those lifecycle guarantees are process-local in this reference implementation.
+Allocator ownership, retained markers, partial-cleanup state, and removal tombstones
+are held in memory and are lost when the agent restarts. Cross-restart reconstruction
+and durable idempotence are deferred to M6.3; operators must not treat a restart as
+permission to discover or delete an unowned workspace.
+
+Before every removal the example revalidates repository identity, allocator
+ownership, workspace device/inode identity, current branch, and tracked/untracked
+cleanliness. Local paths never appear in lifecycle result frames.
+
 ## Run
 
 ```bash
@@ -72,6 +93,9 @@ progress/reply frame so captured actions cannot be replayed after reconnect.
   `docs/AGENT_PROTOCOL.md` §3.
 - Receives `chat` frames the app pushes on `@mention`; sends signed
   `agent_progress` frames followed by a signed `reply`.
+- Receives path-free `coding_run` and `coding_workspace_action` frames; performs
+  Git/worktree operations on this execution host and returns signed correlated
+  change-set or lifecycle result/failure frames.
 - Signs every outbound frame (Ed25519, canonical JSON) so the app verifies it
   and records the action under the agent's identity.
 

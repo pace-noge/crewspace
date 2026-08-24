@@ -164,6 +164,18 @@ async def agent_ws(websocket: WebSocket):
                     frame.get("request_id", ""),
                     frame.get("error"),
                 )
+            elif ftype in {
+                "coding_workspace_action_result",
+                "coding_workspace_action_failed",
+            }:
+                if not agent_manager.supports(agent_id, "coding_workspace"):
+                    await websocket.send_json(
+                        {"type": "error", "error": "unsupported capability: coding_workspace"}
+                    )
+                    continue
+                _handle_workspace_action_frame(
+                    agent_manager, agent_id, websocket, frame
+                )
             # Unknown frame types are ignored.
     except WebSocketDisconnect:
         agent_manager.disconnect(agent_id, websocket)
@@ -233,6 +245,21 @@ async def _handle_coding_change_set(
         return error
     manager.complete_coding_change_set(agent_id, request_id, change_set)
     return None
+
+
+def _handle_workspace_action_frame(
+    manager, agent_id: str, websocket: WebSocket, frame: dict
+) -> bool:
+    request_id = frame.get("request_id", "")
+    if frame.get("type") == "coding_workspace_action_result":
+        return manager.deliver_workspace_action_result(
+            agent_id, request_id, frame.get("result"), websocket
+        )
+    if frame.get("type") == "coding_workspace_action_failed":
+        return manager.deliver_workspace_action_failure(
+            agent_id, request_id, frame.get("error"), websocket
+        )
+    return False
 
 
 def _verify_frame(pubkey: str, frame: dict) -> bool:
