@@ -83,3 +83,58 @@ async def dispatch_coding_run(
         request_id=request_id,
     )
     return dispatched
+
+
+async def cancel_coding_run(
+    uow: UnitOfWork,
+    *,
+    run_id: str,
+    requested_by: str,
+    agent_manager=None,
+) -> bool:
+    """Fail-closed cancel of a durable coding run.
+
+    Re-checks the run exists, transitions it to ``cancelled`` only from a
+    cancellable state (queued/running) via the contracted CAS transition, records
+    finished_at, and then dispatches a cancellation command to the agent over the
+    authenticated socket. Idempotent: an already-terminal run returns False and no
+    frame is dispatched. Unknown runs raise KeyError (the endpoint maps this to
+    404). Authorization is enforced by the caller (team membership) before this
+    boundary is reached.
+    """
+    from ..api.connection import AgentConnectionManager
+    from ..api.connection import agent_manager as default_manager
+
+    run = await uow.coding_runs.get(run_id)
+    if run is None:
+        raise KeyError(run_id)
+
+    # Fail-closed: only a live run (queued/running) can be cancelled. An already
+    # terminal run is not re-transitioned and no frame is dispatched.
+    if run.status not in ("queued", "running"):
+        return False
+
+    # Fail-closed ordering: dispatch the cancellation command to the agent BEFORE
+    # we persist the terminal state. If the agent cannot receive it (disconnected
+    # or lacks the capability), send raises and we do NOT mark the run cancelled
+    # for a subprocess we never asked to stop.
+    manager: AgentConnectionManager = agent_manager or default_manager
+    await manager.send_coding_cancel(
+        run.agent_id,
+        run_id=run.id,
+        request_id=run.request_id,
+    )
+
+    now = dt.datetime.now(dt.timezone.utc)
+    cancelled = await uow.coding_runs.transition(
+        run_id,
+        expected=run.status,
+        status="cancelled",
+        updated_at=now,
+        started_at=run.started_at,
+        finished_at=now,
+    )
+    if not cancelled:
+        return False
+    await uow.commit()
+    return True

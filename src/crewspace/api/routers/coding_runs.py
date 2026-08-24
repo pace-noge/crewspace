@@ -12,7 +12,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 
 from ...application.access import can_manage_team, is_team_member
-from ...application.coding_runs import dispatch_coding_run
+from ...application.coding_runs import cancel_coding_run, dispatch_coding_run
 from ..deps import CurrentUserDep, UowDep
 
 router = APIRouter(prefix="/api/coding/runs", tags=["coding-runs"])
@@ -78,3 +78,28 @@ async def get_coding_run(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "recent_output": run.recent_output,
     }
+
+
+@router.post("/{run_id}/cancel")
+async def cancel_coding_run_endpoint(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict:
+    run = await uow.coding_runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Coding run not found")
+    if not await is_team_member(user, run.team_id, uow):
+        raise HTTPException(status_code=403, detail="Not authorized for this team")
+    try:
+        cancelled = await cancel_coding_run(
+            uow, run_id=run_id, requested_by=user["id"]
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Coding run not found")
+    except RuntimeError as exc:
+        # The agent could not be asked to stop (disconnected or lacks the
+        # cancellation capability). The run is NOT marked cancelled, since we
+        # never delivered the stop command to a live subprocess.
+        raise HTTPException(status_code=409, detail=f"cancel failed: {exc}")
+    if not cancelled:
+        # Already terminal; report current status without re-dispatching a frame.
+        current = await uow.coding_runs.get(run_id)
+        return {"run_id": run_id, "status": current.status if current else "unknown"}
+    return {"run_id": run_id, "status": "cancelled"}

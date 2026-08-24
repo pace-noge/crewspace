@@ -461,6 +461,28 @@ class AgentConnectionManager:
         """Called by the agent WS loop when an agent sends a correlated reply."""
         return self._resolve(agent_id, message_id, value)
 
+    async def send_coding_cancel(
+        self,
+        agent_id: str,
+        *,
+        run_id: str,
+        request_id: str | None = None,
+    ) -> Any:
+        """Ask the agent to stop a running coding run (idempotent at the agent)."""
+        if not self.supports(agent_id, "cancellation"):
+            raise RuntimeError("unsupported capability: cancellation")
+        if _SAFE_CODING_ID.fullmatch(run_id) is None:
+            raise ValueError("run id contains unsafe characters")
+        await self.send(
+            agent_id,
+            {
+                "type": "coding_run_cancel",
+                "request_id": request_id,
+                "run_id": run_id,
+            },
+        )
+        return {"type": "coding_run_ack"}
+
     async def send_coding_run(
         self,
         agent_id: str,

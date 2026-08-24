@@ -114,11 +114,15 @@ async def _run_claude(
     on_progress: Callable[[str], Awaitable[None]] | None = None,
     *,
     cwd: Path | None = None,
+    run_id: str | None = None,
+    active_procs: dict[str, asyncio.subprocess.Process] | None = None,
 ) -> str:
     """Run `claude <args> <prompt>` and return its combined stdout.
 
-    Runs to completion; the caller is responsible for keeping the WebSocket open
-    until this returns (the app waits up to CREWSPACE_AGENT_REPLY_TIMEOUT).
+    Streams progress via on_progress. When run_id/active_procs are supplied the
+    subprocess is registered (and cleared on completion) so a concurrent
+    coding_run_cancel can terminate it mid-run. The agent loop runs this as a
+    concurrent task and keeps the WebSocket frame pump alive meanwhile.
     """
     bin_path = os.environ.get("CLAUDE_BIN", "claude")
     extra_args = os.environ.get("CLAUDE_ARGS", "").split()
@@ -130,6 +134,8 @@ async def _run_claude(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
+    if run_id is not None and active_procs is not None:
+        active_procs[run_id] = proc
     out_chunks: list[str] = []
     assert proc.stdout is not None
     async for line in proc.stdout:
@@ -140,6 +146,8 @@ async def _run_claude(
         if on_progress is not None:
             await on_progress(text)
     await proc.wait()
+    if run_id is not None and active_procs is not None:
+        active_procs.pop(run_id, None)
     full = "".join(out_chunks).strip()
     if proc.returncode != 0:
         full = f"(claude exited {proc.returncode})\n{full}"
@@ -167,6 +175,43 @@ def _workspace_action_response(allocator: GitWorktreeAllocator, frame: dict) -> 
     }
 
 
+
+
+async def _handle_coding_run_cancel(
+    active_procs: dict[str, asyncio.subprocess.Process],
+    frame: dict,
+    signer: "Signer",
+    send,
+) -> None:
+    """Terminate the subprocess for a run and acknowledge cancellation.
+
+    Idempotent: if no live subprocess is tracked for the run id, we still send
+    the signed acknowledgement so the control plane's cancel is always answered.
+    """
+    run_id = frame.get("run_id", "")
+    proc = active_procs.get(run_id)
+    if proc is not None and proc.returncode is None:
+        try:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=10.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+        except ProcessLookupError:
+            pass
+    ack = signer.sign_frame(
+        {
+            "type": "coding_run_ack",
+            "request_id": frame.get("request_id", ""),
+            "run_id": run_id,
+            "status": "cancelled",
+        }
+    )
+    await send(ack)
+    print(f"[agent] cancelled run {run_id}", flush=True)
+
+
 async def main() -> None:
     agent_id = os.environ["AGENT_ID"]
     ws_url = os.environ["AGENT_WS_URL"]
@@ -186,6 +231,8 @@ async def main() -> None:
         ),
     )
 
+    active_procs: dict[str, asyncio.subprocess.Process] = {}
+
     async with websockets.connect(
         ws_url,
         additional_headers={"Authorization": "Bearer " + signer.connect_claim(agent_id)},
@@ -196,7 +243,7 @@ async def main() -> None:
                 "type": "hello",
                 "protocol_version": 1,
                 "agent_version": "crewspace-claude-code/1.0",
-                "capabilities": ["progress", "coding_workspace"],
+                "capabilities": ["progress", "coding_workspace", "cancellation"],
                 "max_concurrency": 1,
             }
         )
@@ -205,6 +252,54 @@ async def main() -> None:
         if acknowledged.get("type") != "hello_ack":
             raise RuntimeError(f"capability negotiation failed: {acknowledged}")
         signer.use_session(acknowledged["session_id"])
+
+        send_lock = asyncio.Lock()
+
+        async def send(frame: dict) -> None:
+            async with send_lock:
+                await ws.send(json.dumps(frame))
+
+        running_tasks: dict[str, asyncio.Task] = {}
+
+        async def finish_coding_run(task: asyncio.Task, request_id: str, workspace, run_id: str) -> None:
+            try:
+                result = task.result()
+                change_set = await asyncio.to_thread(
+                    allocator.capture,
+                    workspace,
+                    verification=[
+                        VerificationResultDTO(
+                            name="claude-code",
+                            status=(
+                                "failed"
+                                if result.startswith("(claude exited")
+                                else "passed"
+                            ),
+                            summary=result[-2000:],
+                        )
+                    ],
+                    artifact_paths=[],
+                )
+                response = signer.sign_frame(
+                    {
+                        "type": "coding_change_set",
+                        "request_id": request_id,
+                        "change_set": change_set.model_dump(mode="json"),
+                    }
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                response = signer.sign_frame(
+                    {
+                        "type": "coding_run_failed",
+                        "request_id": request_id,
+                        "error": f"{type(exc).__name__}: {exc}"[-4096:],
+                    }
+                )
+            running_tasks.pop(run_id, None)
+            await send(response)
+
         async for raw in ws:
             frame = json.loads(raw)
             ftype = frame.get("type")
@@ -215,7 +310,6 @@ async def main() -> None:
                 message_id = frame["message_id"]
                 print(f"[agent] prompt: {text}", flush=True)
 
-
                 async def send_progress(delta: str) -> None:
                     progress = signer.sign_frame(
                         {
@@ -224,7 +318,7 @@ async def main() -> None:
                             "text": delta,
                         }
                     )
-                    await ws.send(json.dumps(progress))
+                    await send(progress)
 
                 try:
                     result = await _run_claude(text, on_progress=send_progress)
@@ -233,53 +327,49 @@ async def main() -> None:
                 reply = signer.sign_frame(
                     {"type": "reply", "message_id": message_id, "text": result}
                 )
-                await ws.send(json.dumps(reply))
+                await send(reply)
 
                 print("[agent] replied", flush=True)
 
             elif ftype == "coding_run":
                 request_id = frame["request_id"]
+                run_id = frame["run_id"]
                 try:
                     workspace = await asyncio.to_thread(
                         allocator.allocate,
                         repository_id=frame["repository_id"],
-                        run_id=frame["run_id"],
-                    )
-                    result = await _run_claude(
-                        frame["instruction"], cwd=workspace.path
-                    )
-                    change_set = await asyncio.to_thread(
-                        allocator.capture,
-                        workspace,
-                        verification=[
-                            VerificationResultDTO(
-                                name="claude-code",
-                                status=(
-                                    "failed"
-                                    if result.startswith("(claude exited")
-                                    else "passed"
-                                ),
-                                summary=result[-2000:],
-                            )
-                        ],
-                        artifact_paths=[],
-                    )
-                    response = signer.sign_frame(
-                        {
-                            "type": "coding_change_set",
-                            "request_id": request_id,
-                            "change_set": change_set.model_dump(mode="json"),
-                        }
+                        run_id=run_id,
                     )
                 except Exception as exc:
-                    response = signer.sign_frame(
-                        {
-                            "type": "coding_run_failed",
-                            "request_id": request_id,
-                            "error": f"{type(exc).__name__}: {exc}"[-4096:],
-                        }
+                    await send(
+                        signer.sign_frame(
+                            {
+                                "type": "coding_run_failed",
+                                "request_id": request_id,
+                                "error": f"{type(exc).__name__}: {exc}"[-4096:],
+                            }
+                        )
                     )
-                await ws.send(json.dumps(response))
+                    continue
+                # Run the subprocess as a concurrent task so the frame pump keeps
+                # reading and a coding_run_cancel can terminate it mid-run.
+                task = asyncio.create_task(
+                    _run_claude(
+                        frame["instruction"],
+                        cwd=workspace.path,
+                        run_id=run_id,
+                        active_procs=active_procs,
+                    )
+                )
+                running_tasks[run_id] = task
+                task.add_done_callback(
+                    lambda t, rid=request_id, ws_=workspace, rmid=run_id: asyncio.create_task(
+                        finish_coding_run(t, rid, ws_, rmid)
+                    )
+                )
+
+            elif ftype == "coding_run_cancel":
+                await _handle_coding_run_cancel(active_procs, frame, signer, send)
 
             elif ftype == "coding_workspace_action":
                 try:
@@ -292,7 +382,7 @@ async def main() -> None:
                         "request_id": frame.get("request_id", ""),
                         "error": f"{type(exc).__name__}: {exc}"[-4096:],
                     }
-                await ws.send(json.dumps(signer.sign_frame(response)))
+                await send(signer.sign_frame(response))
 
             elif ftype == "card_created":
                 # Fire-and-forget: a card was created elsewhere. Ignore for this bridge.

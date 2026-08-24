@@ -1367,8 +1367,16 @@ class _FakeManager:
     def __init__(self):
         self.sent = []
 
+    def __init__(self):
+        self.sent = []
+        self.cancel_sent = []
+
     async def send_coding_run(self, agent_id, *, repository_id, run_id, instruction, timeout, request_id=None):
         self.sent.append((agent_id, repository_id, run_id, instruction, request_id))
+        return {"type": "coding_run_ack"}
+
+    async def send_coding_cancel(self, agent_id, *, run_id, request_id=None):
+        self.cancel_sent.append((agent_id, run_id))
         return {"type": "coding_run_ack"}
 
 
@@ -1781,3 +1789,121 @@ def test_change_set_index_lists_only_manageable_team_records(app):
     assert "repo_index" in page.text
     assert "run_index" in page.text
     assert "Captured" in page.text
+
+
+@pytest.mark.asyncio
+async def test_cancel_coding_run_transitions_to_cancelled_and_is_idempotent(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as seed:
+        await seed.coding_repositories.create(CodingRepository(
+            id="repo_cancel", name="Cancel", default_branch="master",
+            created_by="user_bilal", created_at=now,
+        ))
+        await seed.coding_repositories.grant_team(TeamRepositoryAccess(
+            team_id="team_acme", repository_id="repo_cancel",
+            granted_by="user_bilal", granted_at=now,
+        ))
+        await seed.commit()
+
+    fake = _FakeManager()
+    from crewspace.application.coding_runs import cancel_coding_run
+
+    async with app.state.db.uow() as uow:
+        await dispatch_coding_run(
+            uow, agent_id="agent_planner", team_id="team_acme",
+            repository_id="repo_cancel", run_id="run_cancel",
+            instruction="Build", requested_by="user_bilal", agent_manager=fake,
+        )
+
+    async with app.state.db.uow() as uow:
+        ok = await cancel_coding_run(
+            uow, run_id="run_cancel", requested_by="user_bilal", agent_manager=fake,
+        )
+    assert ok is True
+    assert fake.cancel_sent == [("agent_planner", "run_cancel")]
+
+    async with app.state.db.uow() as uow:
+        run = await uow.coding_runs.get("run_cancel")
+    assert run.status == "cancelled"
+    assert run.finished_at is not None
+
+    # Idempotent: a second cancel must not re-transition or re-dispatch a frame.
+    async with app.state.db.uow() as uow:
+        again = await cancel_coding_run(
+            uow, run_id="run_cancel", requested_by="user_bilal", agent_manager=fake,
+        )
+    assert again is False
+    assert fake.cancel_sent == [("agent_planner", "run_cancel")]
+
+
+@pytest.mark.asyncio
+async def test_cancel_coding_run_rejects_unknown_run(app):
+    from crewspace.application.coding_runs import cancel_coding_run
+
+    fake = _FakeManager()
+    async with app.state.db.uow() as uow:
+        with pytest.raises(KeyError):
+            await cancel_coding_run(
+                uow, run_id="run_missing", requested_by="user_bilal", agent_manager=fake,
+            )
+    assert fake.cancel_sent == []
+
+
+def test_authenticated_http_cancel_coding_run(app):
+    import asyncio
+    from starlette.testclient import TestClient
+
+    from crewspace.api.connection import agent_manager
+
+    now = dt.datetime.now(dt.timezone.utc)
+
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.create(CodingRepository(
+                id="repo_cancel_http", name="CancelHTTP", default_branch="master",
+                created_by="user_bilal", created_at=now,
+            ))
+            await uow.coding_repositories.grant_team(TeamRepositoryAccess(
+                team_id="team_acme", repository_id="repo_cancel_http",
+                granted_by="user_bilal", granted_at=now,
+            ))
+            await uow.commit()
+
+    asyncio.run(arrange())
+
+    original_cancel = agent_manager.send_coding_cancel
+    original_run = agent_manager.send_coding_run
+
+    async def fake_cancel(agent_id, *, run_id, request_id=None):
+        return {"type": "coding_run_ack"}
+
+    async def fake_run(agent_id, *, repository_id, run_id, instruction, timeout, request_id=None):
+        return {"type": "coding_run_ack"}
+
+    agent_manager.send_coding_cancel = fake_cancel
+    agent_manager.send_coding_run = fake_run
+    try:
+        client = TestClient(app)
+        assert client.post("/auth/login", data={"username": "Bilal", "password": "admin123"}).status_code == 200
+        created = client.post(
+            "/api/coding/runs",
+            json={
+                "repository_id": "repo_cancel_http",
+                "agent_id": "agent_planner",
+                "instruction": "Build",
+                "team_id": "team_acme",
+            },
+            headers={"Origin": "http://testserver"},
+        )
+        assert created.status_code == 200, created.text
+        run_id = created.json()["run_id"]
+
+        response = client.post(f"/api/coding/runs/{run_id}/cancel", headers={"Origin": "http://testserver"})
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "cancelled"
+
+        missing = client.post("/api/coding/runs/does_not_exist/cancel", headers={"Origin": "http://testserver"})
+        assert missing.status_code == 404
+    finally:
+        agent_manager.send_coding_cancel = original_cancel
+        agent_manager.send_coding_run = original_run
