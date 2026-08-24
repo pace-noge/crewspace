@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from crewspace.infrastructure.db import Database
 
@@ -300,6 +301,32 @@ def test_chat_client_renders_remote_agent_progress_incrementally(client):
     assert 'row.dataset.progressId=messageId' in response.text
     assert 'data.type==="agent_progress_complete"' in response.text
     assert "clearAgentProgress(data.message_id)" in response.text
+
+
+def test_layout_updates_agent_profile_from_presence(client):
+    response = client.get("/channels/chan_general")
+
+    assert response.status_code == 200
+    assert 'data-agent-profile-id="agent_planner"' in response.text
+    assert "patchAgentProfile(data.agent_id, data.profile)" in response.text
+
+    management = client.get("/management")
+    assert management.status_code == 200
+    assert 'data-agent-profile-id="agent_planner"' in management.text
+    assert 'data-agent-capabilities-id="agent_planner"' in management.text
+    assert "container.replaceChildren()" in response.text
+
+
+def test_claude_example_negotiates_server_managed_chat_capacity():
+    source = Path("examples/claude_code_agent.py").read_text()
+
+    assert '"type": "hello"' in source
+    assert '"protocol_version": 1' in source
+    assert '"max_concurrency": 1' in source
+    assert '"type": "agent_activity"' not in source
+    assert "use_session" in source
+    assert 'f["session_id"]' in source
+    assert 'f["seq"]' in source
 
 
 def test_team_leader_can_create_workspace_and_channel(client):

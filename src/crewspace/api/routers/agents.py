@@ -50,15 +50,49 @@ async def agent_ws(websocket: WebSocket):
         while True:
             frame = await websocket.receive_json()
             ftype = frame.get("type")
+            if not agent_manager.is_active_socket(agent_id, websocket):
+                await websocket.send_json(
+                    {"type": "error", "error": "stale connection"}
+                )
+                continue
             # Every action must be signed by the agent; verify before applying.
             if not _verify_frame(pubkey, frame):
                 await websocket.send_json({"type": "error", "error": "bad signature"})
+                continue
+            if ftype != "hello" and not agent_manager.validate_frame_sequence(
+                agent_id, websocket, frame
+            ):
+                await websocket.send_json(
+                    {"type": "error", "error": "invalid or replayed sequence"}
+                )
                 continue
             if ftype == "reply":
                 agent_manager.deliver_reply(
                     agent_id, frame.get("message_id", ""), frame.get("text", "")
                 )
+            elif ftype == "hello":
+                try:
+                    profile = agent_manager.negotiate_capabilities(
+                        agent_id, websocket, frame
+                    )
+                except ValueError as exc:
+                    await websocket.send_json({"type": "error", "error": str(exc)})
+                    continue
+                await websocket.send_json(
+                    {
+                        "type": "hello_ack",
+                        "protocol_version": profile["protocol_version"],
+                        "capabilities": profile["capabilities"],
+                        "max_concurrency": profile["max_concurrency"],
+                        "session_id": profile["session_id"],
+                    }
+                )
             elif ftype == "agent_progress":
+                if not agent_manager.supports(agent_id, "progress"):
+                    await websocket.send_json(
+                        {"type": "error", "error": "unsupported capability: progress"}
+                    )
+                    continue
                 text = frame.get("text", "")
                 if not isinstance(text, str) or not text or len(text) > 16_384:
                     await websocket.send_json(
@@ -69,7 +103,36 @@ async def agent_ws(websocket: WebSocket):
                     agent_id, frame.get("message_id", ""), text
                 )
             elif ftype == "tool":
+                if not agent_manager.supports(agent_id, "tools"):
+                    await websocket.send_json(
+                        {"type": "error", "error": "unsupported capability: tools"}
+                    )
+                    continue
                 await _run_tool(websocket, registry, agent_id, frame)
+            elif ftype == "agent_activity":
+                profile = agent_manager.capability_profile(agent_id)
+                if profile is None or profile["legacy"]:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error": "unsupported capability: agent_activity",
+                        }
+                    )
+                    continue
+                try:
+                    profile = agent_manager.update_activity(
+                        agent_id, websocket, frame.get("active_runs")
+                    )
+                except ValueError as exc:
+                    await websocket.send_json({"type": "error", "error": str(exc)})
+                    continue
+                await websocket.send_json(
+                    {
+                        "type": "agent_activity_ack",
+                        "active_runs": profile["active_runs"],
+                        "max_concurrency": profile["max_concurrency"],
+                    }
+                )
             # Unknown frame types are ignored.
     except WebSocketDisconnect:
         agent_manager.disconnect(agent_id, websocket)

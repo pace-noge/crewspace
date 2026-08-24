@@ -109,6 +109,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey,
 from cryptography.exceptions import InvalidSignature
 
 _CONNECT_TTL = 60  # seconds a connect claim is valid
+_used_connect_claims: dict[str, float] = {}
 
 
 def _b64u(b: bytes) -> str:
@@ -180,5 +181,12 @@ def verify_connect_claim(token: str, pub_b64u: str) -> str | None:
         return None
     if not verify_payload(pub_b64u, payload, sig):
         return None
+    now = time.time()
+    for used_token, expires_at in list(_used_connect_claims.items()):
+        if expires_at <= now:
+            _used_connect_claims.pop(used_token, None)
+    if token in _used_connect_claims:
+        return None
+    _used_connect_claims[token] = now + _CONNECT_TTL
     return payload["agent_id"]
 

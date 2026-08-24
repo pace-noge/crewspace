@@ -122,6 +122,8 @@
           <span class="dot dot-{{ st }}" data-agent-id="{{ agent.id }}" data-status="{{ st }}" title="{{ st }}"></span>
           <span class="ico">{{ agent.avatar or "🤖" }}</span>
           {{ agent.name }}
+          {% set profile = agent_profiles.get(agent.id) %}
+          <span class="badge" data-agent-profile-id="{{ agent.id }}"{% if not profile %} hidden{% endif %}>{% if profile %}{{ profile.active_runs }}/{{ profile.max_concurrency }} slots · {% if profile.legacy %}legacy{% else %}v{{ profile.protocol_version }}{% endif %}{% endif %}</span>
         </a>
         {% if current_user.role == "superadmin" %}<details class="action-menu sidebar-action"><summary aria-label="Agent actions">•••</summary><div class="menu-popover"><a href="/direct/{{ agent.id }}">Message agent</a>{% if agent.id != "agent_crewspace" %}<form method="post" action="/management/agents/{{ agent.id }}/archive"><button type="submit">Archive agent</button></form><a href="/management/agents/{{ agent.id }}/delete">Delete permanently</a>{% else %}<span class="locked">🔒 builtin · protected</span>{% endif %}</div></details>{% endif %}
       </div>
@@ -161,6 +163,32 @@
             dot.title = status;
           });
       }
+      function patchAgentProfile(agentId, profile) {
+        document
+          .querySelectorAll('[data-agent-profile-id="' + agentId + '"]')
+          .forEach((badge) => {
+            if (!profile) {
+              badge.hidden = true;
+              badge.textContent = "";
+              return;
+            }
+            badge.hidden = false;
+            const version = profile.legacy ? "legacy" : "v" + profile.protocol_version;
+            badge.textContent = profile.active_runs + "/" + profile.max_concurrency + " slots · " + version;
+            badge.title = profile.agent_version + " · " + (profile.capabilities || []).join(", ");
+          });
+        document
+          .querySelectorAll('[data-agent-capabilities-id="' + agentId + '"]')
+          .forEach((container) => {
+            container.replaceChildren();
+            (profile && profile.capabilities || []).forEach((capability) => {
+              const badge = document.createElement("span");
+              badge.className = "badge agent";
+              badge.textContent = capability;
+              container.append(badge);
+            });
+          });
+      }
       function connectPresence() {
         const protocol = location.protocol === "https:" ? "wss" : "ws";
         const ws = new WebSocket(
@@ -170,6 +198,7 @@
           const data = JSON.parse(event.data);
           if (data.type === "agent_presence") {
             patchAgentStatus(data.agent_id, data.status);
+            patchAgentProfile(data.agent_id, data.profile);
           }
         };
         ws.onclose = () => setTimeout(connectPresence, 1000);

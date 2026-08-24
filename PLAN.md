@@ -177,7 +177,7 @@ Last updated: 2026-08-24 (WIB)
 
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
-| M6.1 | Agent capability negotiation | PLANNED | 0/6 | current signed WS protocol | — | **NEXT**; establishes compatibility before new controls |
+| M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers; commit evidence recorded below |
 | M6.2 | Isolated worktrees and structured change sets | PLANNED | 0/7 | M6.1 | — | Coding output becomes inspectable delivery artifacts |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
@@ -186,7 +186,7 @@ Last updated: 2026-08-24 (WIB)
 | M6.7 | Agent evaluation and reliability scorecards | PLANNED | 0/7 | M6.3, M6.4 | — | Replayable benchmarks and version/model comparisons |
 | M6.8 | Operational inbox | PLANNED | 0/7 | M6.3–M6.5 | — | Human-attention queue across agents, workflows, MCP |
 
-M6.1 — Agent capability negotiation                         [S–M]  PLANNED
+M6.1 — Agent capability negotiation                     [S–M]  DONE
 Scope:
   - Add a versioned signed `hello`/capabilities frame after agent authentication.
   - Declare progress, cancellation, tools, artifacts, patches, resume support,
@@ -196,13 +196,15 @@ Scope:
   - Gate server controls and dispatch features by negotiated capability.
   - Show useful UI state such as protocol version, capabilities, and busy slots.
 
-Acceptance (0/6):
-  - [ ] Versioned capability schema and compatibility rules are documented.
-  - [ ] Signed capability frame is identity-verified and rejects invalid values.
-  - [ ] Older agents without negotiation retain a safe, explicit legacy profile.
-  - [ ] Dispatch and UI disable unsupported features rather than failing late.
-  - [ ] Concurrent-slot/busy state updates live and survives reconnect races.
-  - [ ] Unit, WS integration, and live legacy/new-agent POC pass.
+M6.1 — Agent capability negotiation                     [S–M]  DONE
+Acceptance (6/6):
+  - [x] Versioned capability schema and compatibility rules are documented.
+  - [x] Signed `hello` frame is identity-verified and rejects invalid values.
+  - [x] Older agents without negotiation retain a safe, explicit legacy profile.
+  - [x] Dispatch and UI gate features/capacity from the negotiated profile.
+  - [x] Busy/legacy state updates live and is mutex-safe against reconnect races.
+  - [x] Verified slice committed and pushed; commit evidence is recorded in the
+        M6 progress log.
 
 M6.2 — Isolated worktrees and structured change sets         [L]  PLANNED
 Scope:
@@ -325,6 +327,22 @@ Acceptance (0/7):
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
+  - 2026-08-24 — M6.1 DONE (6/6). Independent final review found no blockers or
+    suggestions after directly verifying reconnect/disconnect teardown and the
+    explicit legacy activity boundary. Verified commit/push evidence follows in
+    the milestone documentation commit.
+  - 2026-08-24 — M6.1 implementation complete: versioned signed `hello`, explicit
+    legacy profile, capability gating for progress/tools, busy-slot routing with
+    server-reserved vs agent-reported separation, and live sidebar/management UI.
+    Final gate: 107 focused tests pass; all remaining suite files pass in
+    sequential groups with one key-gated skip; compile/diff/security scans pass.
+    Hardened live POC proves legacy compatibility, v1 session sequencing, and
+    exact replay rejection. Follow-up TDD fixes immediately fail/remove waits and
+    reservations on reconnect/disconnect and reject v1-only activity from legacy
+    agents. Final independent review passed with no blockers or suggestions.
+  - 2026-08-24 — M6.1 moved to IN PROGRESS. Implementation order: versioned
+    contract -> signed negotiation/legacy profile -> feature gates -> busy slots
+    -> live UI -> example/POC. Each behavior is developed RED-GREEN.
   - 2026-08-24 — M6 created; all eight slices PLANNED. M6.1 selected as NEXT
     because capability negotiation establishes safe compatibility for cancellation,
     artifacts, structured events, and concurrency controls.

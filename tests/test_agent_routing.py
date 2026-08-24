@@ -93,6 +93,34 @@ async def test_connected_remote_agent_fires_on_engaged_before_reply(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_busy_remote_agent_does_not_receive_new_chat_work():
+    provider = MultiAgentProvider({}, mentions={"remote": "agent_remote"})
+    socket = FakeSocket()
+    await agent_manager.connect("agent_remote", cast(WebSocket, socket))
+    agent_manager.negotiate_capabilities(
+        "agent_remote",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "worker/1",
+            "capabilities": ["progress"],
+            "max_concurrency": 1,
+        },
+    )
+    agent_manager.update_activity("agent_remote", cast(WebSocket, socket), 1)
+    try:
+        agent_id, replies = await provider.on_chat_message(
+            "@remote please help", NullRunner()
+        )
+    finally:
+        agent_manager.disconnect("agent_remote", cast(WebSocket, socket))
+
+    assert agent_id == "agent_remote"
+    assert replies == ["⚠️ Agent agent_remote is busy (1/1 slots)."]
+    assert socket.sent == []
+
+
+@pytest.mark.asyncio
 async def test_offline_remote_agent_does_not_fire_on_engaged():
     provider = MultiAgentProvider(
         {}, mentions={"remote": "agent_remote"}

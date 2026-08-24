@@ -36,6 +36,11 @@ async def navigation_context(uow, current_user: dict) -> dict:
         )
         for agent in agents
     }
+    agent_profiles = {
+        agent["id"]: profile
+        for agent in agents
+        if (profile := agent_manager.capability_profile(agent["id"])) is not None
+    }
     return {
         "workspace_navigation": navigation,
         "direct_messages": await uow.channels.list_direct_for_member(current_user["id"]),
@@ -44,4 +49,5 @@ async def navigation_context(uow, current_user: dict) -> dict:
         "can_manage": current_user["role"] == "superadmin" or leads_team,
         "agents": agents,
         "agent_statuses": agent_statuses,
+        "agent_profiles": agent_profiles,
     }

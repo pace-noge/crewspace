@@ -67,6 +67,8 @@ def _canonical(obj: dict) -> bytes:
 class Signer:
     def __init__(self, priv_b64u: str) -> None:
         self._priv = Ed25519PrivateKey.from_private_bytes(_b64u_dec(priv_b64u))
+        self._session_id: str | None = None
+        self._seq = 0
 
     def sign(self, obj: dict) -> str:
         """Ed25519-sign canonical(obj); return base64url signature."""
@@ -84,8 +86,16 @@ class Signer:
     def sign_frame(self, frame: dict) -> dict:
         """Return a copy of the frame with a `sig` field attached."""
         f = dict(frame)
-        f["sig"] = self.sign({k: v for k, v in frame.items() if k != "sig"})
+        if self._session_id is not None and frame.get("type") != "hello":
+            self._seq += 1
+            f["session_id"] = self._session_id
+            f["seq"] = self._seq
+        f["sig"] = self.sign({k: v for k, v in f.items() if k != "sig"})
         return f
+
+    def use_session(self, session_id: str) -> None:
+        self._session_id = session_id
+        self._seq = 0
 
 
 # --------------------------------------------------------------------------
@@ -135,6 +145,20 @@ async def main() -> None:
         additional_headers={"Authorization": "Bearer " + signer.connect_claim(agent_id)},
     ) as ws:
         print(f"[agent] connected as {agent_id}", flush=True)
+        hello = signer.sign_frame(
+            {
+                "type": "hello",
+                "protocol_version": 1,
+                "agent_version": "crewspace-claude-code/1.0",
+                "capabilities": ["progress"],
+                "max_concurrency": 1,
+            }
+        )
+        await ws.send(json.dumps(hello))
+        acknowledged = json.loads(await ws.recv())
+        if acknowledged.get("type") != "hello_ack":
+            raise RuntimeError(f"capability negotiation failed: {acknowledged}")
+        signer.use_session(acknowledged["session_id"])
         async for raw in ws:
             frame = json.loads(raw)
             ftype = frame.get("type")
@@ -144,6 +168,7 @@ async def main() -> None:
                 text = frame["text"]
                 message_id = frame["message_id"]
                 print(f"[agent] prompt: {text}", flush=True)
+
 
                 async def send_progress(delta: str) -> None:
                     progress = signer.sign_frame(
@@ -163,6 +188,7 @@ async def main() -> None:
                     {"type": "reply", "message_id": message_id, "text": result}
                 )
                 await ws.send(json.dumps(reply))
+
                 print("[agent] replied", flush=True)
 
             elif ftype == "card_created":
@@ -171,6 +197,9 @@ async def main() -> None:
 
             elif ftype == "tool_result":
                 # We don't request app tools in this example; nothing to do.
+                pass
+
+            elif ftype in {"hello_ack", "agent_activity_ack"}:
                 pass
 
 

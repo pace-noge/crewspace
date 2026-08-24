@@ -132,6 +132,9 @@
             <span>{{ agent.avatar or "🤖" }} {{ agent.name }}{% if agent.uses_app_llm %} <span class="badge agent">app-llm</span>{% endif %}</span>
             <span class="inline-form">
               <span class="badge">{% if agent_statuses.get(agent.id) == 'connected' %}🟢 connected{% elif agent_statuses.get(agent.id) == 'local' %}🔵 builtin (app-llm){% else %}🔴 disconnected{% endif %}</span>
+              {% set profile = agent_profiles.get(agent.id) %}
+              <span class="badge" data-agent-profile-id="{{ agent.id }}"{% if not profile %} hidden{% else %} title="{{ profile.agent_version }} · {{ profile.capabilities|join(', ') }}"{% endif %}>{% if profile %}{{ profile.active_runs }}/{{ profile.max_concurrency }} slots · {% if profile.legacy %}legacy{% else %}v{{ profile.protocol_version }}{% endif %}{% endif %}</span>
+              <span data-agent-capabilities-id="{{ agent.id }}">{% if profile %}{% for capability in profile.capabilities %}<span class="badge agent">{{ capability }}</span>{% endfor %}{% endif %}</span>
               {% if agent.id == 'agent_crewspace' %}<span class="badge agent">🔒 protected</span>{% endif %}
               {% if current_user.role == 'superadmin' and not agent.pubkey %}<a href="/management/agents/{{ agent.id }}/settings">Tool settings</a>{% endif %}
             </span>

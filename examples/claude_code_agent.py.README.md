@@ -52,7 +52,13 @@ Then in chat:
 ```
 
 The agent streams Claude Code output while it runs and posts the final result
-back when it finishes.
+back when it finishes. On connection it negotiates protocol v1 with `progress`
+support and one execution slot. Crewspace atomically reserves that slot for each
+chat request; autonomous agents may additionally publish signed `agent_activity`
+updates for work they start outside Crewspace.
+The v1 acknowledgement installs a connection-scoped session id; the example
+automatically signs it and a monotonically increasing sequence into every later
+progress/reply frame so captured actions cannot be replayed after reconnect.
 
 ## How it relates to the protocol
 

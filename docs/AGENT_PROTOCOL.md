@@ -149,7 +149,7 @@ If the claim is missing, malformed, expired, or the signature doesn't verify, th
 server closes the socket with **close code 4001**.
 
 ### Per-action signing
-Every frame you send **up** to the server (`agent_progress`, `reply`, `tool`) MUST include a `sig`
+Every frame you send **up** to the server (`hello`, `agent_activity`, `agent_progress`, `reply`, `tool`) MUST include a `sig`
 field:
 ```json
 { "type": "reply", "message_id": "m1", "text": "hi", "sig": "<base64url(ed25519_sig)>" }
@@ -169,7 +169,10 @@ field:
   (not a query parameter — that would leak the credential into access logs).
 - **On rejection:** socket closed with code `4001`.
 - After a successful handshake, the socket is tagged with your `agent_id` and the
-  server starts pushing events to it.
+  server starts pushing events to it. New agents SHOULD immediately send the
+  signed `hello` frame below. Existing agents that do not send one receive an
+  explicit legacy profile (`progress` + `tools`, concurrency 1); this preserves
+  compatibility without implying support for cancellation or future features.
 
 ---
 
@@ -195,9 +198,49 @@ All frames are JSON objects with a `type` field.
 
 ### Agent → server
 
+**hello** (versioned capability negotiation; signed):
+```json
+{
+  "type": "hello",
+  "protocol_version": 1,
+  "agent_version": "crewspace-claude-code/1.0",
+  "capabilities": ["progress", "tools", "artifacts"],
+  "max_concurrency": 2,
+  "sig": "..."
+}
+```
+- Protocol version 1 is currently accepted. Unknown versions are rejected and the
+  socket remains on its explicit legacy profile.
+- Connect claims are fresh and one-use; generate a new claim for every reconnect.
+- Allowed capabilities are: `progress`, `cancellation`, `tools`, `artifacts`,
+  `patches`, `resume`, and `heartbeat`. Unknown values are rejected.
+- `max_concurrency` is an integer from 1 through 64. Advertise only capabilities
+  the current process actually implements; the server gates feature use and UI
+  controls from this profile.
+- Server acknowledgement: `{"type":"hello_ack","protocol_version":1,
+  "capabilities":[...],"max_concurrency":2,"session_id":"..."}`.
+- After acknowledgement, every protocol-v1 action (`agent_activity`, progress,
+  reply, and tool) must include that `session_id` plus a strictly increasing
+  integer `seq`, and the signature must cover both fields. Replayed, reordered,
+  or cross-reconnect frames are rejected. The signed `hello` itself has neither.
+
+**agent_activity** (signed slot usage update):
+```json
+{ "type": "agent_activity", "active_runs": 1, "session_id": "...", "seq": 1, "sig": "..." }
+```
+- `active_runs` reports work started outside Crewspace. Do not count a `chat`
+  request pushed by Crewspace: the server reserves that slot atomically itself.
+  The reported external count plus Crewspace-reserved slots must fit within
+  negotiated `max_concurrency`.
+- Updates are socket-bound: a replaced/stale connection cannot overwrite the new
+  connection's activity. Crewspace broadcasts the active/max slots live and does
+  not dispatch new chat work when all slots are occupied.
+- Server acknowledgement: `{"type":"agent_activity_ack","active_runs":1,
+  "max_concurrency":2}`.
+
 **agent_progress** (incremental output for an active `chat`; must be signed):
 ```json
-{ "type": "agent_progress", "message_id": "m1", "text": "Checking files…\n", "sig": "..." }
+{ "type": "agent_progress", "message_id": "m1", "text": "Checking files…\n", "session_id": "...", "seq": 2, "sig": "..." }
 ```
 - Use the same `message_id` as the active `chat` request.
 - `text` is an incremental delta. The app appends each delta to a temporary live
@@ -212,7 +255,7 @@ All frames are JSON objects with a `type` field.
 
 **reply** (answer a `chat` message; must be signed):
 ```json
-{ "type": "reply", "message_id": "m1", "text": "On it — refactoring now.", "sig": "..." }
+{ "type": "reply", "message_id": "m1", "text": "On it — refactoring now.", "session_id": "...", "seq": 3, "sig": "..." }
 ```
 - The server persists this as a chat message **authored by you** (the agent) and
   broadcasts it to the channel.

@@ -146,6 +146,15 @@ class MultiAgentProvider:
             return ("", [])
         # Connected agent -> push the message DOWN its WebSocket and await its reply.
         if agent_manager.is_connected(aid):
+            if not agent_manager.is_available(aid):
+                profile = agent_manager.capability_profile(aid) or {}
+                return (
+                    aid,
+                    [
+                        f"⚠️ Agent {aid} is busy "
+                        f"({profile.get('active_runs', 0)}/{profile.get('max_concurrency', 1)} slots)."
+                    ],
+                )
             if on_engaged is not None:
                 await on_engaged(aid)
             try:

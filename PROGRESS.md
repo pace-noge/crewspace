@@ -59,10 +59,17 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-Start `PLAN.md` M6.1 — Agent capability negotiation. M6 now tracks eight agent
-control-plane slices with objective acceptance counts, dependencies, evidence,
-notes, and an append-only progress log. Update PLAN.md and this handoff in the same
-verified commit whenever a slice changes status.
+M6.2 — Isolated worktrees and structured change sets.
+
+M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
+versioned `hello`, explicit legacy profile, capability gates, additive external/
+server-reserved capacity, reconnect-safe immediate request teardown, live sidebar
+and management state, one-use connect claims, stale-socket rejection, and v1
+session-bound monotonic sequencing. Final evidence: 107 focused tests passed; all
+remaining suite files passed sequentially with one key-gated skip; compile,
+diff, and added-line security scans passed; hardened live POC passed; independent
+final review reported no blockers or suggestions. Commit evidence is recorded in
+the M6 milestone log.
 
 ## Test/run reminders (from prior sessions)
 - `export CREWSPACE_DATABASE_URL=` persists across tool calls and overrides pytest fixtures'

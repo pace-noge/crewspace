@@ -215,6 +215,331 @@ def test_agent_status_distinguishes_builtin_and_remote_agents():
     assert manager.status("agent_remote", is_local=False) == "disconnected"
 
 
+@pytest.mark.asyncio
+async def test_connected_agent_starts_with_explicit_legacy_capabilities():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+
+    await manager.connect("agent_a", cast(WebSocket, socket))
+
+    profile = manager.capability_profile("agent_a")
+    assert profile == {
+        "protocol_version": 0,
+        "agent_version": "legacy",
+        "capabilities": ["progress", "tools"],
+        "max_concurrency": 1,
+        "active_runs": 0,
+        "legacy": True,
+    }
+    assert manager.supports("agent_a", "progress") is True
+    assert manager.supports("agent_a", "cancellation") is False
+
+
+@pytest.mark.asyncio
+async def test_agent_negotiates_versioned_capabilities_for_active_socket():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+
+    profile = manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/1.0",
+            "capabilities": ["progress", "cancellation", "artifacts"],
+            "max_concurrency": 3,
+        },
+    )
+
+    assert profile["legacy"] is False
+    assert profile["max_concurrency"] == 3
+    assert manager.supports("agent_a", "cancellation") is True
+    assert manager.supports("agent_a", "tools") is False
+
+
+@pytest.mark.asyncio
+async def test_invalid_capability_profile_is_rejected_without_replacing_legacy_profile():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+
+    with pytest.raises(ValueError, match="unsupported capability"):
+        manager.negotiate_capabilities(
+            "agent_a",
+            cast(WebSocket, socket),
+            {
+                "protocol_version": 1,
+                "agent_version": "agent/1",
+                "capabilities": ["root_shell"],
+                "max_concurrency": 1,
+            },
+        )
+
+    assert manager.capability_profile("agent_a")["legacy"] is True
+
+
+@pytest.mark.asyncio
+async def test_replaced_socket_cannot_overwrite_new_connection_capabilities():
+    manager = AgentConnectionManager()
+    old_socket = FakeWebSocket()
+    new_socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, old_socket))
+    await manager.connect("agent_a", cast(WebSocket, new_socket))
+
+    with pytest.raises(ValueError, match="not the active connection"):
+        manager.negotiate_capabilities(
+            "agent_a",
+            cast(WebSocket, old_socket),
+            {
+                "protocol_version": 1,
+                "agent_version": "stale/1",
+                "capabilities": ["progress"],
+                "max_concurrency": 1,
+            },
+        )
+
+    assert manager.capability_profile("agent_a")["legacy"] is True
+
+
+@pytest.mark.asyncio
+async def test_busy_slots_are_bounded_and_owned_by_active_socket():
+    manager = AgentConnectionManager()
+    old_socket = FakeWebSocket()
+    new_socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, old_socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, old_socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "agent/1",
+            "capabilities": ["progress"],
+            "max_concurrency": 2,
+        },
+    )
+
+    profile = manager.update_activity("agent_a", cast(WebSocket, old_socket), 2)
+    assert profile["active_runs"] == 2
+    assert manager.is_available("agent_a") is False
+    with pytest.raises(ValueError, match="invalid active runs"):
+        manager.update_activity("agent_a", cast(WebSocket, old_socket), 3)
+
+    await manager.connect("agent_a", cast(WebSocket, new_socket))
+    with pytest.raises(ValueError, match="not the active connection"):
+        manager.update_activity("agent_a", cast(WebSocket, old_socket), 0)
+    assert manager.capability_profile("agent_a")["active_runs"] == 0
+    assert manager.is_available("agent_a") is True
+
+
+@pytest.mark.asyncio
+async def test_send_and_wait_reserves_slot_before_concurrent_dispatch():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "single-slot/1",
+            "capabilities": [],
+            "max_concurrency": 1,
+        },
+    )
+
+    first = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.1)
+    )
+    await asyncio.sleep(0)
+    assert manager.capability_profile("agent_a")["active_runs"] == 1
+
+    with pytest.raises(RuntimeError, match="agent agent_a is busy"):
+        await manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.01)
+
+    manager.deliver_reply("agent_a", socket.sent[0]["message_id"], "done")
+    assert await first == "done"
+    assert manager.capability_profile("agent_a")["active_runs"] == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_frames_cannot_clear_a_server_reserved_slot():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    negotiated = {
+        "protocol_version": 1,
+        "agent_version": "single-slot/1",
+        "capabilities": [],
+        "max_concurrency": 1,
+    }
+    manager.negotiate_capabilities(
+        "agent_a", cast(WebSocket, socket), negotiated
+    )
+    pending = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.1)
+    )
+    await asyncio.sleep(0)
+
+    activity = manager.update_activity("agent_a", cast(WebSocket, socket), 0)
+    with pytest.raises(ValueError, match="capabilities already negotiated"):
+        manager.negotiate_capabilities(
+            "agent_a", cast(WebSocket, socket), negotiated
+        )
+
+    assert activity["active_runs"] == 1
+    assert manager.capability_profile("agent_a")["active_runs"] == 1
+    assert manager.is_available("agent_a") is False
+    manager.deliver_reply("agent_a", socket.sent[0]["message_id"], "done")
+    assert await pending == "done"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_wait_releases_reserved_slot_before_cleanup():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    cleanup_started = asyncio.Event()
+
+    async def on_complete(message_id: str) -> None:
+        cleanup_started.set()
+        await asyncio.sleep(10)
+
+    pending = asyncio.create_task(
+        manager.send_and_wait(
+            "agent_a",
+            {"type": "chat"},
+            timeout=30,
+            on_progress_complete=on_complete,
+        )
+    )
+    await asyncio.sleep(0)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert manager.capability_profile("agent_a")["active_runs"] == 0
+    assert manager.is_available("agent_a") is True
+
+
+@pytest.mark.asyncio
+async def test_old_request_cleanup_cannot_release_replacement_socket_slot():
+    manager = AgentConnectionManager()
+    old_socket = FakeWebSocket()
+    new_socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, old_socket))
+    old = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.03)
+    )
+    await asyncio.sleep(0)
+
+    await manager.connect("agent_a", cast(WebSocket, new_socket))
+    new = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.1)
+    )
+    await asyncio.sleep(0)
+    with pytest.raises(ConnectionError, match="agent connection replaced"):
+        await old
+
+    assert manager.capability_profile("agent_a")["active_runs"] == 1
+    assert manager.is_available("agent_a") is False
+    manager.deliver_reply("agent_a", new_socket.sent[0]["message_id"], "new")
+    assert await new == "new"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_immediately_fails_waits_owned_by_replaced_socket():
+    manager = AgentConnectionManager()
+    old_socket = FakeWebSocket()
+    new_socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, old_socket))
+    old = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=30)
+    )
+    await asyncio.sleep(0)
+
+    await manager.connect("agent_a", cast(WebSocket, new_socket))
+
+    with pytest.raises(ConnectionError, match="agent connection replaced"):
+        await old
+    assert not any(key[1] is old_socket for key in manager._reserved_slots)
+    assert not manager._waiters
+
+
+@pytest.mark.asyncio
+async def test_disconnect_immediately_fails_waits_owned_by_socket():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    pending = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=30)
+    )
+    await asyncio.sleep(0)
+
+    manager.disconnect("agent_a", cast(WebSocket, socket))
+
+    with pytest.raises(ConnectionError, match="agent disconnected"):
+        await pending
+    assert not manager._reserved_slots
+    assert not manager._waiters
+
+
+@pytest.mark.asyncio
+async def test_reported_external_work_and_reserved_chat_use_separate_slots():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "two-slot/1",
+            "capabilities": [],
+            "max_concurrency": 2,
+        },
+    )
+    manager.update_activity("agent_a", cast(WebSocket, socket), 1)
+
+    pending = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.1)
+    )
+    await asyncio.sleep(0)
+
+    assert manager.capability_profile("agent_a")["active_runs"] == 2
+    assert manager.is_available("agent_a") is False
+    manager.deliver_reply("agent_a", socket.sent[0]["message_id"], "done")
+    assert await pending == "done"
+
+
+@pytest.mark.asyncio
+async def test_external_activity_cannot_overcommit_reserved_capacity():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "two-slot/1",
+            "capabilities": [],
+            "max_concurrency": 2,
+        },
+    )
+    pending = asyncio.create_task(
+        manager.send_and_wait("agent_a", {"type": "chat"}, timeout=0.1)
+    )
+    await asyncio.sleep(0)
+
+    with pytest.raises(ValueError, match="exceeds available capacity"):
+        manager.update_activity("agent_a", cast(WebSocket, socket), 2)
+
+    assert manager.capability_profile("agent_a")["active_runs"] == 1
+    manager.deliver_reply("agent_a", socket.sent[0]["message_id"], "done")
+    assert await pending == "done"
+
+
 class RecordingManager(ConnectionManager):
     def __init__(self) -> None:
         super().__init__()
@@ -242,7 +567,12 @@ async def test_connect_and_disconnect_broadcast_presence(monkeypatch):
     assert recorder.broadcasts == [
         (
             conn.PRESENCE_ROOM,
-            {"type": "agent_presence", "agent_id": "agent_x", "status": "connected"},
+            {
+                "type": "agent_presence",
+                "agent_id": "agent_x",
+                "status": "connected",
+                "profile": dict(conn.LEGACY_AGENT_PROFILE),
+            },
         ),
         (
             conn.PRESENCE_ROOM,
