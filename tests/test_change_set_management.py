@@ -74,8 +74,8 @@ def test_coding_run_lifecycle_downgrade_maps_new_terminal_states(tmp_path):
             conn.execute(
                 "INSERT INTO coding_run "
                 "(id, team_id, repository_id, requested_by, agent_id, request_id, "
-                "instruction, status, created_at, updated_at, started_at, finished_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "instruction, status, created_at, updated_at, started_at, finished_at, recent_output) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     f"run_{status}",
                     "team_legacy",
@@ -89,6 +89,7 @@ def test_coding_run_lifecycle_downgrade_maps_new_terminal_states(tmp_path):
                     created_at,
                     None,
                     created_at,
+                    "",
                 ),
             )
         conn.commit()
@@ -1504,6 +1505,144 @@ def test_authenticated_http_start_coding_run_persists_session_identity(app):
         assert run.team_id == "team_acme"
         assert run.request_id != run.id
         assert run.request_id == sent[0][4]
+    finally:
+        agent_manager.send_coding_run = original
+
+
+
+
+@pytest.mark.asyncio
+async def test_coding_run_recent_output_persists_and_restores_after_refresh(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as seed:
+        await seed.coding_repositories.create(CodingRepository(
+            id="repo_output", name="Output", default_branch="master",
+            created_by="user_bilal", created_at=now,
+        ))
+        await seed.coding_repositories.grant_team(TeamRepositoryAccess(
+            team_id="team_acme", repository_id="repo_output",
+            granted_by="user_bilal", granted_at=now,
+        ))
+        await seed.commit()
+
+    fake = _FakeManager()
+    async with app.state.db.uow() as uow:
+        await dispatch_coding_run(
+            uow, agent_id="agent_planner", team_id="team_acme",
+            repository_id="repo_output", run_id="run_output",
+            instruction="Build", requested_by="user_bilal", agent_manager=fake,
+        )
+
+    # Simulate progress arriving and being persisted, then a client refresh
+    # (a brand new unit of work) that must restore status + bounded output.
+    async with app.state.db.uow() as uow:
+        await uow.coding_runs.append_output("run_output", "line one\n")
+        await uow.coding_runs.append_output("run_output", "line two\n")
+        await uow.commit()
+
+    async with app.state.db.uow() as uow:
+        refreshed = await uow.coding_runs.get("run_output")
+    assert refreshed is not None
+    assert refreshed.status == "running"
+    assert "line one" in refreshed.recent_output
+    assert "line two" in refreshed.recent_output
+
+
+@pytest.mark.asyncio
+async def test_coding_run_recent_output_is_bounded(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as seed:
+        await seed.coding_repositories.create(CodingRepository(
+            id="repo_bound", name="Bound", default_branch="master",
+            created_by="user_bilal", created_at=now,
+        ))
+        await seed.coding_repositories.grant_team(TeamRepositoryAccess(
+            team_id="team_acme", repository_id="repo_bound",
+            granted_by="user_bilal", granted_at=now,
+        ))
+        await seed.commit()
+
+    fake = _FakeManager()
+    async with app.state.db.uow() as uow:
+        await dispatch_coding_run(
+            uow, agent_id="agent_planner", team_id="team_acme",
+            repository_id="repo_bound", run_id="run_bound",
+            instruction="Build", requested_by="user_bilal", agent_manager=fake,
+        )
+
+    chunk = "x" * 2000 + "\n"
+    async with app.state.db.uow() as uow:
+        for _ in range(100):  # 200_000 bytes >> 64 KiB bound
+            await uow.coding_runs.append_output("run_bound", chunk)
+        await uow.commit()
+
+    async with app.state.db.uow() as uow:
+        stored = await uow.coding_runs.get("run_bound")
+    assert len(stored.recent_output.encode("utf-8")) <= 65_536
+    # Newest content is retained, oldest is dropped.
+    assert stored.recent_output.endswith(chunk)
+    assert "line one" not in stored.recent_output
+
+
+def test_authenticated_http_get_coding_run_returns_status_and_output(app):
+    import asyncio
+    from starlette.testclient import TestClient
+
+    from crewspace.api.connection import agent_manager
+
+    now = dt.datetime.now(dt.timezone.utc)
+
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.create(CodingRepository(
+                id="repo_get", name="Get", default_branch="master",
+                created_by="user_bilal", created_at=now,
+            ))
+            await uow.coding_repositories.grant_team(TeamRepositoryAccess(
+                team_id="team_acme", repository_id="repo_get",
+                granted_by="user_bilal", granted_at=now,
+            ))
+            await uow.commit()
+
+    asyncio.run(arrange())
+
+    original = agent_manager.send_coding_run
+
+    async def fake_send(agent_id, *, repository_id, run_id, instruction, timeout, request_id=None):
+        return {"type": "coding_run_ack"}
+
+    agent_manager.send_coding_run = fake_send
+    try:
+        client = TestClient(app)
+        assert client.post("/auth/login", data={"username": "Bilal", "password": "admin123"}).status_code == 200
+        created = client.post(
+            "/api/coding/runs",
+            json={
+                "repository_id": "repo_get",
+                "agent_id": "agent_planner",
+                "instruction": "Build",
+                "team_id": "team_acme",
+            },
+            headers={"Origin": "http://testserver"},
+        )
+        assert created.status_code == 200, created.text
+        run_id = created.json()["run_id"]
+
+        async def append():
+            async with app.state.db.uow() as uow:
+                await uow.coding_runs.append_output(run_id, "progress chunk\n")
+                await uow.commit()
+
+        asyncio.run(append())
+
+        response = client.get(f"/api/coding/runs/{run_id}", headers={"Origin": "http://testserver"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "running"
+        assert "progress chunk" in body["recent_output"]
+
+        missing = client.get("/api/coding/runs/does_not_exist", headers={"Origin": "http://testserver"})
+        assert missing.status_code == 404
     finally:
         agent_manager.send_coding_run = original
 

@@ -14,6 +14,13 @@ async def can_manage_team(user: dict, team_id: str, uow: UnitOfWork) -> bool:
     return membership is not None and membership.role.value == "leader"
 
 
+async def is_team_member(user: dict, team_id: str, uow: UnitOfWork) -> bool:
+    """Return whether the user belongs to the team (any role)."""
+    if user["role"] == "superadmin":
+        return True
+    return await uow.teams.get_membership(team_id, user["id"]) is not None
+
+
 async def manageable_teams(user: dict, uow: UnitOfWork):
     """Return exactly the teams the user may administer."""
     if user["role"] == "superadmin":

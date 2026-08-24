@@ -473,6 +473,7 @@ class SqlAlchemyCodingRepositoryRepository:
 
 
 class SqlAlchemyCodingRunRepository:
+    MAX_OUTPUT_BYTES = 65_536
     _TRANSITIONS = {
         "queued": frozenset({"running", "failed", "cancelled", "timed_out", "interrupted"}),
         "running": frozenset({"succeeded", "failed", "cancelled", "timed_out", "interrupted"}),
@@ -496,6 +497,7 @@ class SqlAlchemyCodingRunRepository:
             updated_at=_parse(row["updated_at"]),
             started_at=_parse(row["started_at"]) if row["started_at"] else None,
             finished_at=_parse(row["finished_at"]) if row["finished_at"] else None,
+            recent_output=row["recent_output"] if "recent_output" in row.keys() else "",
         )
 
     async def create(self, run: CodingRun) -> CodingRun:
@@ -522,8 +524,8 @@ class SqlAlchemyCodingRunRepository:
         await self._conn.execute(
             "INSERT INTO coding_run "
             "(id, team_id, repository_id, requested_by, agent_id, request_id, "
-            "instruction, status, created_at, updated_at, started_at, finished_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "instruction, status, created_at, updated_at, started_at, finished_at, recent_output) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run.id,
                 run.team_id,
@@ -537,6 +539,7 @@ class SqlAlchemyCodingRunRepository:
                 _iso(normalized.updated_at),
                 _iso(normalized.started_at) if normalized.started_at else None,
                 _iso(normalized.finished_at) if normalized.finished_at else None,
+                "",
             ),
         )
         return normalized
@@ -572,6 +575,27 @@ class SqlAlchemyCodingRunRepository:
             ),
         )
         return result.rowcount == 1
+
+    async def append_output(self, run_id: str, text: str) -> None:
+        """Append a progress chunk to the run's bounded recent output.
+
+        Keeps only the most recent MAX_OUTPUT_BYTES of UTF-8 output so a client
+        refresh can restore a bounded tail of recent output without unbounded
+        growth.
+        """
+        run = await self.get(run_id)
+        if run is None:
+            return
+        merged = (run.recent_output + text) if run.recent_output else text
+        encoded = merged.encode("utf-8")
+        if len(encoded) > self.MAX_OUTPUT_BYTES:
+            encoded = encoded[-self.MAX_OUTPUT_BYTES:]
+            merged = encoded.decode("utf-8", errors="replace")
+        await self._conn.execute(
+            "UPDATE coding_run SET recent_output=?, updated_at=? "
+            "WHERE id=?",
+            (merged, _iso(dt.datetime.now(dt.timezone.utc)), run_id),
+        )
 
 
 class SqlAlchemyChangeSetRepository:

@@ -400,6 +400,7 @@ class CodingRunRepository(Protocol):
         started_at: datetime | None,
         finished_at: datetime | None,
     ) -> bool: ...
+    async def append_output(self, run_id: str, text: str) -> None: ...
 
 
 @runtime_checkable

@@ -11,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from ...application.access import can_manage_team
+from ...application.access import can_manage_team, is_team_member
 from ...application.coding_runs import dispatch_coding_run
 from ..deps import CurrentUserDep, UowDep
 
@@ -56,3 +56,25 @@ async def start_coding_run(
     )
     run = await uow.coding_runs.get(run_id)
     return {"run_id": run_id, "status": run.status if run else "running"}
+
+
+@router.get("/{run_id}")
+async def get_coding_run(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict:
+    run = await uow.coding_runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Coding run not found")
+    if not await is_team_member(user, run.team_id, uow):
+        raise HTTPException(status_code=403, detail="Not authorized for this team")
+    return {
+        "run_id": run.id,
+        "team_id": run.team_id,
+        "repository_id": run.repository_id,
+        "agent_id": run.agent_id,
+        "request_id": run.request_id,
+        "instruction": run.instruction,
+        "status": run.status,
+        "created_at": run.created_at.isoformat(),
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "recent_output": run.recent_output,
+    }
