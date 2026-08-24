@@ -1,15 +1,16 @@
 # Crewspace — Session Progress (resume handoff)
 
-Last updated: 2026-08-22 (WIB). All work below is COMMITTED and PUSHED to `master`,
+Last updated: 2026-08-24 (WIB). All work below is COMMITTED and PUSHED to `master`,
 synced with `origin/master`. Working tree is clean (no uncommitted changes).
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -8` to confirm history matches below.
-3. `uv run pytest -q` to confirm green (baseline: 190 passed, 1 skipped).
-4. Pick up "NEXT ACTION" (option A) below.
+3. `uv run pytest -q` to confirm green (current split-run baseline: 192 passed, 1 skipped).
+4. Choose the next product slice; incremental remote-agent output is complete.
 
 ## Commits this session (newest first)
+- `e8c6686` feat: stream remote agent output in chat
 - `b259473` feat: claude-code remote agent example + configurable remote reply timeout
 - `8f89a3f` feat: live agent presence on connect/disconnect
 - `fa23033` feat: stream connected agent working state in chat
@@ -32,43 +33,38 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
   then sends one signed `reply` frame with captured output.
 - `CREWSPACE_AGENT_REPLY_TIMEOUT` (config.py + registry.py, default 1800s) replaces the old
   20s `send_and_wait` default so long Claude runs aren't cut off.
+- Signed incremental remote-agent output: agents send correlated `agent_progress`
+  deltas before the final `reply`; the app verifies identity/signature, validates
+  each delta (non-empty, <=16 KiB), and routes it only to the active `(agent_id,
+  message_id)` request.
+- Chat renders temporary live output safely via `textContent`, retains the newest
+  64 KiB, and removes it when the persisted final agent reply arrives.
+- Progress broadcasts run independently of the final-reply timeout so a slow chat
+  client cannot turn a valid final reply into a false timeout.
+- `examples/claude_code_agent.py` streams subprocess stdout line-by-line, while
+  preserving the final captured reply; `docs/AGENT_PROTOCOL.md` documents the wire contract.
 
 ## POC verification (live, against running app)
-- Ran `claude_code_agent.py` with a fake `claude`. Logged in, opened channel WS, sent
-  `@planner refactor the parser now`.
-- Observed: human echo -> `typing` -> `agent_working` -> agent spawned subprocess -> replied
-  in-thread with captured output. RC=0, "POC PASS".
+- Ran the real app, real signed `claude_code_agent.py`, and a deterministic fake
+  Claude subprocess that flushed `phase one` then `phase two`.
+- Logged in over HTTP, opened the authenticated channel WebSocket, and sent
+  `@planner stream the fake command`.
+- Observed frame order: human message -> `typing` -> `agent_working` ->
+  `agent_progress` (`phase one`) -> `agent_progress` (`phase two`) -> final persisted
+  agent message (`phase one\nphase two`). Assertions passed.
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
-## NEXT ACTION (approved by user, NOT started)
-**Option A: stream a connected remote agent's INCREMENTAL output into chat live,
-as it runs** (instead of only one final reply at the end).
-
-Design anchors to reuse (read before coding):
-- Server: `src/crewspace/api/routers/chat.py` (broadcast) and
-  `src/crewspace/api/connection.py` (`AgentConnectionManager.send_and_wait`) dispatch the
-  remote agent's reply.
-- Client render: `src/crewspace/templates/chat.html`.
-- Agent example: `examples/claude_code_agent.py` — `_run_claude` currently buffers stdout
-  then sends ONE signed `reply` frame; change to flush stdout line-by-line as progress frames.
-
-Likely implementation:
-- App currently consumes only `reply` frames for remote agents in chat (no generic inbound
-  progress frame type). Add a new inbound frame, e.g. `agent_progress` (agent_id, message_id,
-  text/delta), have chat.py broadcast it, and chat.html render it as a live/incremental message.
-- Keep the final signed `reply` for the completed result; progress frames carry interim output.
-- Ensure `CREWSPACE_AGENT_REPLY_TIMEOUT` still covers the whole run (progress does not reset it).
-
-TDD plan:
-- Unit/integration test proving progress frames arrive BEFORE the final reply.
-- Re-run the live POC (driver pattern in /tmp/poc_driver.py from the b259473 session) to show
-  incremental frames in the channel.
+## NEXT ACTION
+No next slice has been selected. The previously approved incremental-output option
+is complete, verified, committed, and pushed. Ask the user which product slice to
+take next rather than extending this protocol speculatively.
 
 ## Test/run reminders (from prior sessions)
 - `export CREWSPACE_DATABASE_URL=` persists across tool calls and overrides pytest fixtures'
   unique db_path (pydantic env > ctor arg) -> tests spuriously share one DB. Use inline
   `env VAR=...` per command or `unset` after a round-trip.
-- Full suite can exceed shell time caps during teardown (pre-existing aiosqlite/TestClient leak,
-  not a logic regression). Verify affected WS/streaming tests individually.
+- A monolithic full-suite command again stalled after 51 tests in this session.
+  All 192 tests were then run in three sequential file groups: 192 passed, 1 skipped.
+  Verify affected WS/streaming tests individually or in sequential file groups.
 - Builtin app-LLM agent (agent_crewspace) hits local gateway http://localhost:20128/v1 (model 'free')
   via .env CREWSPACE_LLM_*; if builtin replies fail, check the gateway is up.
