@@ -1,15 +1,16 @@
 # Crewspace — Session Progress (resume handoff)
 
-Last updated: 2026-08-24 (WIB). M6.2 is active on local `master`; verified
-milestone commits are ahead of `origin/master` and will be pushed at the slice gate.
+Last updated: 2026-08-24 (WIB). M6.2 is complete on local `master`; verified
+milestone commits are ready for the slice-gate push.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -8` to confirm history matches below.
 3. `uv run pytest -q` to confirm green (current split-run baseline: 192 passed, 1 skipped).
-4. Pick up `PLAN.md` M6.1 — Agent capability negotiation.
+4. Pick up `PLAN.md` M6.3 — Durable and cancellable agent runs.
 
 ## Commits this session (newest first)
+- `6a78496` [verified] feat: complete remote workspace lifecycle
 - `e8c6686` feat: stream remote agent output in chat
 - `b259473` feat: claude-code remote agent example + configurable remote reply timeout
 - `8f89a3f` feat: live agent presence on connect/disconnect
@@ -59,23 +60,21 @@ milestone commits are ahead of `origin/master` and will be pushed at the slice g
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.2 — Isolated worktrees and structured change sets is IN PROGRESS (5/7).
-Durable control-plane metadata and governed UI are GREEN. Logical repositories are
-authorized many-to-many per team; coding runs bind team, repository, requester,
-remote agent, request, and instruction. Authenticated signed result ingress validates
-the active request/repository/run correlation and atomically stores the path-free
-change set, capture audit, and run status before completing the waiter. Team-scoped
-list/detail pages show commits, files, verification, artifact metadata, and audit.
-Review, request-PR, retain, and request-discard use dedicated app-shell confirmation
-workflows with authenticated actor audit and compare-and-set state transitions.
-The final bounded gate passed 152 management, signed-protocol, real-Git, and security
-tests; schema drift, compilation, and diff checks passed; a fresh migration
-upgrade/downgrade/upgrade round trip and live HTTP UI proof passed. Chrome's local
-remote-debugging approval blocked browser-DOM proof and is recorded as an environment
-constraint, not a product pass. Final independent review found no blockers. Commit
-this slice, then implement signed remote idempotent cleanup that protects retained
-and unmerged workspaces; run-start UI/service and physical PR execution remain
-separate pending integration work and are not claimed complete.
+M6.2 — Isolated worktrees and structured change sets is DONE (7/7), committed as
+`6a78496`. Signed path-free lifecycle commands now drive allocator-owned remote
+retain/discard/cleanup. The worker protects retained, dirty, unmerged, replaced, and
+ref/reflog-provenance-mismatched workspaces; partial cleanup is retryable and repeated
+removal is idempotent in the same worker process. Control-plane governance commits
+authorized intent before the remote wait, then records signed acknowledgement or a
+retryable generic failure in a fresh UoW. A real-Git POC allocated, captured, reviewed,
+discarded, and replayed cleanup successfully. The final bounded gate passed 179
+management, signed-protocol, real-Git, POC, and security tests; schema drift,
+compilation, diff, added-line security scan, and migration upgrade/downgrade/upgrade
+checks passed. Final independent fail-closed review found no blockers. Allocation,
+retention, partial-cleanup, and tombstone state are process-local by design; durable
+cross-restart reconstruction is explicitly deferred to M6.3. Next implement M6.3 —
+Durable and cancellable agent runs. Run-start UI/service and physical PR execution
+remain separate pending integration and are not claimed complete.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

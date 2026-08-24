@@ -178,7 +178,7 @@ Last updated: 2026-08-24 (WIB)
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
-| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 5/7 | M6.1 | 152-test bounded persistence/UI/protocol/security gate; migration round trip; live HTTP UI proof; independent review | Remote cleanup and real-repository end-to-end POC remain |
+| M6.2 | Isolated worktrees and structured change sets | DONE | 7/7 | M6.1 | `6a78496`; 179-test bounded lifecycle/POC/security gate; migration round trip; independent fail-closed review | Same-process remote lifecycle idempotence; cross-restart reconstruction belongs to M6.3 |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
@@ -206,7 +206,7 @@ Acceptance (6/6):
   - [x] Verified slice committed and pushed; commit evidence is recorded in the
         M6 progress log.
 
-M6.2 — Isolated worktrees and structured change sets         [L]  IN PROGRESS
+M6.2 — Isolated worktrees and structured change sets         [L]  DONE
 Scope:
   - Allocate one isolated git worktree/branch per coding run.
   - Prevent two agents from mutating the same checkout.
@@ -214,14 +214,14 @@ Scope:
   - Render a compact change-set card with review, PR, and discard actions.
   - Clean up worktrees safely after merge, cancellation, or explicit retention.
 
-Acceptance (5/7):
+Acceptance (7/7):
   - [x] Every coding run receives a unique validated worktree and branch on its remote execution host.
   - [x] Execution-host repository/path authorization prevents traversal and cross-project writes.
   - [x] Concurrent remote runs cannot share a mutable checkout.
   - [x] Change-set DTO/UI shows files, commits, verification, and artifacts.
   - [x] Review/open-PR/discard are dedicated governed actions with audit events.
-  - [ ] Cleanup is idempotent and never deletes an unmerged retained workspace.
-  - [ ] Integration POC produces, verifies, reviews, and cleans a real change set.
+  - [x] Cleanup is idempotent and never deletes an unmerged retained workspace.
+  - [x] Integration POC produces, verifies, reviews, and cleans a real change set.
 
 M6.3 — Durable and cancellable agent runs                    [L]  PLANNED
 Scope:
