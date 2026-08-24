@@ -9,6 +9,7 @@ from crewspace.api.routers.agents import (
     _handle_coding_change_set,
     _persist_coding_change_set,
 )
+from crewspace.application.coding_runs import dispatch_coding_run
 from crewspace.application.change_sets import ChangeSetService
 from crewspace.domain.entities import CodingRepository, CodingRun, TeamRepositoryAccess
 from crewspace.dto.change_sets import ChangeSetDTO
@@ -1359,6 +1360,169 @@ def test_reviewed_change_set_accepts_one_governed_decision(
         ("reviewed", "user_bilal"),
         (action, "user_bilal"),
     ]
+
+
+class _FakeManager:
+    def __init__(self):
+        self.sent = []
+
+    async def send_coding_run(self, agent_id, *, repository_id, run_id, instruction, timeout, request_id=None):
+        self.sent.append((agent_id, repository_id, run_id, instruction, request_id))
+        return {"type": "coding_run_ack"}
+
+
+@pytest.mark.asyncio
+async def test_dispatch_coding_run_persists_authenticated_queued_run(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as seed:
+        await seed.coding_repositories.create(CodingRepository(
+            id="repo_dispatch", name="Dispatch", default_branch="master",
+            created_by="user_bilal", created_at=now,
+        ))
+        await seed.coding_repositories.grant_team(TeamRepositoryAccess(
+            team_id="team_acme", repository_id="repo_dispatch",
+            granted_by="user_bilal", granted_at=now,
+        ))
+        await seed.commit()
+
+    fake = _FakeManager()
+    async with app.state.db.uow() as uow:
+        created = await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_dispatch",
+            run_id="run_dispatch",
+            instruction="Implement the feature",
+            requested_by="user_bilal",
+            agent_manager=fake,
+        )
+    assert created.id == "run_dispatch"
+    assert created.status == "running"
+    assert created.started_at is not None
+    assert created.team_id == "team_acme"
+    assert created.requested_by == "user_bilal"
+    assert created.request_id != "run_dispatch"
+    assert fake.sent[0][0] == "agent_planner"
+    assert fake.sent[0][1] == "repo_dispatch"
+    assert fake.sent[0][2] == "run_dispatch"
+    assert fake.sent[0][3] == "Implement the feature"
+    assert fake.sent[0][4] == created.request_id
+
+    async with app.state.db.uow() as uow:
+        stored = await uow.coding_runs.get("run_dispatch")
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.started_at is not None
+    assert stored.requested_by == "user_bilal"
+    assert stored.request_id == created.request_id
+    assert stored.request_id != stored.id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_coding_run_rejects_unauthorized_team_repository(app):
+    now = dt.datetime.now(dt.timezone.utc)
+    async with app.state.db.uow() as seed:
+        await seed.coding_repositories.create(CodingRepository(
+            id="repo_dispatch_unauth", name="Dispatch unauth", default_branch="master",
+            created_by="user_bilal", created_at=now,
+        ))
+        await seed.commit()
+
+    fake = _FakeManager()
+    async with app.state.db.uow() as uow:
+        with pytest.raises(PermissionError, match="not authorized"):
+            await dispatch_coding_run(
+                uow,
+                agent_id="agent_planner",
+                team_id="team_acme",
+                repository_id="repo_dispatch_unauth",
+                run_id="run_dispatch_unauth",
+                instruction="Must not dispatch",
+                requested_by="user_bilal",
+                agent_manager=fake,
+            )
+    assert fake.sent == []
+    async with app.state.db.uow() as uow:
+        assert await uow.coding_runs.get("run_dispatch_unauth") is None
+
+
+def test_authenticated_http_start_coding_run_persists_session_identity(app):
+    import asyncio
+    from starlette.testclient import TestClient
+
+    from crewspace.api.connection import agent_manager
+
+    now = dt.datetime.now(dt.timezone.utc)
+
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.create(CodingRepository(
+                id="repo_http", name="HTTP", default_branch="master",
+                created_by="user_bilal", created_at=now,
+            ))
+            await uow.coding_repositories.grant_team(TeamRepositoryAccess(
+                team_id="team_acme", repository_id="repo_http",
+                granted_by="user_bilal", granted_at=now,
+            ))
+            await uow.commit()
+
+    asyncio.run(arrange())
+
+    sent = []
+    original = agent_manager.send_coding_run
+
+    async def fake_send(agent_id, *, repository_id, run_id, instruction, timeout, request_id=None):
+        sent.append((agent_id, repository_id, run_id, instruction, request_id))
+        return {"type": "coding_run_ack"}
+
+    agent_manager.send_coding_run = fake_send
+    try:
+        client = TestClient(app)
+        assert client.post("/auth/login", data={"username": "Bilal", "password": "admin123"}).status_code == 200
+        response = client.post(
+            "/api/coding/runs",
+            json={
+                "repository_id": "repo_http",
+                "agent_id": "agent_planner",
+                "instruction": "Ship the feature",
+                "team_id": "team_acme",
+            },
+            headers={"Origin": "http://testserver"},
+        )
+        assert response.status_code == 200, response.text
+        run_id = response.json()["run_id"]
+        assert response.json()["status"] == "running"
+
+        async def read_back():
+            async with app.state.db.uow() as uow:
+                return await uow.coding_runs.get(run_id)
+
+        run = asyncio.run(read_back())
+        assert run is not None
+        assert run.requested_by == "user_bilal"
+        assert run.team_id == "team_acme"
+        assert run.request_id != run.id
+        assert run.request_id == sent[0][4]
+    finally:
+        agent_manager.send_coding_run = original
+
+
+def test_unauthenticated_http_start_coding_run_is_rejected(app):
+    from starlette.testclient import TestClient
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/coding/runs",
+        json={
+            "repository_id": "repo_http",
+            "agent_id": "agent_planner",
+            "instruction": "Ship the feature",
+            "team_id": "team_acme",
+        },
+        headers={"Origin": "http://testserver"},
+    )
+    assert response.status_code in (401, 403, 404)
 
 
 @pytest.mark.asyncio

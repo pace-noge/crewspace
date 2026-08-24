@@ -17,7 +17,8 @@ from .config import get_settings
 from .infrastructure.db import Database
 from .infrastructure.mcp_client import ExternalMcpToolExecutor, build_external_tool_executor
 from .infrastructure.workflow_webhooks import build_workflow_webhook_executor
-from .api.routers import agents, auth, boards, cards, change_sets, chat, cronjobs, pages, presence, teams, tools, workflows
+from .api.routers import (agents, auth, boards, cards, change_sets, chat, coding_runs,
+                            cronjobs, pages, presence, teams, tools, workflows)
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
 from .api.connection import agent_manager, manager, thread_manager
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(pages.router)
     app.include_router(teams.router)
     app.include_router(change_sets.router)
+    app.include_router(coding_runs.router)
     app.include_router(cronjobs.router)
     app.include_router(tools.router)
     app.include_router(workflows.router)

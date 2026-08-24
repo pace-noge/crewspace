@@ -469,6 +469,7 @@ class AgentConnectionManager:
         run_id: str,
         instruction: str,
         timeout: float,
+        request_id: str | None = None,
     ) -> Any:
         """Dispatch opaque coding inputs; filesystem paths stay agent-local."""
         if not self.supports(agent_id, "coding_workspace"):
@@ -480,7 +481,8 @@ class AgentConnectionManager:
         if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 65_536:
             raise ValueError("invalid coding instruction")
         reserved_socket = self._reserve_slot(agent_id)
-        request_id = self.new_message_id()
+        if request_id is None:
+            request_id = self.new_message_id()
         key = (agent_id, request_id)
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._coding_waiters[key] = future

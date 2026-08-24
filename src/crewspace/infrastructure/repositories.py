@@ -462,6 +462,15 @@ class SqlAlchemyCodingRepositoryRepository:
             ),
         )
 
+    async def is_team_granted(self, team_id: str, repository_id: str) -> bool:
+        """Return whether the team is authorized for the repository."""
+        cur = await self._conn.execute(
+            "SELECT 1 FROM team_coding_repository "
+            "WHERE team_id=? AND repository_id=?",
+            (team_id, repository_id),
+        )
+        return await cur.fetchone() is not None
+
 
 class SqlAlchemyCodingRunRepository:
     _TRANSITIONS = {
