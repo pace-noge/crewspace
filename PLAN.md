@@ -179,7 +179,7 @@ Last updated: 2026-08-24 (WIB)
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
 | M6.2 | Isolated worktrees and structured change sets | DONE | 7/7 | M6.1 | `6a78496`; 179-test bounded lifecycle/POC/security gate; migration round trip; independent fail-closed review | Same-process remote lifecycle idempotence; cross-restart reconstruction belongs to M6.3 |
-| M6.3 | Durable and cancellable agent runs | IN PROGRESS | 2/8 | M6.1 | `4b199be` (item 1); item 2 adds transactional auth-scoped dispatch: `dispatch_coding_run` re-checks team↔repo grant via contracted `is_team_granted`, transitions queued→running in-UoW, dispatches distinct request_id; authenticated `POST /api/coding/runs`; 146-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Lifecycle + timestamps + fail-closed CAS complete; cancellation/restart/UI deferred to later items |
+| M6.3 | Durable and cancellable agent runs | IN PROGRESS | 3/8 | M6.1 | `4b199be` (item 1); `38c2e27` (item 2); item 3 persists bounded recent output + GET /api/coding/runs/{id}: `dispatch_coding_run` re-checks team↔repo grant via contracted `is_team_granted`, transitions queued→running in-UoW, dispatches distinct request_id; authenticated `POST /api/coding/runs`; 146-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Lifecycle + timestamps + fail-closed CAS complete; cancellation/restart/UI deferred to later items |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
 | M6.6 | Multi-agent delivery pipeline | PLANNED | 0/7 | M6.2–M6.5 | — | Planner -> coder -> reviewer -> test -> human approval |
@@ -232,10 +232,10 @@ Scope:
   - Restore active/recent run state after refresh; reconcile reconnect and app restart.
   - Handle late/duplicate frames and cancellation-vs-completion races idempotently.
 
-Acceptance (2/8):
+Acceptance (3/8):
   - [x] Migration/model/repository expose the complete lifecycle and timestamps.
   - [x] Run creation and state transitions are transactional and authorization-scoped.
-  - [ ] Refresh restores status plus bounded recent output.
+  - [x] Refresh restores status plus bounded recent output.
   - [ ] Cancellation terminates the example subprocess and reaches terminal state.
   - [ ] Disconnect/reconnect and app restart reconcile interrupted runs honestly.
   - [ ] Late, duplicate, and cancellation-race frames cannot duplicate final messages.
