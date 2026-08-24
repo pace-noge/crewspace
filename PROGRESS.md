@@ -7,7 +7,7 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -8` to confirm history matches below.
 3. `uv run pytest -q` to confirm green (current split-run baseline: 192 passed, 1 skipped).
-4. Choose the next product slice; incremental remote-agent output is complete.
+4. Pick up `PLAN.md` M6.1 — Agent capability negotiation.
 
 ## Commits this session (newest first)
 - `e8c6686` feat: stream remote agent output in chat
@@ -59,9 +59,10 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-No next slice has been selected. The previously approved incremental-output option
-is complete, verified, committed, and pushed. Ask the user which product slice to
-take next rather than extending this protocol speculatively.
+Start `PLAN.md` M6.1 — Agent capability negotiation. M6 now tracks eight agent
+control-plane slices with objective acceptance counts, dependencies, evidence,
+notes, and an append-only progress log. Update PLAN.md and this handoff in the same
+verified commit whenever a slice changes status.
 
 ## Test/run reminders (from prior sessions)
 - `export CREWSPACE_DATABASE_URL=` persists across tool calls and overrides pytest fixtures'

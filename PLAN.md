@@ -154,6 +154,182 @@ M5 — Polish & Hardening (optional, ongoing)                   [S–M]
   - React SPA replacing HTMX (keep HTMX as the lightweight default).
 
 ------------------------------------------------------------------------------
+M6 — Remote Engineering Agent Control Plane                   [XL]  PLANNED
+------------------------------------------------------------------------------
+Goal: evolve connected coding agents from chat responders into a governed,
+inspectable, reliable software-delivery system. This is one umbrella milestone;
+each numbered slice below is independently implementable, verifiable, and
+committable.
+
+Tracking rules:
+  - Status values: PLANNED -> IN PROGRESS -> BLOCKED | DONE.
+  - Update the tracker row, that slice's checklist, `Last updated`, and Progress
+    log in the SAME verified milestone commit that changes implementation status.
+  - `Progress` is objective acceptance completion (`checked / total`), not an
+    estimated percentage. A slice is DONE only when every acceptance item is
+    checked and its evidence field names tests plus commit(s).
+  - Only one slice should normally be IN PROGRESS. Record blockers and dependency
+    changes in the Notes column rather than carrying them only in chat.
+  - `PROGRESS.md` points to the active slice; this file remains the durable
+    cross-session source of truth for the whole milestone.
+
+Last updated: 2026-08-24 (WIB)
+
+| Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
+|------:|-------------|--------|----------|------------|----------|-------|
+| M6.1 | Agent capability negotiation | PLANNED | 0/6 | current signed WS protocol | — | **NEXT**; establishes compatibility before new controls |
+| M6.2 | Isolated worktrees and structured change sets | PLANNED | 0/7 | M6.1 | — | Coding output becomes inspectable delivery artifacts |
+| M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
+| M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
+| M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
+| M6.6 | Multi-agent delivery pipeline | PLANNED | 0/7 | M6.2–M6.5 | — | Planner -> coder -> reviewer -> test -> human approval |
+| M6.7 | Agent evaluation and reliability scorecards | PLANNED | 0/7 | M6.3, M6.4 | — | Replayable benchmarks and version/model comparisons |
+| M6.8 | Operational inbox | PLANNED | 0/7 | M6.3–M6.5 | — | Human-attention queue across agents, workflows, MCP |
+
+M6.1 — Agent capability negotiation                         [S–M]  PLANNED
+Scope:
+  - Add a versioned signed `hello`/capabilities frame after agent authentication.
+  - Declare progress, cancellation, tools, artifacts, patches, resume support,
+    concurrency, heartbeat, protocol version, and agent implementation version.
+  - Persist/track the active connection's advertised capabilities without making
+    stale disconnected values look live.
+  - Gate server controls and dispatch features by negotiated capability.
+  - Show useful UI state such as protocol version, capabilities, and busy slots.
+
+Acceptance (0/6):
+  - [ ] Versioned capability schema and compatibility rules are documented.
+  - [ ] Signed capability frame is identity-verified and rejects invalid values.
+  - [ ] Older agents without negotiation retain a safe, explicit legacy profile.
+  - [ ] Dispatch and UI disable unsupported features rather than failing late.
+  - [ ] Concurrent-slot/busy state updates live and survives reconnect races.
+  - [ ] Unit, WS integration, and live legacy/new-agent POC pass.
+
+M6.2 — Isolated worktrees and structured change sets         [L]  PLANNED
+Scope:
+  - Allocate one isolated git worktree/branch per coding run.
+  - Prevent two agents from mutating the same checkout.
+  - Capture commits, changed files, diff summary, test/lint results, and artifacts.
+  - Render a compact change-set card with review, PR, and discard actions.
+  - Clean up worktrees safely after merge, cancellation, or explicit retention.
+
+Acceptance (0/7):
+  - [ ] Every coding run receives a unique validated worktree and branch.
+  - [ ] Repository/path authorization prevents traversal and cross-project writes.
+  - [ ] Concurrent runs cannot share a mutable checkout.
+  - [ ] Change-set DTO/UI shows files, commits, verification, and artifacts.
+  - [ ] Review/open-PR/discard are dedicated governed actions with audit events.
+  - [ ] Cleanup is idempotent and never deletes an unmerged retained workspace.
+  - [ ] Integration POC produces, verifies, reviews, and cleans a real change set.
+
+M6.3 — Durable and cancellable agent runs                    [L]  PLANNED
+Scope:
+  - Add persistent agent-run lifecycle: queued, running, succeeded, failed,
+    cancelled, timed_out, and interrupted.
+  - Correlate run id through chat request, progress, final reply, and audit data.
+  - Add cancellation with signed agent acknowledgement and subprocess termination.
+  - Restore active/recent run state after refresh; reconcile reconnect and app restart.
+  - Handle late/duplicate frames and cancellation-vs-completion races idempotently.
+
+Acceptance (0/8):
+  - [ ] Migration/model/repository expose the complete lifecycle and timestamps.
+  - [ ] Run creation and state transitions are transactional and authorization-scoped.
+  - [ ] Refresh restores status plus bounded recent output.
+  - [ ] Cancellation terminates the example subprocess and reaches terminal state.
+  - [ ] Disconnect/reconnect and app restart reconcile interrupted runs honestly.
+  - [ ] Late, duplicate, and cancellation-race frames cannot duplicate final messages.
+  - [ ] Dedicated run detail shows timeline, duration, result, and failure reason.
+  - [ ] Unit/integration/live restart-and-cancel POCs pass.
+
+M6.4 — Typed execution events and unified event envelope     [L]  PLANNED
+Scope:
+  - Define an envelope with event_id, event_type, occurred_at, actor_id,
+    channel_id, run_id, correlation_id, sequence, and typed payload.
+  - Cover plan, file, command, test, artifact, approval, warning, and terminal events.
+  - Unify agent progress, workflow progress, presence, and tool audit delivery where
+    semantics align; preserve explicit bounded adapters for legacy frames.
+  - Support ordered replay/resume cursors and deduplication across reconnects.
+
+Acceptance (0/7):
+  - [ ] Versioned schemas exist for envelope and initial typed event catalog.
+  - [ ] Per-run sequence/order and event-id dedupe are deterministic.
+  - [ ] Reconnect resumes from a cursor without gaps or duplicate UI entries.
+  - [ ] UI renders compact typed activity with raw logs available on demand.
+  - [ ] Audit JSON/CSV exports include the same canonical events.
+  - [ ] Transport seam supports a future Redis/multi-worker implementation.
+  - [ ] Contract, replay, reconnect, and migration-compatibility tests pass.
+
+M6.5 — Approval checkpoints and run-scoped policy            [M–L]  PLANNED
+Scope:
+  - Add explicit approval requests for writes, commands, network, package install,
+    git push/PR, deployment, and other consequential operations.
+  - Support one-time, run-scoped, and policy-derived decisions with expiry.
+  - Enforce at discovery/advertisement and execution, reusing current agent-tool and
+    external MCP default-deny policy rather than adding a parallel authorization path.
+
+Acceptance (0/7):
+  - [ ] Consequential action classes and default-deny policy are documented.
+  - [ ] Approval request/decision is persisted and tied to principal, run, and action.
+  - [ ] Dedicated app-shell approval form shows exact operation and consequences.
+  - [ ] Denied/expired/replayed approvals cannot execute.
+  - [ ] Policy is enforced at both capability discovery and execution.
+  - [ ] Every request, decision, and attempted use is auditable.
+  - [ ] Security tests cover impersonation, scope escalation, replay, and races.
+
+M6.6 — Multi-agent delivery pipeline                         [L–XL]  PLANNED
+Scope:
+  - Orchestrate explicit planner -> coder -> reviewer -> tester -> human approval stages.
+  - Pass structured handoff artifacts, not unconstrained agent-to-agent chat.
+  - Apply stage budgets, timeouts, terminal states, and no-free-loop safeguards.
+  - Display one run graph with stage ownership and independent reviewer context.
+
+Acceptance (0/7):
+  - [ ] Versioned handoff contracts define required inputs/outputs per stage.
+  - [ ] Pipeline graph has deterministic transitions and bounded retry policy.
+  - [ ] Reviewer receives independent context plus immutable change-set evidence.
+  - [ ] Failed/cancelled stages cannot silently advance or duplicate downstream work.
+  - [ ] Human approval is required before configured delivery actions.
+  - [ ] UI shows stage status, owner, artifacts, budgets, and blockers.
+  - [ ] End-to-end real-repo POC reaches a verified human-approved change set.
+
+M6.7 — Agent evaluation and reliability scorecards           [M–L]  PLANNED
+Scope:
+  - Track success, timeout/disconnect, latency, tool failures, cancellation response,
+    verification delta, human acceptance/rework, token usage, and cost where available.
+  - Build replayable benchmark tasks and compare agent/model/version cohorts.
+  - Separate product success metrics from transport health and model quality.
+
+Acceptance (0/7):
+  - [ ] Metric definitions, denominators, and privacy/retention policy are documented.
+  - [ ] Run/event data produces deterministic aggregate metrics.
+  - [ ] Benchmark fixtures are replayable and isolated from production workspaces.
+  - [ ] Scorecards compare agent implementation/model versions without misleading mixes.
+  - [ ] Regression thresholds can block rollout without auto-promoting a winner.
+  - [ ] UI links every aggregate to inspectable supporting runs.
+  - [ ] Seeded benchmark POC demonstrates a version comparison and regression alert.
+
+M6.8 — Operational inbox                                     [M–L]  PLANNED
+Scope:
+  - Create a unified human-attention queue for approval requests, failed/timed-out
+    runs, disconnected agents with active work, workflow failures, pending MCP
+    approvals, requested reviews, and stale tasks.
+  - Provide filters, ownership, priority, acknowledgement, resolution, and deep links.
+  - Keep this as a projection over source records/events, not a second source of truth.
+
+Acceptance (0/7):
+  - [ ] Inbox item taxonomy and source-to-item projection rules are documented.
+  - [ ] Items dedupe deterministically and update/resolve with their source record.
+  - [ ] Authorization prevents cross-tenant information leakage.
+  - [ ] Dedicated app-shell inbox supports filter, assign, acknowledge, and resolve.
+  - [ ] Every item deep-links to the relevant run/workflow/tool/review detail.
+  - [ ] Live updates and reconnect replay preserve correct unread counts.
+  - [ ] Integration POC exercises at least one item from each supported source.
+
+M6 Progress log (append-only, newest first):
+  - 2026-08-24 — M6 created; all eight slices PLANNED. M6.1 selected as NEXT
+    because capability negotiation establishes safe compatibility for cancellation,
+    artifacts, structured events, and concurrency controls.
+
+------------------------------------------------------------------------------
 UI POLISH (2026-08-15)
 ------------------------------------------------------------------------------
 The HTMX UI had four user-visible bugs, all fixed:
@@ -189,6 +365,9 @@ Suggested order & dependencies
     ├─► M2 (MCP exposure)     ──┤── both consume M0 tools
     └─► M3 (multi-channel) ──► M4 (Postgres)   (schema changes sequenced)
   M5 anytime after M1/M3.
+  M6.1 (capabilities) -> M6.2 (worktrees) + M6.3 (durable runs)
+    -> M6.4 (typed events) -> M6.5 (approvals) -> M6.6 (pipeline)
+    -> M6.7 (evaluation) + M6.8 (operational inbox).
 
 Fastest path to "impressive demo": M0 → M1 → M2 (one agent that both thinks
 and is callable by other agents). Add M3+M4 for production realism.
