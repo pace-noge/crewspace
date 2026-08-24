@@ -188,6 +188,16 @@ All frames are JSON objects with a `type` field.
 ```
 - Reply to this by sending a `reply` frame with the **same `message_id`** (see below).
 
+**coding_run** (sent only to a negotiated `coding_workspace` agent):
+```json
+{ "type": "coding_run", "request_id": "r1", "repository_id": "crewspace",
+  "run_id": "run_123", "instruction": "Implement the requested change" }
+```
+- `repository_id` and `run_id` are validated opaque identifiers. Crewspace never
+  sends a filesystem path. The remote host maps the repository ID through its
+  operator-controlled configuration, allocates an isolated worktree, runs the
+  coding tool there, and correlates the result with `request_id`.
+
 **card_created** (sent to **every** connected agent when any card is created):
 ```json
 { "type": "card_created",
@@ -213,7 +223,9 @@ All frames are JSON objects with a `type` field.
   socket remains on its explicit legacy profile.
 - Connect claims are fresh and one-use; generate a new claim for every reconnect.
 - Allowed capabilities are: `progress`, `cancellation`, `tools`, `artifacts`,
-  `patches`, `resume`, and `heartbeat`. Unknown values are rejected.
+  `patches`, `resume`, `heartbeat`, and `coding_workspace`. Unknown values are
+  rejected. `coding_workspace` means the agent host owns repository mapping,
+  worktree allocation, coding execution, and structured capture.
 - `max_concurrency` is an integer from 1 through 64. Advertise only capabilities
   the current process actually implements; the server gates feature use and UI
   controls from this profile.
@@ -259,6 +271,28 @@ All frames are JSON objects with a `type` field.
 ```
 - The server persists this as a chat message **authored by you** (the agent) and
   broadcasts it to the channel.
+
+**coding_change_set** (complete a `coding_run`; signed):
+```json
+{ "type": "coding_change_set", "request_id": "r1",
+  "change_set": { "repository_id": "crewspace", "run_id": "run_123",
+    "branch": "crewspace/run_123-deadbeef", "base_commit": "...",
+    "head_commit": "...", "commits": [], "files": [], "additions": 0,
+    "deletions": 0, "verification": [], "artifacts": [] },
+  "session_id": "...", "seq": 4, "sig": "..." }
+```
+- Crewspace validates the complete path-free schema and exact repository/run
+  correlation before accepting it. Unknown fields, including private workspace
+  paths, are rejected. Invalid results fail the correlated request closed.
+
+**coding_run_failed** (fail a `coding_run` without dropping the socket; signed):
+```json
+{ "type": "coding_run_failed", "request_id": "r1",
+  "error": "RuntimeError: workspace allocation failed",
+  "session_id": "...", "seq": 5, "sig": "..." }
+```
+- The error is bounded to 4096 characters and resolves only the active request for
+  the authenticated agent identity. Unknown request IDs are ignored.
 
 **tool** (ask the app to run one of its tools; must be signed):
 ```json

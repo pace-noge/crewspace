@@ -11,13 +11,13 @@ import time
 from pathlib import Path
 from typing import Literal, cast
 
-from crewspace.config import Settings
+from pydantic import BaseModel, ConfigDict
+
 from crewspace.dto.change_sets import (
     ChangeArtifactDTO,
     ChangeCommitDTO,
     ChangedFileDTO,
     ChangeSetDTO,
-    CodingWorkspaceDTO,
     VerificationResultDTO,
 )
 
@@ -29,8 +29,20 @@ _MAX_ARTIFACTS = 64
 _MAX_VERIFICATION_RESULTS = 64
 
 
+class CodingWorkspaceDTO(BaseModel):
+    """Private execution-host workspace state; never sent by the control plane."""
+
+    model_config = ConfigDict(frozen=True)
+
+    repository_id: str
+    run_id: str
+    path: Path
+    branch: str
+    base_commit: str
+
+
 class GitWorktreeAllocator:
-    """Allocate isolated worktrees from server-configured repositories."""
+    """Allocate isolated worktrees from execution-host repository config."""
 
     def __init__(
         self,
@@ -68,16 +80,6 @@ class GitWorktreeAllocator:
             for repository in self._repositories.values()
         ):
             raise ValueError("Coding worktree root must be outside source repositories")
-
-    @classmethod
-    def from_settings(cls, settings: Settings) -> "GitWorktreeAllocator":
-        return cls(
-            repositories={
-                repository_id: Path(path)
-                for repository_id, path in settings.coding_repositories.items()
-            },
-            worktree_root=Path(settings.coding_worktree_root),
-        )
 
     def allocate(self, *, repository_id: str, run_id: str) -> CodingWorkspaceDTO:
         repository = self._repositories.get(repository_id)

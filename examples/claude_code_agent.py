@@ -43,9 +43,17 @@ import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
 import websockets
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from crewspace.dto.change_sets import VerificationResultDTO
+
+try:
+    from examples.remote_coding_workspace import GitWorktreeAllocator
+except ModuleNotFoundError:  # direct `python examples/claude_code_agent.py`
+    from remote_coding_workspace import GitWorktreeAllocator
 
 
 # --------------------------------------------------------------------------
@@ -102,7 +110,10 @@ class Signer:
 # Agent loop
 # --------------------------------------------------------------------------
 async def _run_claude(
-    prompt: str, on_progress: Callable[[str], Awaitable[None]] | None = None
+    prompt: str,
+    on_progress: Callable[[str], Awaitable[None]] | None = None,
+    *,
+    cwd: Path | None = None,
 ) -> str:
     """Run `claude <args> <prompt>` and return its combined stdout.
 
@@ -115,6 +126,7 @@ async def _run_claude(
     print(f"[agent] running: {' '.join(cmd)}", flush=True)
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -139,6 +151,20 @@ async def main() -> None:
     agent_id = os.environ["AGENT_ID"]
     ws_url = os.environ["AGENT_WS_URL"]
     signer = Signer(os.environ["AGENT_PRIV"])
+    repository_config = json.loads(
+        os.environ.get("AGENT_CODING_REPOSITORIES", "{}")
+    )
+    if not isinstance(repository_config, dict):
+        raise ValueError("AGENT_CODING_REPOSITORIES must be a JSON object")
+    allocator = GitWorktreeAllocator(
+        repositories={key: Path(value) for key, value in repository_config.items()},
+        worktree_root=Path(
+            os.environ.get(
+                "AGENT_CODING_WORKTREE_ROOT",
+                "~/.local/share/crewspace-agent/worktrees",
+            )
+        ),
+    )
 
     async with websockets.connect(
         ws_url,
@@ -150,7 +176,7 @@ async def main() -> None:
                 "type": "hello",
                 "protocol_version": 1,
                 "agent_version": "crewspace-claude-code/1.0",
-                "capabilities": ["progress"],
+                "capabilities": ["progress", "coding_workspace"],
                 "max_concurrency": 1,
             }
         )
@@ -190,6 +216,50 @@ async def main() -> None:
                 await ws.send(json.dumps(reply))
 
                 print("[agent] replied", flush=True)
+
+            elif ftype == "coding_run":
+                request_id = frame["request_id"]
+                try:
+                    workspace = await asyncio.to_thread(
+                        allocator.allocate,
+                        repository_id=frame["repository_id"],
+                        run_id=frame["run_id"],
+                    )
+                    result = await _run_claude(
+                        frame["instruction"], cwd=workspace.path
+                    )
+                    change_set = await asyncio.to_thread(
+                        allocator.capture,
+                        workspace,
+                        verification=[
+                            VerificationResultDTO(
+                                name="claude-code",
+                                status=(
+                                    "failed"
+                                    if result.startswith("(claude exited")
+                                    else "passed"
+                                ),
+                                summary=result[-2000:],
+                            )
+                        ],
+                        artifact_paths=[],
+                    )
+                    response = signer.sign_frame(
+                        {
+                            "type": "coding_change_set",
+                            "request_id": request_id,
+                            "change_set": change_set.model_dump(mode="json"),
+                        }
+                    )
+                except Exception as exc:
+                    response = signer.sign_frame(
+                        {
+                            "type": "coding_run_failed",
+                            "request_id": request_id,
+                            "error": f"{type(exc).__name__}: {exc}"[-4096:],
+                        }
+                    )
+                await ws.send(json.dumps(response))
 
             elif ftype == "card_created":
                 # Fire-and-forget: a card was created elsewhere. Ignore for this bridge.

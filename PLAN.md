@@ -178,7 +178,7 @@ Last updated: 2026-08-24 (WIB)
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
-| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 3/7 | M6.1 | 21 real-Git allocation/capture tests + independent review | Structured DTO capture committed; detail UI next |
+| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 3/7 | M6.1 | 21 real-Git tests within 136-test remote architecture gate | Remote execution relocation ready to commit; detail UI next |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
@@ -215,9 +215,9 @@ Scope:
   - Clean up worktrees safely after merge, cancellation, or explicit retention.
 
 Acceptance (3/7):
-  - [x] Every coding run receives a unique validated worktree and branch.
-  - [x] Repository/path authorization prevents traversal and cross-project writes.
-  - [x] Concurrent runs cannot share a mutable checkout.
+  - [x] Every coding run receives a unique validated worktree and branch on its remote execution host.
+  - [x] Execution-host repository/path authorization prevents traversal and cross-project writes.
+  - [x] Concurrent remote runs cannot share a mutable checkout.
   - [ ] Change-set DTO/UI shows files, commits, verification, and artifacts.
   - [ ] Review/open-PR/discard are dedicated governed actions with audit events.
   - [ ] Cleanup is idempotent and never deletes an unmerged retained workspace.
@@ -333,21 +333,23 @@ M6 Progress log (append-only, newest first):
     tracked state, declared untracked files, traversal, and external symlinks are
     enforced. Frozen provenance, ignored/odd filenames, consistent no-rename parsing,
     mutation fingerprints, deep-frozen collections, lossless NUL parsing, and
-    bounded streaming subprocess output/time are enforced. Twenty-one real-Git
-    tests pass; final independent review found no blockers.
-  - 2026-08-24 — M6.2 authorization/concurrency slice GREEN: typed
-    `CREWSPACE_CODING_*` settings expose only opaque repository IDs; configured
-    Git roots and common-directory filesystem identity are revalidated before
+    bounded streaming subprocess output/time are enforced. The Git adapter now
+    lives on the remote execution host; 21 real-Git tests pass within a 136-test
+    bounded protocol/security gate. Final independent verdict: no blockers.
+  - 2026-08-24 — M6.2 architecture corrected: Crewspace dispatches only opaque
+    repository/run IDs over the signed agent socket; the remote execution host owns
+    its operator-configured repository map, Git roots, worktree allocation, Claude
+    execution, and capture. Git/common-directory identity is revalidated before
     allocation; nested roots and path replacement are rejected. Eight parallel
     real-Git allocations use distinct branches/checkouts. Twelve focused tests
     plus security regressions pass; independent final review found no blockers.
-  - 2026-08-24 — M6.2 allocation tracer GREEN: server-supplied repository
+  - 2026-08-24 — M6.2 allocation tracer GREEN: remote execution-host repository
     allowlist, strict run-id validation, random branch/worktree allocation,
     bounded collision retry, and rollback after partial Git failures. Seven
     real-Git tests pass; independent re-review passed with no blockers.
   - 2026-08-24 — M6.2 moved to IN PROGRESS. First RED/GREEN slice defines the
     structured workspace contract and allocates unique validated branches and
-    worktrees from an explicit server-side repository allowlist.
+    worktrees from an explicit remote execution-host repository allowlist.
   - 2026-08-24 — M6.1 DONE (6/6), verified implementation commit `e7aba78`.
     Independent final review found no blockers or
     suggestions after directly verifying reconnect/disconnect teardown and the

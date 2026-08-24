@@ -3,16 +3,18 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from crewspace.config import Settings
-from crewspace.dto.change_sets import CodingWorkspaceDTO, VerificationResultDTO
-from crewspace.infrastructure.git_worktrees import GitWorktreeAllocator
-import crewspace.infrastructure.git_worktrees as git_worktrees
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
+
+from crewspace.dto.change_sets import VerificationResultDTO
+from remote_coding_workspace import CodingWorkspaceDTO, GitWorktreeAllocator
+import remote_coding_workspace as git_worktrees
 
 
 def _git(path: Path, *args: str) -> str:
@@ -67,7 +69,8 @@ def test_allocate_retries_an_allocation_id_collision(
     repository = _repository(tmp_path)
     suffixes = iter(["collision", "collision", "replacement"])
     monkeypatch.setattr(
-        "crewspace.infrastructure.git_worktrees.secrets.token_hex",
+        git_worktrees.secrets,
+        "token_hex",
         lambda _: next(suffixes),
     )
     allocator = GitWorktreeAllocator(
@@ -130,14 +133,13 @@ def test_allocate_rejects_unknown_repository_and_unsafe_run_ids(
     assert not worktree_root.exists() or not any(worktree_root.iterdir())
 
 
-def test_from_settings_uses_only_configured_repository_ids(tmp_path: Path):
+def test_remote_host_config_uses_only_configured_repository_ids(tmp_path: Path):
     repository = _repository(tmp_path)
-    settings = Settings(
-        coding_repositories={"crewspace": str(repository)},
-        coding_worktree_root=str(tmp_path / "worktrees"),
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
     )
 
-    allocator = GitWorktreeAllocator.from_settings(settings)
     workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
 
     assert workspace.path.parent == (tmp_path / "worktrees").resolve()
@@ -145,36 +147,33 @@ def test_from_settings_uses_only_configured_repository_ids(tmp_path: Path):
         allocator.allocate(repository_id=str(repository), run_id="run_456")
 
 
-def test_from_settings_rejects_non_root_repository_paths(tmp_path: Path):
+def test_remote_host_config_rejects_non_root_repository_paths(tmp_path: Path):
     repository = _repository(tmp_path)
     nested = repository / "src"
     nested.mkdir()
-    settings = Settings(
-        coding_repositories={"crewspace": str(nested)},
-        coding_worktree_root=str(tmp_path / "worktrees"),
-    )
 
     with pytest.raises(ValueError, match="Git root"):
-        GitWorktreeAllocator.from_settings(settings)
+        GitWorktreeAllocator(
+            repositories={"crewspace": nested},
+            worktree_root=tmp_path / "worktrees",
+        )
 
 
-def test_from_settings_rejects_unsafe_repository_ids_and_nested_worktree_root(
+def test_remote_host_config_rejects_unsafe_ids_and_nested_worktree_root(
     tmp_path: Path,
 ):
     repository = _repository(tmp_path)
-    unsafe_id = Settings(
-        coding_repositories={"../crewspace": str(repository)},
-        coding_worktree_root=str(tmp_path / "worktrees"),
-    )
-    nested_root = Settings(
-        coding_repositories={"crewspace": str(repository)},
-        coding_worktree_root=str(repository / ".crewspace-worktrees"),
-    )
 
     with pytest.raises(ValueError, match="Repository id"):
-        GitWorktreeAllocator.from_settings(unsafe_id)
+        GitWorktreeAllocator(
+            repositories={"../crewspace": repository},
+            worktree_root=tmp_path / "worktrees",
+        )
     with pytest.raises(ValueError, match="outside source repositories"):
-        GitWorktreeAllocator.from_settings(nested_root)
+        GitWorktreeAllocator(
+            repositories={"crewspace": repository},
+            worktree_root=repository / ".crewspace-worktrees",
+        )
 
 
 def test_allocate_rejects_repository_replaced_after_authorization(tmp_path: Path):

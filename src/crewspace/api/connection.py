@@ -14,6 +14,7 @@ Two independent broadcast spaces:
 from __future__ import annotations
 
 import asyncio
+import re
 import secrets
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -22,8 +23,12 @@ from fastapi import WebSocket
 
 
 AGENT_PROTOCOL_VERSION = 1
+_SAFE_CODING_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 AGENT_CAPABILITIES = frozenset(
-    {"progress", "cancellation", "tools", "artifacts", "patches", "resume", "heartbeat"}
+    {
+        "progress", "cancellation", "tools", "artifacts", "patches", "resume",
+        "heartbeat", "coding_workspace",
+    }
 )
 LEGACY_AGENT_PROFILE: dict[str, Any] = {
     "protocol_version": 0,
@@ -84,6 +89,9 @@ class AgentConnectionManager:
         self._reported_activity: dict[str, int] = {}
         self._reserved_slots: dict[tuple[str, WebSocket], int] = {}
         self._frame_sessions: dict[WebSocket, tuple[str, int]] = {}
+        self._coding_waiters: dict[tuple[str, str], asyncio.Future[Any]] = {}
+        self._coding_waiter_sockets: dict[tuple[str, str], WebSocket] = {}
+        self._coding_expectations: dict[tuple[str, str], tuple[str, str]] = {}
 
     async def connect(self, agent_id: str, ws: WebSocket) -> None:
         await ws.accept()
@@ -118,6 +126,12 @@ class AgentConnectionManager:
         self._reported_activity.clear()
         self._reserved_slots.clear()
         self._frame_sessions.clear()
+        for future in self._coding_waiters.values():
+            if not future.done():
+                future.cancel()
+        self._coding_waiters.clear()
+        self._coding_waiter_sockets.clear()
+        self._coding_expectations.clear()
         for future in self._waiters.values():
             if not future.done():
                 future.cancel()
@@ -162,6 +176,14 @@ class AgentConnectionManager:
                 if not task.done():
                     task.cancel()
             self._progress_usage.pop(waiter_key, None)
+        for waiter_key, owner in list(self._coding_waiter_sockets.items()):
+            if waiter_key[0] != agent_id or owner is not ws:
+                continue
+            self._coding_waiter_sockets.pop(waiter_key, None)
+            self._coding_expectations.pop(waiter_key, None)
+            future = self._coding_waiters.pop(waiter_key, None)
+            if future is not None and not future.done():
+                future.set_exception(ConnectionError(reason))
         self._reserved_slots.pop((agent_id, ws), None)
 
     def validate_frame_sequence(
@@ -419,6 +441,82 @@ class AgentConnectionManager:
     def deliver_reply(self, agent_id: str, message_id: str, value: Any) -> bool:
         """Called by the agent WS loop when an agent sends a correlated reply."""
         return self._resolve(agent_id, message_id, value)
+
+    async def send_coding_run(
+        self,
+        agent_id: str,
+        *,
+        repository_id: str,
+        run_id: str,
+        instruction: str,
+        timeout: float,
+    ) -> Any:
+        """Dispatch opaque coding inputs; filesystem paths stay agent-local."""
+        if not self.supports(agent_id, "coding_workspace"):
+            raise RuntimeError("unsupported capability: coding_workspace")
+        if _SAFE_CODING_ID.fullmatch(repository_id) is None:
+            raise ValueError("repository id contains unsafe characters")
+        if _SAFE_CODING_ID.fullmatch(run_id) is None:
+            raise ValueError("run id contains unsafe characters")
+        if not isinstance(instruction, str) or not instruction.strip() or len(instruction) > 65_536:
+            raise ValueError("invalid coding instruction")
+        reserved_socket = self._reserve_slot(agent_id)
+        request_id = self.new_message_id()
+        key = (agent_id, request_id)
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._coding_waiters[key] = future
+        self._coding_waiter_sockets[key] = reserved_socket
+        self._coding_expectations[key] = (repository_id, run_id)
+        try:
+            await self.send(
+                agent_id,
+                {
+                    "type": "coding_run",
+                    "request_id": request_id,
+                    "repository_id": repository_id,
+                    "run_id": run_id,
+                    "instruction": instruction,
+                },
+            )
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._coding_waiters.pop(key, None)
+            self._coding_waiter_sockets.pop(key, None)
+            self._coding_expectations.pop(key, None)
+            self._release_slot(agent_id, reserved_socket)
+
+    def deliver_coding_change_set(
+        self, agent_id: str, request_id: str, value: Any
+    ) -> bool:
+        from ..dto.change_sets import ChangeSetDTO
+
+        key = (agent_id, request_id)
+        future = self._coding_waiters.get(key)
+        if future is None or future.done():
+            return False
+        expected = self._coding_expectations.get(key)
+        try:
+            change_set = ChangeSetDTO.model_validate(value)
+            if expected != (change_set.repository_id, change_set.run_id):
+                raise ValueError("coding change set does not match its request")
+        except (TypeError, ValueError) as exc:
+            future.set_exception(ValueError(str(exc)))
+            return False
+        future.set_result(change_set)
+        return True
+
+    def deliver_coding_failure(
+        self, agent_id: str, request_id: str, error: Any
+    ) -> bool:
+        """Fail only the active correlated coding request for this identity."""
+        future = self._coding_waiters.get((agent_id, request_id))
+        if future is None or future.done():
+            return False
+        if not isinstance(error, str) or not error or len(error) > 4096:
+            future.set_exception(ValueError("invalid coding failure payload"))
+            return False
+        future.set_exception(RuntimeError(error))
+        return True
 
 
 def _broadcast_presence(

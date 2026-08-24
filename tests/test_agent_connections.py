@@ -8,6 +8,7 @@ import pytest
 from fastapi import WebSocket
 
 from crewspace.api.connection import AgentConnectionManager, ConnectionManager
+from crewspace.dto.change_sets import ChangeSetDTO
 
 
 class FakeWebSocket:
@@ -22,6 +23,51 @@ class FakeWebSocket:
 
     async def close(self, code: int) -> None:
         pass
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        (
+            "files",
+            [
+                {
+                    "path": f"file-{index}.py",
+                    "status": "added",
+                    "additions": 1,
+                    "deletions": 0,
+                }
+                for index in range(1001)
+            ],
+        ),
+        ("artifacts", [{"path": f"artifact-{index}", "size_bytes": 1} for index in range(65)]),
+        ("commits", [{"sha": "g" * 40, "subject": "invalid sha"}]),
+        ("commits", [{"sha": "a" * 40 + "TRAIL", "subject": "suffix"}]),
+        ("artifacts", [{"path": "../private-key", "size_bytes": 1}]),
+        ("artifacts", [{"path": r"C:\private-key", "size_bytes": 1}]),
+        ("artifacts", [{"path": "a//b", "size_bytes": 1}]),
+        ("artifacts", [{"path": "a/./b", "size_bytes": 1}]),
+        ("artifacts", [{"path": ".", "size_bytes": 1}]),
+    ],
+)
+def test_change_set_wire_metadata_is_bounded_and_relative(field, value):
+    payload = {
+        "repository_id": "crewspace",
+        "run_id": "run_123",
+        "branch": "crewspace/run_123-deadbeef",
+        "base_commit": "a" * 40,
+        "head_commit": "b" * 40,
+        "commits": [],
+        "files": [],
+        "additions": 0,
+        "deletions": 0,
+        "verification": [],
+        "artifacts": [],
+        field: value,
+    }
+
+    with pytest.raises(ValueError):
+        ChangeSetDTO.model_validate(payload)
 
 
 @pytest.mark.asyncio
@@ -256,6 +302,208 @@ async def test_agent_negotiates_versioned_capabilities_for_active_socket():
     assert profile["max_concurrency"] == 3
     assert manager.supports("agent_a", "cancellation") is True
     assert manager.supports("agent_a", "tools") is False
+
+
+@pytest.mark.asyncio
+async def test_coding_run_returns_correlated_remote_change_set():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+
+    pending = asyncio.create_task(
+        manager.send_coding_run(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            instruction="Implement the requested change",
+            timeout=0.1,
+        )
+    )
+    await asyncio.sleep(0)
+    request = socket.sent[0]
+
+    assert request == {
+        "type": "coding_run",
+        "request_id": request["request_id"],
+        "repository_id": "crewspace",
+        "run_id": "run_123",
+        "instruction": "Implement the requested change",
+    }
+    change_set = {
+        "repository_id": "crewspace",
+        "run_id": "run_123",
+        "branch": "crewspace/run_123-deadbeef",
+        "base_commit": "a" * 40,
+        "head_commit": "b" * 40,
+        "commits": [],
+        "files": [],
+        "additions": 0,
+        "deletions": 0,
+        "verification": [],
+        "artifacts": [],
+    }
+    assert manager.deliver_coding_change_set(
+        "agent_a", request["request_id"], change_set
+    ) is True
+    result = await pending
+    assert isinstance(result, ChangeSetDTO)
+    assert result.model_dump(mode="json") == change_set
+
+
+@pytest.mark.asyncio
+async def test_coding_run_remote_failure_is_correlated_and_releases_capacity():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+    pending = asyncio.create_task(
+        manager.send_coding_run(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            instruction="change it",
+            timeout=1.0,
+        )
+    )
+    await asyncio.sleep(0)
+    request_id = socket.sent[0]["request_id"]
+
+    assert manager.deliver_coding_failure(
+        "agent_a", request_id, "workspace allocation failed"
+    ) is True
+    with pytest.raises(RuntimeError, match="workspace allocation failed"):
+        await pending
+    assert manager.capability_profile("agent_a")["active_runs"] == 0
+    assert manager.is_available("agent_a") is True
+
+    assert manager.deliver_coding_failure(
+        "agent_a", "different-request", "forged"
+    ) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change_set",
+    [
+        {
+            "repository_id": "other",
+            "run_id": "run_123",
+            "branch": "crewspace/run_123-deadbeef",
+            "base_commit": "a" * 40,
+            "head_commit": "b" * 40,
+            "commits": [], "files": [], "additions": 0, "deletions": 0,
+            "verification": [], "artifacts": [],
+        },
+        {
+            "repository_id": "crewspace",
+            "run_id": "run_123",
+            "path": "/agent/private/worktree",
+            "branch": "crewspace/run_123-deadbeef",
+            "base_commit": "a" * 40,
+            "head_commit": "b" * 40,
+            "commits": [], "files": [], "additions": 0, "deletions": 0,
+            "verification": [], "artifacts": [],
+        },
+    ],
+)
+async def test_coding_run_rejects_uncorrelated_or_path_bearing_results(change_set):
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+    pending = asyncio.create_task(
+        manager.send_coding_run(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            instruction="change it",
+            timeout=0.1,
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert manager.deliver_coding_change_set(
+        "agent_a", socket.sent[0]["request_id"], change_set
+    ) is False
+    with pytest.raises(ValueError):
+        await pending
+
+
+@pytest.mark.asyncio
+async def test_coding_run_requires_negotiated_remote_workspace_capability():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+
+    with pytest.raises(RuntimeError, match="unsupported capability: coding_workspace"):
+        await manager.send_coding_run(
+            "agent_a",
+            repository_id="crewspace",
+            run_id="run_123",
+            instruction="change it",
+            timeout=0.01,
+        )
+
+    assert socket.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "repository_id,run_id", [("../repo", "run_123"), ("repo", "../run")]
+)
+async def test_coding_run_rejects_unsafe_opaque_identifiers(repository_id, run_id):
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    manager.negotiate_capabilities(
+        "agent_a",
+        cast(WebSocket, socket),
+        {
+            "protocol_version": 1,
+            "agent_version": "claude-code/2.0",
+            "capabilities": ["coding_workspace"],
+            "max_concurrency": 1,
+        },
+    )
+
+    with pytest.raises(ValueError, match="unsafe"):
+        await manager.send_coding_run(
+            "agent_a",
+            repository_id=repository_id,
+            run_id=run_id,
+            instruction="change it",
+            timeout=0.01,
+        )
+
+    assert socket.sent == []
 
 
 @pytest.mark.asyncio

@@ -329,6 +329,16 @@ def test_claude_example_negotiates_server_managed_chat_capacity():
     assert 'f["seq"]' in source
 
 
+def test_claude_example_owns_remote_workspace_configuration():
+    source = Path("examples/claude_code_agent.py").read_text()
+
+    assert '"coding_workspace"' in source
+    assert 'ftype == "coding_run"' in source
+    assert '"type": "coding_run_failed"' in source
+    assert "AGENT_CODING_REPOSITORIES" in source
+    assert "AGENT_CODING_WORKTREE_ROOT" in source
+
+
 def test_team_leader_can_create_workspace_and_channel(client):
     workspace = client.post(
         "/management/teams/team_acme/workspaces",

@@ -133,6 +133,31 @@ async def agent_ws(websocket: WebSocket):
                         "max_concurrency": profile["max_concurrency"],
                     }
                 )
+            elif ftype == "coding_change_set":
+                if not agent_manager.supports(agent_id, "coding_workspace"):
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "error": "unsupported capability: coding_workspace",
+                        }
+                    )
+                    continue
+                agent_manager.deliver_coding_change_set(
+                    agent_id,
+                    frame.get("request_id", ""),
+                    frame.get("change_set"),
+                )
+            elif ftype == "coding_run_failed":
+                if not agent_manager.supports(agent_id, "coding_workspace"):
+                    await websocket.send_json(
+                        {"type": "error", "error": "unsupported capability: coding_workspace"}
+                    )
+                    continue
+                agent_manager.deliver_coding_failure(
+                    agent_id,
+                    frame.get("request_id", ""),
+                    frame.get("error"),
+                )
             # Unknown frame types are ignored.
     except WebSocketDisconnect:
         agent_manager.disconnect(agent_id, websocket)

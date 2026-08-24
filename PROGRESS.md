@@ -60,14 +60,20 @@ milestone commits are ahead of `origin/master` and will be pushed at the slice g
 
 ## NEXT ACTION
 M6.2 — Isolated worktrees and structured change sets is IN PROGRESS (3/7).
-Authorized concurrent isolation is committed. Structured capture is GREEN with
+Architecture correction is active: Crewspace now owns opaque dispatch, signed
+correlation, path-free schema validation, governance, and future persistence/UI;
+the remote Claude execution host owns repository mapping, Git worktrees, coding
+execution, capture, and future cleanup. Structured capture is GREEN with
 immutable DTOs for commits, changed files/line totals, verification, and artifact
 metadata. Capture rejects forged/replaced workspaces, changed branches, dirty
 tracked state, undeclared untracked files, artifact traversal, and external
 symlinks. Frozen provenance, ignored and odd filenames, mutation fingerprints,
-deep-frozen collections, lossless NUL parsing, and bounded subprocess output/time
-are enforced. Twenty-one real-Git tests pass; final independent review found no
-blockers. Commit this capture slice, then continue to the dedicated detail UI.
+deep-frozen collections, lossless NUL parsing, normalized path-free wire metadata,
+and bounded subprocess output/time are enforced. Signed correlated success/failure
+frames preserve socket and capacity ownership. Twenty-one real-Git tests pass
+within a 136-test bounded protocol/security gate; compilation, diff, and added-line
+security scans pass. Final independent verdict found no blockers. Commit the
+relocation slice, then continue to the dedicated detail UI.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

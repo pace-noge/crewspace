@@ -37,7 +37,12 @@ export AGENT_ID="agent_coder"
 export AGENT_WS_URL="ws://127.0.0.1:8000/agents/ws"   # wss:// in production
 export CLAUDE_BIN="claude"
 export CLAUDE_ARGS="--print --verbose"                  # forwarded to `claude`
+export AGENT_CODING_REPOSITORIES='{"crewspace":"/srv/git/crewspace"}'
+export AGENT_CODING_WORKTREE_ROOT="$HOME/.local/share/crewspace-agent/worktrees"
 ```
+
+The repository mapping is configured only on this execution host. Crewspace sends
+opaque repository IDs and never receives or chooses these local filesystem paths.
 
 ## Run
 
@@ -53,8 +58,9 @@ Then in chat:
 
 The agent streams Claude Code output while it runs and posts the final result
 back when it finishes. On connection it negotiates protocol v1 with `progress`
-support and one execution slot. Crewspace atomically reserves that slot for each
-chat request; autonomous agents may additionally publish signed `agent_activity`
+and `coding_workspace` support with one execution slot. Crewspace atomically
+reserves that slot for each chat or coding request; autonomous agents may
+additionally publish signed `agent_activity`
 updates for work they start outside Crewspace.
 The v1 acknowledgement installs a connection-scoped session id; the example
 automatically signs it and a monotonically increasing sequence into every later

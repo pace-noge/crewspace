@@ -44,12 +44,6 @@ class Settings(BaseSettings):
     # so this is deliberately generous; a WebSocket stays open regardless.
     agent_reply_timeout: float = 1800.0
 
-    # Coding repositories are operator-configured and addressed by opaque IDs;
-    # agents never provide filesystem paths. Keep managed worktrees outside the
-    # source repositories so a coding run cannot mutate the app checkout.
-    coding_repositories: dict[str, str] = {}
-    coding_worktree_root: str = "~/.local/share/crewspace/worktrees"
-
     @model_validator(mode="after")
     def reject_network_exposure_with_development_credentials(self) -> "Settings":
         if self.database_url is None:
