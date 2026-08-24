@@ -1,6 +1,7 @@
 """Team-scoped persistence and governance for remote coding change sets."""
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 
 import pytest
@@ -1907,3 +1908,151 @@ def test_authenticated_http_cancel_coding_run(app):
     finally:
         agent_manager.send_coding_cancel = original_cancel
         agent_manager.send_coding_run = original_run
+
+
+@pytest.mark.asyncio
+async def test_reconcile_interrupted_runs_marks_active_as_interrupted(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_recon",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    async def make_run(run_id, agent_id):
+        async with app.state.db.uow() as uow:
+            await dispatch_coding_run(
+                uow,
+                agent_id=agent_id,
+                team_id="team_acme",
+                repository_id="repo_recon",
+                run_id=run_id,
+                instruction="work",
+                requested_by="user_bilal",
+                agent_manager=_FakeManager(),
+            )
+
+    await arrange()
+    await make_run("run_recon_a", "agent_recon_a")
+    await make_run("run_recon_b", "agent_recon_b")
+    # A queued run created directly.
+    async with app.state.db.uow() as uow:
+        from crewspace.domain.entities import CodingRun
+
+        now = dt.datetime.now(dt.timezone.utc)
+        queued = CodingRun(
+            id="run_recon_q",
+            agent_id="agent_recon_a",
+            team_id="team_acme",
+            repository_id="repo_recon",
+            requested_by="user_bilal",
+            request_id="req_recon_q",
+            instruction="wait",
+            status="queued",
+            created_at=now,
+            updated_at=now,
+        )
+        await uow.coding_runs.create(queued)
+        await uow.commit()
+    # A succeeded run that must be left untouched.
+    async with app.state.db.uow() as uow:
+        await uow.coding_runs.transition(
+            "run_recon_a", expected="running", status="succeeded",
+            updated_at=dt.datetime.now(dt.timezone.utc), started_at=None, finished_at=None,
+        )
+        await uow.commit()
+
+    from crewspace.application.coding_runs import reconcile_interrupted_runs
+
+    async with app.state.db.uow() as uow:
+        reconciled = await reconcile_interrupted_runs(uow, agent_id=None)
+    assert "run_recon_a" not in reconciled  # already succeeded
+    assert "run_recon_b" in reconciled
+    assert "run_recon_q" in reconciled
+
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get("run_recon_a")).status == "succeeded"
+        assert (await uow.coding_runs.get("run_recon_b")).status == "interrupted"
+        assert (await uow.coding_runs.get("run_recon_q")).status == "interrupted"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_is_agent_scoped_and_idempotent(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_recon2",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    async def make_run(run_id, agent_id):
+        async with app.state.db.uow() as uow:
+            await dispatch_coding_run(
+                uow,
+                agent_id=agent_id,
+                team_id="team_acme",
+                repository_id="repo_recon2",
+                run_id=run_id,
+                instruction="work",
+                requested_by="user_bilal",
+                agent_manager=_FakeManager(),
+            )
+
+    await arrange()
+    await make_run("run_scoped_a", "agent_scoped_a")
+    await make_run("run_scoped_b", "agent_scoped_b")
+
+    from crewspace.application.coding_runs import reconcile_interrupted_runs
+
+    async with app.state.db.uow() as uow:
+        first = await reconcile_interrupted_runs(
+            uow, agent_id="agent_scoped_a"
+        )
+    assert first == ["run_scoped_a"]
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get("run_scoped_a")).status == "interrupted"
+        assert (await uow.coding_runs.get("run_scoped_b")).status == "running"
+
+    # Idempotent: already interrupted -> no further reconciliation.
+    async with app.state.db.uow() as uow:
+        second = await reconcile_interrupted_runs(
+            uow, agent_id="agent_scoped_a"
+        )
+    assert second == []
+
+
+@pytest.mark.asyncio
+async def test_manager_disconnect_triggers_reconcile_hook():
+    from crewspace.api.connection import agent_manager
+
+    original = agent_manager.on_disconnect
+    calls = []
+
+    async def hook(agent_id):
+        calls.append(agent_id)
+
+    agent_manager.on_disconnect = hook
+    try:
+        class _StubWs:
+            async def accept(self):
+                return None
+
+        fake_ws = _StubWs()
+        # Simulate the manager holding a connection then losing it.
+        await agent_manager.connect("agent_hook_x", fake_ws)
+        agent_manager.disconnect("agent_hook_x", fake_ws)
+        # Let the fire-and-forget reconcile hook run on the loop.
+        await asyncio.sleep(0.01)
+        assert calls == ["agent_hook_x"]
+    finally:
+        agent_manager.on_disconnect = original

@@ -544,6 +544,32 @@ class SqlAlchemyCodingRunRepository:
         )
         return normalized
 
+    async def search_active(
+        self,
+        agent_id: str | None = None,
+        *,
+        statuses: list[str] | None = None,
+    ) -> list[CodingRun]:
+        """Return runs that are still in-flight (default: queued/running).
+
+        Used by reconciliation to find runs whose agent vanished (disconnect) or
+        whose app restarted. Scoped to a single agent when ``agent_id`` is given.
+        """
+        if statuses is None:
+            statuses = ["queued", "running"]
+        placeholders = ", ".join("?" for _ in statuses)
+        params: list = list(statuses)
+        query = (
+            f"SELECT * FROM coding_run WHERE status IN ({placeholders})"
+        )
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        query += " ORDER BY created_at ASC"
+        cur = await self._conn.execute(query, tuple(params))
+        rows = await cur.fetchall()
+        return [self._map(row) for row in rows]
+
     async def get(self, run_id: str) -> CodingRun | None:
         cur = await self._conn.execute("SELECT * FROM coding_run WHERE id=?", (run_id,))
         row = await cur.fetchone()

@@ -21,12 +21,25 @@ from .api.routers import (agents, auth, boards, cards, change_sets, chat, coding
                             cronjobs, pages, presence, teams, tools, workflows)
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
+from .application.coding_runs import reconcile_interrupted_runs
 from .api.connection import agent_manager, manager, thread_manager
 from .dto.mappers import to_message
 from .security import is_same_origin
 from .infrastructure.db import logger as db_logger
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+
+
+def _make_agent_disconnect_reconciler(db):
+    """Return a disconnect callback that interrupts an agent's in-flight runs."""
+
+    async def _reconcile(agent_id: str) -> None:
+        async with db.uow() as uow:
+            await reconcile_interrupted_runs(uow, agent_id=agent_id)
+
+    return _reconcile
 
 
 @asynccontextmanager
@@ -39,6 +52,11 @@ async def lifespan(app: FastAPI):
         app.state.db = db
     else:
         db = app.state.db
+    # On startup, reconcile any runs left in-flight by a previous process or a
+    # dropped agent connection into the interrupted terminal state.
+    async with db.uow() as bootstrap_uow:
+        await reconcile_interrupted_runs(bootstrap_uow)
+    agent_manager.on_disconnect = _make_agent_disconnect_reconciler(db)
     # Tests that inject a pre-configured Database (e.g. a temp file) drive
     # requests directly and do not need the background pollers running; leaving
     # them on contends with every request for the single SQLite file (WAL +

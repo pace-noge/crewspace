@@ -22,6 +22,18 @@ from typing import Any
 from fastapi import WebSocket
 
 
+def _log_reconcile_error(task: "asyncio.Future[None]") -> None:
+    """Surface reconcile errors from the fire-and-forget disconnect hook."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        import logging
+        logging.getLogger(__name__).warning(
+            "agent disconnect reconcile failed: %r", exc
+        )
+
+
 AGENT_PROTOCOL_VERSION = 1
 _SAFE_CODING_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 AGENT_CAPABILITIES = frozenset(
@@ -76,8 +88,12 @@ class AgentConnectionManager:
     resolves when the agent sends a correlated reply (used for chat mentions).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        on_disconnect: "Callable[[str], Awaitable[None] | None] | None" = None,
+    ) -> None:
         self._conns: dict[str, WebSocket] = {}
+        self.on_disconnect = on_disconnect
         self._waiters: dict[tuple[str, str], asyncio.Future[Any]] = {}
         self._waiter_sockets: dict[tuple[str, str], WebSocket] = {}
         self._progress_handlers: dict[
@@ -123,6 +139,10 @@ class AgentConnectionManager:
             self._frame_sessions.pop(ws, None)
 
             _broadcast_presence(agent_id, "disconnected")
+            if self.on_disconnect is not None:
+                # Fire-and-forget: reconcile runs for the lost agent on the loop.
+                task = asyncio.ensure_future(self.on_disconnect(agent_id))
+                task.add_done_callback(_log_reconcile_error)
 
     def reset(self) -> None:
         """Drop live connections and cancel unresolved waits on app shutdown."""

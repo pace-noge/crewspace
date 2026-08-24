@@ -138,3 +138,39 @@ async def cancel_coding_run(
         return False
     await uow.commit()
     return True
+
+
+async def reconcile_interrupted_runs(
+    uow: UnitOfWork,
+    *,
+    agent_id: str | None = None,
+    now: dt.datetime | None = None,
+) -> list[str]:
+    """Mark in-flight runs as interrupted after a disconnect or app restart.
+
+    A run that is still ``queued`` or ``running`` when its agent disconnects (or
+    the control plane process restarts) is reconciled to ``interrupted`` so it is
+    no longer presented as live work. The transition is fail-closed via the
+    repository compare-and-set: only live runs move; already-terminal runs (and
+    anything outside the active set) are left untouched, so running this twice is
+    a no-op beyond the first call.
+
+    Returns the run ids that were reconciled on this call.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    active = await uow.coding_runs.search_active(agent_id)
+    reconciled: list[str] = []
+    for run in active:
+        moved = await uow.coding_runs.transition(
+            run.id,
+            expected=run.status,
+            status="interrupted",
+            updated_at=now,
+            started_at=run.started_at,
+            finished_at=run.finished_at or now,
+        )
+        if moved:
+            reconciled.append(run.id)
+    if reconciled:
+        await uow.commit()
+    return reconciled

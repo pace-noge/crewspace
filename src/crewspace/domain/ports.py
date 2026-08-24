@@ -401,6 +401,9 @@ class CodingRunRepository(Protocol):
         finished_at: datetime | None,
     ) -> bool: ...
     async def append_output(self, run_id: str, text: str) -> None: ...
+    async def search_active(
+        self, agent_id: str | None = None, *, statuses: list[str] | None = None
+    ) -> list: ...
 
 
 @runtime_checkable
