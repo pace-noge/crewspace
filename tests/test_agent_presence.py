@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 
 import pytest
 
@@ -29,6 +30,9 @@ def _register_agent_key(app, public_key: str) -> None:
             )
 
     asyncio.run(set_pubkey())
+
+
+from crewspace.application.coding_runs import dispatch_coding_run, mark_run_failed
 
 
 def test_presence_socket_receives_agent_connect_and_disconnect(client, app):
@@ -474,3 +478,95 @@ def test_signed_agent_progress_reaches_channel_before_final_reply(client, app):
             reply = chat.receive_json()
             assert reply["author_id"] == "agent_planner"
             assert reply["body"] == "done"
+
+
+def test_agent_ws_coding_run_failed_transitions_run_through_wired_path(client, app):
+    # Drives the REAL agent_ws socket (not the helper directly) so the wired
+    # `await _handle_coding_run_failed` call path is exercised.
+    from crewspace.dto.change_sets import (
+        ChangeArtifactDTO,
+        ChangeCommitDTO,
+        ChangedFileDTO,
+        ChangeSetDTO,
+        VerificationResultDTO,
+    )
+    from crewspace.security import generate_agent_keypair, make_connect_claim
+
+    private_key, public_key = generate_agent_keypair()
+
+    async def setup() -> str:
+        async with app.state.db.uow() as uow:
+            await uow._conn.execute(
+                "UPDATE member SET pubkey=? WHERE id='agent_planner'", (public_key,)
+            )
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_wired_fail",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            run = await dispatch_coding_run(
+                uow,
+                agent_id="agent_planner",
+                team_id="team_acme",
+                repository_id="repo_wired_fail",
+                run_id="run_wired_fail",
+                instruction="work",
+                requested_by="user_bilal",
+                agent_manager=_FakeManager(),
+            )
+        return run.request_id
+
+    from crewspace.domain.entities import TeamRepositoryAccess
+
+    class _FakeManager:
+        async def send_coding_run(self, *a, **k):
+            return
+
+        async def send_coding_cancel(self, *a, **k):
+            return
+
+    request_id = asyncio.run(setup())
+
+    claim = make_connect_claim(private_key, "agent_planner")
+
+    with client.websocket_connect(
+        "/agents/ws",
+        headers={
+            "Authorization": f"Bearer {claim}",
+            "Origin": "http://testserver",
+        },
+    ) as agent:
+        # Negotiate capabilities (incl. coding_workspace) before sending frames.
+        hello = {
+            "type": "hello",
+            "protocol_version": 1,
+            "agent_version": "test-agent/1.0",
+            "capabilities": ["progress", "coding_workspace", "cancellation"],
+            "max_concurrency": 1,
+        }
+        agent.send_json(_signed_frame(private_key, hello))
+        ack = agent.receive_json()  # hello_ack
+        session_id = ack["session_id"]
+        # Send a signed coding_run_failed frame through the REAL socket.
+        payload = {
+            "type": "coding_run_failed",
+            "request_id": request_id,
+            "error": "boom",
+            "session_id": session_id,
+            "seq": 1,
+        }
+        agent.send_json(_signed_frame(private_key, payload))
+        # Allow the server to process the frame.
+        import time
+
+        time.sleep(0.4)
+
+    async def status() -> str:
+        async with app.state.db.uow() as uow:
+            run = await uow.coding_runs.get("run_wired_fail")
+            return run.status if run else "missing"
+
+    assert asyncio.run(status()) == "failed"

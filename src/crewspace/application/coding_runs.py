@@ -174,3 +174,37 @@ async def reconcile_interrupted_runs(
     if reconciled:
         await uow.commit()
     return reconciled
+
+
+async def mark_run_failed(
+    uow: UnitOfWork,
+    *,
+    run_id: str,
+    error: str | None = None,
+    now: dt.datetime | None = None,
+) -> bool:
+    """Mark a run failed from a terminal failure frame, idempotently.
+
+    Transitions a live (queued/running) run to ``failed`` via a fail-closed CAS.
+    If the run is already terminal (e.g. it was cancelled or already failed), the
+    frame is treated as a late/duplicate arrival and ignored — no state regression
+    and no duplicate message. Returns True only when this call performed the
+    transition.
+    """
+    now = now or dt.datetime.now(dt.timezone.utc)
+    run = await uow.coding_runs.get(run_id)
+    if run is None:
+        return False
+    if run.status not in ("queued", "running"):
+        return False
+    moved = await uow.coding_runs.transition(
+        run_id,
+        expected=run.status,
+        status="failed",
+        updated_at=now,
+        started_at=run.started_at,
+        finished_at=now,
+    )
+    if moved:
+        await uow.commit()
+    return moved

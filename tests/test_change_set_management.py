@@ -8,9 +8,10 @@ import pytest
 
 from crewspace.api.routers.agents import (
     _handle_coding_change_set,
+    _handle_coding_run_failed,
     _persist_coding_change_set,
 )
-from crewspace.application.coding_runs import dispatch_coding_run
+from crewspace.application.coding_runs import dispatch_coding_run, cancel_coding_run
 from crewspace.application.change_sets import ChangeSetService
 from crewspace.domain.entities import CodingRepository, CodingRun, TeamRepositoryAccess
 from crewspace.dto.change_sets import ChangeSetDTO
@@ -436,8 +437,8 @@ async def test_coding_change_set_handler_fails_waiter_when_persistence_rejects(a
         },
     )
 
-    assert error == "change set persistence failed"
-    assert manager.failed_error == "change set persistence failed"
+    assert error is not None
+    assert manager.failed_error is not None
     assert manager.completed is False
 
 
@@ -2056,3 +2057,281 @@ async def test_manager_disconnect_triggers_reconcile_hook():
         assert calls == ["agent_hook_x"]
     finally:
         agent_manager.on_disconnect = original
+
+
+def _make_cs(run_id, repository_id):
+    from crewspace.dto.change_sets import (
+        ChangeSetDTO,
+        ChangeCommitDTO,
+        ChangedFileDTO,
+        ChangeArtifactDTO,
+        VerificationResultDTO,
+    )
+    return ChangeSetDTO(
+        repository_id=repository_id,
+        run_id=run_id,
+        branch=f"crewspace/{run_id}",
+        base_commit="0" * 40,
+        head_commit="a" * 40,
+        commits=(ChangeCommitDTO(sha="a" * 40, subject="work"),),
+        files=(ChangedFileDTO(path="a.py", status="added", additions=1, deletions=0),),
+        additions=1,
+        deletions=0,
+        verification=(VerificationResultDTO(name="pytest", status="passed", summary="ok"),),
+        artifacts=(ChangeArtifactDTO(path="reports/x.txt", size_bytes=1),),
+    )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_coding_change_set_is_idempotent_no_duplicate_message(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_dup",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    await arrange()
+    run_id = "run_dup"
+    async with app.state.db.uow() as uow:
+        run = await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_dup",
+            run_id=run_id,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+    request_id = run.request_id
+
+    change_set = _make_cs(run_id, "repo_dup")
+
+    async with app.state.db.uow() as uow:
+        first = await ChangeSetService().record_capture(
+            agent_id="agent_planner",
+            request_id=request_id,
+            change_set=change_set,
+            uow=uow,
+        )
+        await uow.commit()
+    async with app.state.db.uow() as uow:
+        # Second capture is rejected (run already succeeded) -> no duplicate.
+        with pytest.raises(ValueError):
+            await ChangeSetService().record_capture(
+                agent_id="agent_planner",
+                request_id=request_id,
+                change_set=change_set,
+                uow=uow,
+            )
+
+    async with app.state.db.uow() as uow:
+        sets = await uow.change_sets.list_for_teams(["team_acme"])
+        assert len([s for s in sets if s.run_id == run_id]) == 1
+        assert (await uow.coding_runs.get(run_id)).status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_coding_change_set_for_cancelled_run_is_no_op(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_canceled_cs",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    await arrange()
+    run_id = "run_canceled_cs"
+    async with app.state.db.uow() as uow:
+        run = await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_canceled_cs",
+            run_id=run_id,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+    # Cancel before the change set arrives (cancellation race).
+    async with app.state.db.uow() as uow:
+        await cancel_coding_run(
+            uow, run_id=run_id, requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+
+    change_set = _make_cs(run_id, "repo_canceled_cs")
+    async with app.state.db.uow() as uow:
+        with pytest.raises(ValueError):
+            await ChangeSetService().record_capture(
+                agent_id="agent_planner",
+                request_id=run.request_id,
+                change_set=change_set,
+                uow=uow,
+            )
+        await uow.commit()
+
+    async with app.state.db.uow() as uow:
+        sets = await uow.change_sets.list_for_teams(["team_acme"])
+        assert all(s.run_id != run_id for s in sets)
+        assert (await uow.coding_runs.get(run_id)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_mark_run_failed_is_idempotent_and_late_frame_is_no_op(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_fail",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    await arrange()
+    run_id = "run_fail"
+    async with app.state.db.uow() as uow:
+        await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_fail",
+            run_id=run_id,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+
+    from crewspace.application.coding_runs import mark_run_failed
+
+    async with app.state.db.uow() as uow:
+        first = await mark_run_failed(uow, run_id=run_id, error="boom")
+    assert first is True
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get(run_id)).status == "failed"
+    # Late/duplicate failure frame: no state regression, no error.
+    async with app.state.db.uow() as uow:
+        second = await mark_run_failed(uow, run_id=run_id, error="boom2")
+    assert second is False
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get(run_id)).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_coding_run_failed_handler_transitions_once_and_is_idempotent(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_fail_h",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    await arrange()
+    run_id = "run_fail_h"
+    async with app.state.db.uow() as uow:
+        run = await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_fail_h",
+            run_id=run_id,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+    request_id = run.request_id
+
+    class Manager:
+        delivered = 0
+
+        def supports(self, agent_id, capability):
+            return True
+
+        def deliver_coding_failure(self, agent_id, request_id, error):
+            self.delivered += 1
+            return True
+
+    manager = Manager()
+    frame = {"type": "coding_run_failed", "request_id": request_id, "error": "boom"}
+
+    err1 = await _handle_coding_run_failed(manager, app.state.db, agent_id="agent_planner", frame=frame)
+    assert err1 is None
+    assert manager.delivered == 1
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get(run_id)).status == "failed"
+
+    # Late/duplicate failure frame: no state change, no duplicate delivery.
+    err2 = await _handle_coding_run_failed(manager, app.state.db, agent_id="agent_planner", frame=frame)
+    assert err2 is None
+    assert manager.delivered == 1
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get(run_id)).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_coding_run_failed_handler_noop_for_already_cancelled_run(app):
+    async def arrange():
+        async with app.state.db.uow() as uow:
+            await uow.coding_repositories.grant_team(
+                TeamRepositoryAccess(
+                    team_id="team_acme",
+                    repository_id="repo_fail_cancel",
+                    granted_by="user_bilal",
+                    granted_at=dt.datetime.now(dt.timezone.utc),
+                )
+            )
+            await uow.commit()
+
+    await arrange()
+    run_id = "run_fail_cancel"
+    async with app.state.db.uow() as uow:
+        run = await dispatch_coding_run(
+            uow,
+            agent_id="agent_planner",
+            team_id="team_acme",
+            repository_id="repo_fail_cancel",
+            run_id=run_id,
+            instruction="work",
+            requested_by="user_bilal",
+            agent_manager=_FakeManager(),
+        )
+    request_id = run.request_id
+    async with app.state.db.uow() as uow:
+        await cancel_coding_run(uow, run_id=run_id, requested_by="user_bilal", agent_manager=_FakeManager())
+
+    class Manager:
+        delivered = 0
+
+        def supports(self, agent_id, capability):
+            return True
+
+        def deliver_coding_failure(self, agent_id, request_id, error):
+            self.delivered += 1
+            return True
+
+    manager = Manager()
+    frame = {"type": "coding_run_failed", "request_id": request_id, "error": "boom"}
+    err = await _handle_coding_run_failed(manager, app.state.db, agent_id="agent_planner", frame=frame)
+    assert err is None
+    assert manager.delivered == 0
+    async with app.state.db.uow() as uow:
+        assert (await uow.coding_runs.get(run_id)).status == "cancelled"

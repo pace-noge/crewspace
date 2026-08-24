@@ -20,6 +20,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..connection import agent_manager
 from ...application.change_sets import ChangeSetService
+from ...application.coding_runs import dispatch_coding_run, mark_run_failed
 from ...application.tools import build_registry
 from ...config import get_settings
 from ...security import verify_connect_claim
@@ -154,16 +155,11 @@ async def agent_ws(websocket: WebSocket):
                 if error:
                     await websocket.send_json({"type": "error", "error": error})
             elif ftype == "coding_run_failed":
-                if not agent_manager.supports(agent_id, "coding_workspace"):
-                    await websocket.send_json(
-                        {"type": "error", "error": "unsupported capability: coding_workspace"}
-                    )
-                    continue
-                agent_manager.deliver_coding_failure(
-                    agent_id,
-                    frame.get("request_id", ""),
-                    frame.get("error"),
+                unsupported = await _handle_coding_run_failed(
+                    agent_manager, websocket.app.state.db, agent_id=agent_id, frame=frame
                 )
+                if unsupported is not None:
+                    await websocket.send_json({"type": "error", "error": unsupported})
             elif ftype in {
                 "coding_workspace_action_result",
                 "coding_workspace_action_failed",
@@ -228,21 +224,29 @@ async def _handle_coding_change_set(
             agent_id, request_id, value
         )
     except ValueError as exc:
+        # Malformed frame: deliver the validation error to the waiter.
         manager.deliver_coding_change_set(agent_id, request_id, value)
         return str(exc)
     if change_set is None:
         return None
-    try:
-        await _persist_coding_change_set(
-            db,
-            agent_id=agent_id,
-            request_id=request_id,
-            change_set=change_set,
-        )
-    except Exception:
-        error = "change set persistence failed"
-        manager.deliver_coding_failure(agent_id, request_id, error)
-        return error
+    async with db.uow() as uow:
+        # Idempotency: a duplicate or late terminal frame for an already-finalized
+        # run is a no-op (no duplicate change set, no spurious failure message).
+        run = await uow.coding_runs.get(change_set.run_id)
+        if run is not None and run.status not in ("queued", "running"):
+            return None
+        try:
+            await ChangeSetService().record_capture(
+                agent_id=agent_id,
+                request_id=request_id,
+                change_set=change_set,
+                uow=uow,
+            )
+        except (KeyError, ValueError, PermissionError) as exc:
+            # Genuine rejection (unknown run / wrong agent / already moved): report.
+            manager.deliver_coding_failure(agent_id, request_id, str(exc))
+            return str(exc)
+        await uow.commit()
     manager.complete_coding_change_set(agent_id, request_id, change_set)
     return None
 
@@ -274,6 +278,33 @@ def _verify_frame(pubkey: str, frame: dict) -> bool:
     return ok
 
 
+
+
+async def _handle_coding_run_failed(
+    manager, db, *, agent_id: str, frame: dict
+) -> str | None:
+    """Process a coding_run_failed terminal frame idempotently.
+
+    Returns a capability error string when the agent lacks ``coding_workspace``
+    (the caller should send it back over the socket), or ``None`` otherwise.
+
+    Resolves the run by the correlated ``request_id`` and transitions it to
+    ``failed`` exactly once via a fail-closed CAS. A late or duplicate failure
+    frame for an already-terminal run is a no-op, so no contradictory or
+    duplicate message is delivered to the waiter.
+    """
+    if not manager.supports(agent_id, "coding_workspace"):
+        return "unsupported capability: coding_workspace"
+    request_id = frame.get("request_id", "")
+    error = frame.get("error")
+    async with db.uow() as uow:
+        run = await uow.coding_runs.get_by_request_id(request_id)
+        if run is not None:
+            moved = await mark_run_failed(uow, run_id=run.id, error=error)
+            if not moved:
+                return None
+    manager.deliver_coding_failure(agent_id, request_id, error)
+    return None
 async def _run_tool(websocket: WebSocket, registry, agent_id: str, frame: dict) -> None:
     name = frame.get("name", "")
     args = frame.get("args", {}) or {}

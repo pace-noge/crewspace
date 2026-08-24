@@ -575,6 +575,13 @@ class SqlAlchemyCodingRunRepository:
         row = await cur.fetchone()
         return self._map(row) if row else None
 
+    async def get_by_request_id(self, request_id: str) -> CodingRun | None:
+        cur = await self._conn.execute(
+            "SELECT * FROM coding_run WHERE request_id=?", (request_id,)
+        )
+        row = await cur.fetchone()
+        return self._map(row) if row else None
+
     async def transition(
         self,
         run_id: str,
