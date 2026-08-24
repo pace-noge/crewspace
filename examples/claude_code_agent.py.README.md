@@ -5,16 +5,17 @@ A minimal **remote agent** for Crewspace that turns an `@mention` into a
 
 It is the thinnest possible "give an agent a command and let it run" bridge:
 the app pushes a `chat` frame (the prompt) → this process runs `claude` with
-that prompt → when Claude exits, the agent sends one signed `reply` frame with
-the captured output. The result appears in the chat thread under the human
-message, exactly like any other agent reply.
+that prompt → each output line is sent as a signed `agent_progress` frame → when
+Claude exits, the agent sends one signed `reply` frame with the captured output.
+Progress appears live in the channel and is replaced by the persisted final
+reply in the human message's thread.
 
 ## Why WebSocket is enough for long jobs
 
 The agent holds **one long-lived WebSocket** to `ws://<host>/agents/ws`. A
 Claude Code run can take minutes or hours; the socket stays open the whole time
-and carries the final reply when it's ready. There is no polling and no size
-limit on a single frame. The one thing to respect is the app's **reply
+and carries progress plus the final reply. There is no polling. The one thing
+to respect is the app's **reply
 timeout** — `CREWSPACE_AGENT_REPLY_TIMEOUT` (default 1800s). If Claude runs
 longer than that, the app gives up and posts "Agent did not respond". For
 normal coding tasks 1800s is plenty; raise it if you need more.
@@ -50,13 +51,15 @@ Then in chat:
 @coder refactor src/crewspace/api/connection.py to add a reset() method
 ```
 
-The agent runs Claude Code and posts the result back when it finishes.
+The agent streams Claude Code output while it runs and posts the final result
+back when it finishes.
 
 ## How it relates to the protocol
 
 - Builds the signed connect claim (`Authorization: Bearer *** — see
   `docs/AGENT_PROTOCOL.md` §3.
-- Receives `chat` frames the app pushes on `@mention`; sends a signed `reply`.
+- Receives `chat` frames the app pushes on `@mention`; sends signed
+  `agent_progress` frames followed by a signed `reply`.
 - Signs every outbound frame (Ed25519, canonical JSON) so the app verifies it
   and records the action under the agent's identity.
 

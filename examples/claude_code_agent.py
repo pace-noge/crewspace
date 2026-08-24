@@ -5,8 +5,8 @@ This is a *remote agent* for Crewspace: a separate process on its own machine
 that dials INTO the app over the signed WebSocket protocol (Buzz model — the
 agent connects, not the app). When someone @mentions it in chat, the app pushes
 a ``chat`` frame with the message as the prompt. This agent runs that prompt as a
-``claude`` subprocess, waits for it to finish, and sends one signed ``reply``
-frame back with the captured output.
+``claude`` subprocess, streams signed ``agent_progress`` frames line-by-line,
+and sends one signed final ``reply`` frame with the captured output.
 
 WebSocket is the right transport for long jobs: it is one long-lived,
 bidirectional connection that stays open for the whole subprocess run (minutes to
@@ -42,6 +42,7 @@ import json
 import os
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 
 import websockets
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -90,7 +91,9 @@ class Signer:
 # --------------------------------------------------------------------------
 # Agent loop
 # --------------------------------------------------------------------------
-async def _run_claude(prompt: str) -> str:
+async def _run_claude(
+    prompt: str, on_progress: Callable[[str], Awaitable[None]] | None = None
+) -> str:
     """Run `claude <args> <prompt>` and return its combined stdout.
 
     Runs to completion; the caller is responsible for keeping the WebSocket open
@@ -109,9 +112,11 @@ async def _run_claude(prompt: str) -> str:
     assert proc.stdout is not None
     async for line in proc.stdout:
         text = line.decode("utf-8", errors="replace")
-        # Surface progress to the operator's console (the app only sees the final reply).
+        # Surface progress both locally and in the Crewspace channel.
         print(f"[claude] {text.rstrip()}", end="", flush=True)
         out_chunks.append(text)
+        if on_progress is not None:
+            await on_progress(text)
     await proc.wait()
     full = "".join(out_chunks).strip()
     if proc.returncode != 0:
@@ -139,8 +144,19 @@ async def main() -> None:
                 text = frame["text"]
                 message_id = frame["message_id"]
                 print(f"[agent] prompt: {text}", flush=True)
+
+                async def send_progress(delta: str) -> None:
+                    progress = signer.sign_frame(
+                        {
+                            "type": "agent_progress",
+                            "message_id": message_id,
+                            "text": delta,
+                        }
+                    )
+                    await ws.send(json.dumps(progress))
+
                 try:
-                    result = await _run_claude(text)
+                    result = await _run_claude(text, on_progress=send_progress)
                 except Exception as exc:  # never leave the app waiting forever
                     result = f"⚠️ agent error: {exc}"
                 reply = signer.sign_frame(

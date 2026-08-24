@@ -68,6 +68,7 @@ class ChatService:
         on_agent_resolved: "Callable[[str], Awaitable[None]] | None" = None,
         on_human_persisted: "Callable[[MessageDTO], Awaitable[None]] | None" = None,
         on_agent_progress: "Callable[[str], Awaitable[None]] | None" = None,
+        on_agent_output: "Callable[[str, str, str], Awaitable[None]] | None" = None,
     ) -> list[MessageDTO]:
         """Persist the human message, route to the mentioned agent, persist its replies."""
         human = await uow.chat.add_message(channel_id, author_id, body, thread_id)
@@ -111,13 +112,25 @@ class ChatService:
         # (e.g. summarize a thread or pull action items). A thread reply sees
         # the whole thread; a channel message sees recent channel history.
         context = await self._build_context(uow, channel_id, thread_id, human.id)
-        if on_agent_progress is not None:
+        if on_agent_progress is not None and on_agent_output is not None:
             agent_id, replies = await provider.on_chat_message(
-                routable, runner, context=context, on_engaged=on_agent_progress,
+                routable,
+                runner,
+                context=context,
+                on_engaged=on_agent_progress,
+                on_progress=on_agent_output,
+            )
+        elif on_agent_progress is not None:
+            agent_id, replies = await provider.on_chat_message(
+                routable, runner, context=context, on_engaged=on_agent_progress
+            )
+        elif on_agent_output is not None:
+            agent_id, replies = await provider.on_chat_message(
+                routable, runner, context=context, on_progress=on_agent_output
             )
         else:
             agent_id, replies = await provider.on_chat_message(
-                routable, runner, context=context,
+                routable, runner, context=context
             )
         # Agent answers live in a thread under the human message so the main
         # timeline stays uncluttered (the prior decision: agents reply in thread).

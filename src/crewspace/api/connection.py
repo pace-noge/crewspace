@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import WebSocket
@@ -57,6 +58,10 @@ class AgentConnectionManager:
     def __init__(self) -> None:
         self._conns: dict[str, WebSocket] = {}
         self._waiters: dict[tuple[str, str], asyncio.Future[Any]] = {}
+        self._progress_handlers: dict[
+            tuple[str, str], Callable[[str, str], Awaitable[None]]
+        ] = {}
+        self._progress_tasks: dict[tuple[str, str], set[asyncio.Task[None]]] = {}
 
     async def connect(self, agent_id: str, ws: WebSocket) -> None:
         await ws.accept()
@@ -75,6 +80,11 @@ class AgentConnectionManager:
             if not future.done():
                 future.cancel()
         self._waiters.clear()
+        self._progress_handlers.clear()
+        for tasks in self._progress_tasks.values():
+            for task in tasks:
+                task.cancel()
+        self._progress_tasks.clear()
 
     async def close(self, agent_id: str, code: int = 4004) -> None:
         ws = self._conns.pop(agent_id, None)
@@ -114,7 +124,13 @@ class AgentConnectionManager:
             return True
         return False
 
-    async def send_and_wait(self, agent_id: str, payload: dict, timeout: float = 20.0) -> Any:
+    async def send_and_wait(
+        self,
+        agent_id: str,
+        payload: dict,
+        timeout: float = 20.0,
+        on_progress: Callable[[str, str], Awaitable[None]] | None = None,
+    ) -> Any:
         """Send a frame to a connected agent and await its correlated reply."""
         if agent_id not in self._conns:
             raise KeyError(f"agent {agent_id} not connected")
@@ -124,11 +140,42 @@ class AgentConnectionManager:
         fut: asyncio.Future[Any] = loop.create_future()
         waiter_key = (agent_id, mid)
         self._waiters[waiter_key] = fut
+        if on_progress is not None:
+            self._progress_handlers[waiter_key] = on_progress
+            self._progress_tasks[waiter_key] = set()
         try:
             await self.send(agent_id, payload)
-            return await asyncio.wait_for(fut, timeout=timeout)
+            result = await asyncio.wait_for(fut, timeout=timeout)
+            # The final reply has arrived, so the reply timeout is satisfied.
+            # Give already-queued progress broadcasts a bounded chance to flush
+            # before the persisted final message replaces the temporary output.
+            tasks = list(self._progress_tasks.get(waiter_key, set()))
+            if tasks:
+                _, pending = await asyncio.wait(tasks, timeout=1.0)
+                for task in pending:
+                    task.cancel()
+            return result
         finally:
             self._waiters.pop(waiter_key, None)
+            self._progress_handlers.pop(waiter_key, None)
+            for task in self._progress_tasks.pop(waiter_key, set()):
+                if not task.done():
+                    task.cancel()
+
+    async def deliver_progress(self, agent_id: str, message_id: str, text: str) -> bool:
+        """Deliver progress only to the active request for this agent and message."""
+        handler = self._progress_handlers.get((agent_id, message_id))
+        if handler is None:
+            return False
+        waiter_key = (agent_id, message_id)
+        task = asyncio.ensure_future(handler(message_id, text))
+        tasks = self._progress_tasks.setdefault(waiter_key, set())
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+        # Let the handler start so progress ordering is preserved without
+        # awaiting slow channel clients to finish receiving the broadcast.
+        await asyncio.sleep(0)
+        return True
 
     def deliver_reply(self, agent_id: str, message_id: str, value: Any) -> bool:
         """Called by the agent WS loop when an agent sends a correlated reply."""

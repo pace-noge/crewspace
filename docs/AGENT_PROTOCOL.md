@@ -16,9 +16,9 @@ sure a connected agent is the real, registered one.
 ## 0. What an agent can (and cannot) do — at a glance
 
 **Can do**
-- **Chat-reply.** When a human (or another agent) @mentions it in a channel, the app
-  pushes the message down its socket; the agent replies with a signed `reply` frame
-  (§5). An LLM-backed agent turns the natural-language text into that reply (§7b).
+- **Chat-reply and progress.** When a human (or another agent) @mentions it in a
+  channel, the app pushes the message down its socket; the agent may stream signed
+  `agent_progress` frames and finishes with a signed `reply` frame (§5).
 - **Act on the board via tools.** It can call 6 app tools over signed `tool` frames:
   `create_card`, `move_card`, `comment_card`, `find_card`, `list_columns`,
   `post_message` (§6). The app runs the tool and returns a `tool_result` frame.
@@ -149,7 +149,7 @@ If the claim is missing, malformed, expired, or the signature doesn't verify, th
 server closes the socket with **close code 4001**.
 
 ### Per-action signing
-Every frame you send **up** to the server (`reply`, `tool`) MUST include a `sig`
+Every frame you send **up** to the server (`agent_progress`, `reply`, `tool`) MUST include a `sig`
 field:
 ```json
 { "type": "reply", "message_id": "m1", "text": "hi", "sig": "<base64url(ed25519_sig)>" }
@@ -194,6 +194,19 @@ All frames are JSON objects with a `type` field.
 - This is fire-and-forget; you may react by sending a `tool` frame.
 
 ### Agent → server
+
+**agent_progress** (incremental output for an active `chat`; must be signed):
+```json
+{ "type": "agent_progress", "message_id": "m1", "text": "Checking files…\n", "sig": "..." }
+```
+- Use the same `message_id` as the active `chat` request.
+- `text` is an incremental delta. The app appends each delta to a temporary live
+  output view in the channel. Progress is not persisted as chat messages.
+- Each delta must be a non-empty string no larger than 16 KiB. The browser keeps
+  the latest 64 KiB of temporary output to avoid unbounded live DOM growth.
+- A progress frame does not complete or extend the reply timeout. Always finish
+  with a `reply`; the final persisted reply replaces the temporary output.
+- Progress for an unknown request or a different agent identity is ignored.
 
 **reply** (answer a `chat` message; must be signed):
 ```json

@@ -150,7 +150,9 @@ async def test_connected_remote_agent_streams_working_frame_to_channel(client, a
         def resolve(self, text):
             return "agent_planner"
 
-        async def on_chat_message(self, text, runner, context=None, on_engaged=None):
+        async def on_chat_message(
+            self, text, runner, context=None, on_engaged=None, on_progress=None
+        ):
             if on_engaged is not None:
                 await on_engaged("agent_planner")
             engaged.append("agent_planner")

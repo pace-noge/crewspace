@@ -58,6 +58,16 @@ async def agent_ws(websocket: WebSocket):
                 agent_manager.deliver_reply(
                     agent_id, frame.get("message_id", ""), frame.get("text", "")
                 )
+            elif ftype == "agent_progress":
+                text = frame.get("text", "")
+                if not isinstance(text, str) or not text or len(text) > 16_384:
+                    await websocket.send_json(
+                        {"type": "error", "error": "invalid agent progress"}
+                    )
+                    continue
+                await agent_manager.deliver_progress(
+                    agent_id, frame.get("message_id", ""), text
+                )
             elif ftype == "tool":
                 await _run_tool(websocket, registry, agent_id, frame)
             # Unknown frame types are ignored.

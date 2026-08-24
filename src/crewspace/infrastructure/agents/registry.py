@@ -138,6 +138,7 @@ class MultiAgentProvider:
     async def on_chat_message(
         self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None,
         on_engaged: "Callable[[str], Awaitable[None]] | None" = None,
+        on_progress: "Callable[[str, str, str], Awaitable[None]] | None" = None,
     ) -> tuple[str, list[str]]:
         aid = self._resolve(text)
         if not aid:
@@ -147,11 +148,20 @@ class MultiAgentProvider:
             if on_engaged is not None:
                 await on_engaged(aid)
             try:
-                reply = await agent_manager.send_and_wait(
-                    aid,
-                    {"type": "chat", "agent_id": aid, "text": text, "context": context or []},
-                    timeout=self._settings.agent_reply_timeout if self._settings else 20.0,
-                )
+                async def forward_progress(message_id: str, progress_text: str) -> None:
+                    if on_progress is not None:
+                        await on_progress(aid, message_id, progress_text)
+
+                payload = {
+                    "type": "chat", "agent_id": aid, "text": text, "context": context or []
+                }
+                timeout = self._settings.agent_reply_timeout if self._settings else 20.0
+                if on_progress is not None:
+                    reply = await agent_manager.send_and_wait(
+                        aid, payload, timeout=timeout, on_progress=forward_progress
+                    )
+                else:
+                    reply = await agent_manager.send_and_wait(aid, payload, timeout=timeout)
                 return (aid, [reply] if reply else [])
             except Exception as exc:
                 return (aid, [f"⚠️ Agent {aid} did not respond: {exc}"])

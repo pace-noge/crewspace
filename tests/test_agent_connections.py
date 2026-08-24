@@ -42,6 +42,59 @@ async def test_reply_must_come_from_expected_agent():
 
 
 @pytest.mark.asyncio
+async def test_progress_is_delivered_before_correlated_reply():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    events: list[tuple[str, str]] = []
+
+    async def on_progress(message_id: str, text: str) -> None:
+        assert message_id == socket.sent[0]["message_id"]
+        events.append(("progress", text))
+
+    pending = asyncio.create_task(
+        manager.send_and_wait(
+            "agent_a", {"type": "chat"}, timeout=0.05, on_progress=on_progress
+        )
+    )
+    await asyncio.sleep(0)
+    message_id = socket.sent[0]["message_id"]
+
+    assert await manager.deliver_progress("agent_a", message_id, "first line") is True
+    assert await manager.deliver_progress("agent_b", message_id, "spoofed") is False
+    events.append(("reply", "final answer"))
+    assert manager.deliver_reply("agent_a", message_id, "final answer") is True
+
+    assert await pending == "final answer"
+    assert events == [("progress", "first line"), ("reply", "final answer")]
+
+
+@pytest.mark.asyncio
+async def test_slow_progress_handler_does_not_consume_reply_timeout():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    release_progress = asyncio.Event()
+
+    async def on_progress(message_id: str, text: str) -> None:
+        await release_progress.wait()
+
+    pending = asyncio.create_task(
+        manager.send_and_wait(
+            "agent_a", {"type": "chat"}, timeout=0.05, on_progress=on_progress
+        )
+    )
+    await asyncio.sleep(0)
+    message_id = socket.sent[0]["message_id"]
+
+    assert await manager.deliver_progress("agent_a", message_id, "blocked") is True
+    assert manager.deliver_reply("agent_a", message_id, "done") is True
+    release_progress.set()
+
+    assert await pending == "done"
+
+
+@pytest.mark.asyncio
 async def test_old_socket_disconnect_does_not_remove_replacement():
     manager = AgentConnectionManager()
     old_socket = FakeWebSocket()

@@ -11,6 +11,7 @@
   .message-actions{display:none;position:absolute;right:8px;top:-14px;z-index:8;padding:3px;background:var(--surface);border:1px solid var(--border);border-radius:9px;box-shadow:0 5px 18px #0008}.msg:hover>.message-actions,.msg:focus-within>.message-actions{display:flex}.message-action{width:30px;height:28px;border:0;background:transparent;border-radius:6px;padding:0}.message-action:hover{background:var(--border)}.engagement-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-top:4px;min-height:20px}.engagement-row:has(.reaction-row:empty) .reaction-row{display:none}.engagement-row:has(.reaction-row:empty) .thread-summary[hidden]{display:none}.reaction-row{display:flex;gap:4px;min-height:0;margin:0}.reaction-pill{border:1px solid var(--border);background:var(--surface);border-radius:14px;padding:2px 8px;font-size:12px}.reaction-pill.reacted{border-color:var(--accent);background:#313d57}.add-reaction{border-radius:50%;width:26px;padding:0}.thread-panel{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--bg);border-left:1px solid var(--border);overflow:hidden}.thread-panel[hidden]{display:none}.thread-header{padding:15px 16px;border-bottom:1px solid var(--border);background:var(--bg-elev);display:flex;justify-content:space-between;align-items:center}.thread-header h2{font-size:15px;margin:0}.thread-close{border:0;background:transparent;font-size:18px}.thread-list{overflow-y:auto;padding:14px 10px}.thread-list .msg{margin-bottom:4px}.thread-composer{margin:10px;border:1px solid var(--border);border-radius:9px;background:var(--bg-elev);display:flex;gap:7px;padding:8px}.thread-composer textarea{flex:1;resize:none;background:transparent;color:var(--text);border:0;outline:0;font:inherit;min-height:40px}.thread-composer button{align-self:flex-end}
   .agent-status{min-height:31px;padding:6px 24px;border-top:1px solid var(--border);background:var(--bg-elev);color:var(--muted);font-size:11px;display:flex;align-items:center;gap:8px}.status-avatar{width:18px;height:18px;border-radius:50%;background:#45402f;display:inline-flex;align-items:center;justify-content:center}.agent-status strong{color:var(--text)}.empty-chat{color:var(--muted);text-align:center;padding:80px 20px}
   .typing-indicator{display:none;align-items:center;gap:8px;padding:4px 24px 2px;color:var(--muted);font-size:12px}.typing-indicator.show{display:flex}.typing-dots{display:inline-flex;gap:3px}.typing-dots span{width:6px;height:6px;border-radius:50%;background:var(--muted);animation:typing-bounce 1.2s infinite ease-in-out}.typing-dots span:nth-child(2){animation-delay:.15s}.typing-dots span:nth-child(3){animation-delay:.3s}@keyframes typing-bounce{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
+  .agent-progress{margin:6px 8px;padding:9px 12px;border-left:2px solid var(--accent);background:var(--bg-elev);color:var(--text);border-radius:0 8px 8px 0}.agent-progress-header{display:flex;align-items:center;gap:7px;margin-bottom:5px;color:var(--muted);font-size:11px}.agent-progress-body{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 var(--font-mono,monospace)}
   .msg.own{grid-template-columns:minmax(0,1fr) 38px;margin:0;width:100%;padding:9px 8px;background:transparent;border-right:2px solid #89b4fa66}.msg.own:hover,.msg.own:focus-within{background:var(--bg-elev)}.msg.own .msg-avatar{grid-column:2;grid-row:1}.msg.own .msg-content{grid-column:1;grid-row:1;min-width:0}.msg.own .msg-header,.msg.own .engagement-row{justify-content:flex-end}.msg.own .msg-body{text-align:left;margin-left:auto;width:fit-content;max-width:70%}.msg.own>.message-actions{right:auto;left:8px}.reaction-row{min-height:0;margin-top:3px;gap:3px}.reaction-row:empty{display:none}.reaction-pill{height:20px;padding:1px 6px;font-size:11px;line-height:1}.thread-summary{border:0;background:transparent;color:var(--accent);padding:1px 3px;font-size:11px}.thread-summary[hidden]{display:none}.message-action{width:25px;height:24px}.reaction-popover-title{grid-column:1/-1;color:var(--muted);font-size:11px;padding:2px 4px 5px}
   @media(max-width:900px){.chat-shell.thread-open{display:block;position:relative}.chat-shell.thread-open .thread-panel{position:absolute;inset:0;z-index:25}.channel-header{padding:0 14px}.header-control.optional{display:none}.message-list{padding:18px 10px}.composer-wrap{padding:8px 10px 10px}.agent-status{padding:6px 12px}.msg{grid-template-columns:34px minmax(0,1fr)}.msg-avatar{width:32px;height:32px}}
 </style>
@@ -117,6 +118,21 @@
     typingTimer = setTimeout(()=>typingIndicator.classList.remove("show"), 20000);
   }
   function clearTyping(){ typingIndicator.classList.remove("show"); if (typingTimer){clearTimeout(typingTimer);typingTimer=null;} }
+  function appendAgentProgress(data){
+    const messageId=data.message_id;
+    let row=log.querySelector(`[data-progress-id="${CSS.escape(messageId)}"]`);
+    if(!row){
+      const {avatar,name}=agentName(data.author_id);
+      row=document.createElement("article");row.className="agent-progress";row.dataset.progressId=messageId;row.dataset.authorId=data.author_id;
+      const header=document.createElement("div");header.className="agent-progress-header";header.textContent=`${avatar} ${name} · live output`;
+      const body=document.createElement("pre");body.className="agent-progress-body";
+      row.append(header,body);log.appendChild(row);
+    }
+    const body=row.querySelector(".agent-progress-body");
+    body.textContent=(body.textContent+data.text).slice(-65536);
+    scroller.scrollTop=scroller.scrollHeight;
+  }
+  function clearAgentProgress(authorId){log.querySelectorAll(".agent-progress").forEach(row=>{if(row.dataset.authorId===authorId)row.remove();});}
   function quoteMessage(message){const quote=`> ${message.author_name}: ${message.body.replace(/\n/g,"\n> ")}\n\n`;input.setRangeText(quote,input.selectionStart,input.selectionEnd,"end");input.focus();syncComposer();}
   function openReactionPicker(anchor,messageId,row){const box=anchor.getBoundingClientRect();reactionTarget={messageId,row};reactionPicker.style.left=Math.max(8,Math.min(box.right-230,window.innerWidth-238))+"px";reactionPicker.style.top=Math.min(box.bottom+5,window.innerHeight-210)+"px";reactionPicker.hidden=false;}
   const renderedIds = new Set();
@@ -166,10 +182,16 @@
         agentWorkingId=data.author_id;
         return;
       }
+      if(data.type==="agent_progress"){
+        clearTyping();
+        appendAgentProgress(data);
+        return;
+      }
       // A real agent message clears any "is working" state for that agent.
       if(data.author_kind==="agent"&&agentWorkingId&&data.author_id===agentWorkingId){
         agentState.textContent="Ready";
         agentWorkingId=null;
+        clearAgentProgress(data.author_id);
       }
       render(data);
     };

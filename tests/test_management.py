@@ -291,6 +291,15 @@ def test_channel_navigation_opens_selected_channel(client):
     assert 'const channel = "chan_general"' in response.text
 
 
+def test_chat_client_renders_remote_agent_progress_incrementally(client):
+    response = client.get("/channels/chan_general")
+
+    assert response.status_code == 200
+    assert 'data.type==="agent_progress"' in response.text
+    assert "appendAgentProgress(data)" in response.text
+    assert 'row.dataset.progressId=messageId' in response.text
+
+
 def test_team_leader_can_create_workspace_and_channel(client):
     workspace = client.post(
         "/management/teams/team_acme/workspaces",
