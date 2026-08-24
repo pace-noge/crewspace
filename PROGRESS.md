@@ -11,6 +11,7 @@ milestone commits are ready for the slice-gate push.
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
+- `fe3f800` [verified] feat: cancellable coding runs with signed ack and subprocess termination
 - `a1b3732` [verified] feat: persist bounded recent run output and restore on refresh
 - `4b199be` [verified] feat: durable coding-run lifecycle and fail-closed transitions
 - `6a78496` [verified] feat: complete remote workspace lifecycle
