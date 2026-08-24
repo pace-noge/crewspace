@@ -178,7 +178,7 @@ Last updated: 2026-08-24 (WIB)
 | Slice | Deliverable | Status | Progress | Depends on | Evidence | Notes |
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
-| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 3/7 | M6.1 | 12 real-Git allocation/auth tests + independent review | Authorized concurrent isolation complete; structured capture next |
+| M6.2 | Isolated worktrees and structured change sets | IN PROGRESS | 3/7 | M6.1 | 21 real-Git allocation/capture tests + independent review | Structured DTO capture committed; detail UI next |
 | M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
@@ -327,6 +327,14 @@ Acceptance (0/7):
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
+  - 2026-08-24 — M6.2 structured capture GREEN: immutable DTOs capture ordered
+    commits, file status and line totals, verification records, and metadata-only
+    workspace artifacts. Allocation provenance, branch/workspace identity, clean
+    tracked state, declared untracked files, traversal, and external symlinks are
+    enforced. Frozen provenance, ignored/odd filenames, consistent no-rename parsing,
+    mutation fingerprints, deep-frozen collections, lossless NUL parsing, and
+    bounded streaming subprocess output/time are enforced. Twenty-one real-Git
+    tests pass; final independent review found no blockers.
   - 2026-08-24 — M6.2 authorization/concurrency slice GREEN: typed
     `CREWSPACE_CODING_*` settings expose only opaque repository IDs; configured
     Git roots and common-directory filesystem identity are revalidated before

@@ -1,7 +1,7 @@
 # Crewspace — Session Progress (resume handoff)
 
-Last updated: 2026-08-24 (WIB). All work below is COMMITTED and PUSHED to `master`,
-synced with `origin/master`. Working tree is clean (no uncommitted changes).
+Last updated: 2026-08-24 (WIB). M6.2 is active on local `master`; verified
+milestone commits are ahead of `origin/master` and will be pushed at the slice gate.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
@@ -60,12 +60,14 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
 
 ## NEXT ACTION
 M6.2 — Isolated worktrees and structured change sets is IN PROGRESS (3/7).
-Authorized allocation and concurrent isolation are GREEN: operators configure
-opaque repository IDs through `CREWSPACE_CODING_*`; canonical Git root/common-dir
-identity is revalidated for each allocation; nested/swap paths are rejected; and
-parallel runs receive distinct branches/checkouts. Twelve real-Git/settings tests
-plus security regressions pass. Independent final review found no blockers;
-structured change-set capture follows after the second verified M6.2 commit.
+Authorized concurrent isolation is committed. Structured capture is GREEN with
+immutable DTOs for commits, changed files/line totals, verification, and artifact
+metadata. Capture rejects forged/replaced workspaces, changed branches, dirty
+tracked state, undeclared untracked files, artifact traversal, and external
+symlinks. Frozen provenance, ignored and odd filenames, mutation fingerprints,
+deep-frozen collections, lossless NUL parsing, and bounded subprocess output/time
+are enforced. Twenty-one real-Git tests pass; final independent review found no
+blockers. Commit this capture slice, then continue to the dedicated detail UI.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

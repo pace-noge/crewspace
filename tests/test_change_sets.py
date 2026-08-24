@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import os
 import subprocess
+import time
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from crewspace.config import Settings
+from crewspace.dto.change_sets import CodingWorkspaceDTO, VerificationResultDTO
 from crewspace.infrastructure.git_worktrees import GitWorktreeAllocator
+import crewspace.infrastructure.git_worktrees as git_worktrees
 
 
 def _git(path: Path, *args: str) -> str:
@@ -211,3 +216,229 @@ def test_concurrent_allocations_never_share_branch_or_checkout(tmp_path: Path):
     assert all(workspace.path.is_dir() for workspace in workspaces)
     listed = _git(repository, "worktree", "list", "--porcelain")
     assert all(str(workspace.path) in listed for workspace in workspaces)
+
+
+def test_capture_returns_commits_files_verification_and_artifact_metadata(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    (workspace.path / "README.md").write_text("seed\nupdated\n")
+    (workspace.path / "feature.py").write_text("print('ready')\n")
+    _git(workspace.path, "add", "README.md", "feature.py")
+    _git(workspace.path, "commit", "-m", "add feature")
+    artifact = workspace.path / "reports" / "pytest.xml"
+    artifact.parent.mkdir()
+    artifact.write_text("<testsuite tests='1'/>\n")
+
+    change_set = allocator.capture(
+        workspace,
+        verification=[
+            VerificationResultDTO(
+                name="pytest",
+                status="passed",
+                summary="1 passed",
+            )
+        ],
+        artifact_paths=[Path("reports/pytest.xml")],
+    )
+
+    assert change_set.repository_id == "crewspace"
+    assert change_set.run_id == "run_123"
+    assert change_set.branch == workspace.branch
+    assert change_set.base_commit == workspace.base_commit
+    assert change_set.head_commit == _git(workspace.path, "rev-parse", "HEAD")
+    assert [(commit.subject, commit.sha) for commit in change_set.commits] == [
+        ("add feature", change_set.head_commit)
+    ]
+    assert [
+        (file.path, file.status, file.additions, file.deletions)
+        for file in change_set.files
+    ] == [
+        ("README.md", "modified", 1, 0),
+        ("feature.py", "added", 1, 0),
+    ]
+    assert change_set.additions == 2
+    assert change_set.deletions == 0
+    assert change_set.verification[0].status == "passed"
+    assert change_set.artifacts[0].path == "reports/pytest.xml"
+    assert change_set.artifacts[0].size_bytes == artifact.stat().st_size
+
+
+def test_capture_rejects_forged_workspace_and_dirty_tracked_changes(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    forged = CodingWorkspaceDTO(
+        repository_id=workspace.repository_id,
+        run_id=workspace.run_id,
+        path=repository,
+        branch="main",
+        base_commit=workspace.base_commit,
+    )
+
+    with pytest.raises(ValueError, match="not allocated"):
+        allocator.capture(forged, verification=[], artifact_paths=[])
+
+    (workspace.path / "README.md").write_text("dirty\n")
+    with pytest.raises(ValueError, match="uncommitted tracked changes"):
+        allocator.capture(workspace, verification=[], artifact_paths=[])
+
+
+def test_capture_rejects_artifact_traversal_and_external_symlinks(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n")
+    (workspace.path / "linked-report").symlink_to(outside)
+
+    for artifact_path in (Path("../../outside.txt"), Path("linked-report")):
+        with pytest.raises(ValueError, match="inside the coding workspace"):
+            allocator.capture(
+                workspace,
+                verification=[],
+                artifact_paths=[artifact_path],
+            )
+
+
+def test_capture_rejects_undeclared_untracked_files(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    (workspace.path / "forgotten.py").write_text("print('untracked')\n")
+
+    with pytest.raises(ValueError, match="undeclared untracked files"):
+        allocator.capture(workspace, verification=[], artifact_paths=[])
+
+
+def test_workspace_dto_is_immutable_and_ignored_files_are_not_omitted(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+
+    with pytest.raises(Exception):
+        workspace.branch = "main"
+
+    (workspace.path / ".gitignore").write_text("ignored.log\n")
+    _git(workspace.path, "add", ".gitignore")
+    _git(workspace.path, "commit", "-m", "ignore logs")
+    (workspace.path / "ignored.log").write_text("must not disappear\n")
+
+    with pytest.raises(ValueError, match="undeclared untracked files"):
+        allocator.capture(workspace, verification=[], artifact_paths=[])
+
+
+def test_capture_handles_rename_and_tab_in_filename_consistently(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    odd_name = "odd\tname.py"
+    (workspace.path / odd_name).write_text("print('one')\n")
+    _git(workspace.path, "add", odd_name)
+    _git(workspace.path, "commit", "-m", "add odd file")
+    renamed = "renamed\tfile.py"
+    _git(workspace.path, "mv", odd_name, renamed)
+    _git(workspace.path, "commit", "-m", "rename odd file")
+
+    change_set = allocator.capture(workspace, verification=[], artifact_paths=[])
+
+    assert [(item.path, item.status) for item in change_set.files] == [
+        (renamed, "added")
+    ]
+
+
+def test_capture_preserves_whitespace_paths_and_returns_deeply_frozen_collections(
+    tmp_path: Path,
+):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    artifact = workspace.path / "report.log"
+    artifact.write_text("declared\n")
+    (workspace.path / " report.log").write_text("undeclared\n")
+
+    with pytest.raises(ValueError, match="undeclared untracked files"):
+        allocator.capture(workspace, verification=[], artifact_paths=[artifact])
+
+    (workspace.path / " report.log").unlink()
+    change_set = allocator.capture(
+        workspace, verification=[], artifact_paths=[artifact]
+    )
+    assert isinstance(change_set.commits, tuple)
+    assert isinstance(change_set.files, tuple)
+    assert isinstance(change_set.verification, tuple)
+    assert isinstance(change_set.artifacts, tuple)
+
+
+def test_capture_revalidates_workspace_identity_after_acquiring_lock(tmp_path: Path):
+    repository = _repository(tmp_path)
+    allocator = GitWorktreeAllocator(
+        repositories={"crewspace": repository},
+        worktree_root=tmp_path / "worktrees",
+    )
+    workspace = allocator.allocate(repository_id="crewspace", run_id="run_123")
+    original = workspace.path.with_name(f"{workspace.path.name}-original")
+
+    class ReplacingLock:
+        def __enter__(self):
+            workspace.path.rename(original)
+            workspace.path.mkdir()
+            _git(workspace.path, "init", "-b", "main")
+            _git(workspace.path, "config", "user.name", "Crewspace Test")
+            _git(workspace.path, "config", "user.email", "crewspace@example.test")
+            (workspace.path / "README.md").write_text("replacement\n")
+            _git(workspace.path, "add", "README.md")
+            _git(workspace.path, "commit", "-m", "replacement")
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    allocator._capture_locks[workspace.path] = cast(Any, ReplacingLock())
+
+    with pytest.raises(ValueError, match="identity changed"):
+        allocator.capture(workspace, verification=[], artifact_paths=[])
+
+
+def test_git_timeout_is_enforced_after_partial_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    fake_git = tmp_path / "git"
+    fake_git.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys, time\n"
+        "sys.stdout.write('x')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(1)\n"
+    )
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(git_worktrees, "_GIT_TIMEOUT_SECONDS", 0.1)
+
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="timed out"):
+        GitWorktreeAllocator._git(tmp_path, "status")
+
+    assert time.monotonic() - started < 0.5
