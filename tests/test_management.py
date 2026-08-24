@@ -298,6 +298,8 @@ def test_chat_client_renders_remote_agent_progress_incrementally(client):
     assert 'data.type==="agent_progress"' in response.text
     assert "appendAgentProgress(data)" in response.text
     assert 'row.dataset.progressId=messageId' in response.text
+    assert 'data.type==="agent_progress_complete"' in response.text
+    assert "clearAgentProgress(data.message_id)" in response.text
 
 
 def test_team_leader_can_create_workspace_and_channel(client):

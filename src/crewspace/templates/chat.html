@@ -132,7 +132,7 @@
     body.textContent=(body.textContent+data.text).slice(-65536);
     scroller.scrollTop=scroller.scrollHeight;
   }
-  function clearAgentProgress(authorId){log.querySelectorAll(".agent-progress").forEach(row=>{if(row.dataset.authorId===authorId)row.remove();});}
+  function clearAgentProgress(messageId){const row=log.querySelector(`[data-progress-id="${CSS.escape(messageId)}"]`);if(row)row.remove();}
   function quoteMessage(message){const quote=`> ${message.author_name}: ${message.body.replace(/\n/g,"\n> ")}\n\n`;input.setRangeText(quote,input.selectionStart,input.selectionEnd,"end");input.focus();syncComposer();}
   function openReactionPicker(anchor,messageId,row){const box=anchor.getBoundingClientRect();reactionTarget={messageId,row};reactionPicker.style.left=Math.max(8,Math.min(box.right-230,window.innerWidth-238))+"px";reactionPicker.style.top=Math.min(box.bottom+5,window.innerHeight-210)+"px";reactionPicker.hidden=false;}
   const renderedIds = new Set();
@@ -187,11 +187,14 @@
         appendAgentProgress(data);
         return;
       }
+      if(data.type==="agent_progress_complete"){
+        clearAgentProgress(data.message_id);
+        return;
+      }
       // A real agent message clears any "is working" state for that agent.
       if(data.author_kind==="agent"&&agentWorkingId&&data.author_id===agentWorkingId){
         agentState.textContent="Ready";
         agentWorkingId=null;
-        clearAgentProgress(data.author_id);
       }
       render(data);
     };

@@ -69,6 +69,7 @@ class ChatService:
         on_human_persisted: "Callable[[MessageDTO], Awaitable[None]] | None" = None,
         on_agent_progress: "Callable[[str], Awaitable[None]] | None" = None,
         on_agent_output: "Callable[[str, str, str], Awaitable[None]] | None" = None,
+        on_agent_output_complete: "Callable[[str, str], Awaitable[None]] | None" = None,
     ) -> list[MessageDTO]:
         """Persist the human message, route to the mentioned agent, persist its replies."""
         human = await uow.chat.add_message(channel_id, author_id, body, thread_id)
@@ -119,6 +120,7 @@ class ChatService:
                 context=context,
                 on_engaged=on_agent_progress,
                 on_progress=on_agent_output,
+                on_progress_complete=on_agent_output_complete,
             )
         elif on_agent_progress is not None:
             agent_id, replies = await provider.on_chat_message(

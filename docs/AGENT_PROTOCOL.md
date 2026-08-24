@@ -204,6 +204,8 @@ All frames are JSON objects with a `type` field.
   output view in the channel. Progress is not persisted as chat messages.
 - Each delta must be a non-empty string no larger than 16 KiB. The browser keeps
   the latest 64 KiB of temporary output to avoid unbounded live DOM growth.
+- One request accepts at most 256 progress frames and 1 MiB of cumulative UTF-8
+  progress; additional deltas are ignored while the final `reply` remains valid.
 - A progress frame does not complete or extend the reply timeout. Always finish
   with a `reply`; the final persisted reply replaces the temporary output.
 - Progress for an unknown request or a different agent identity is ignored.

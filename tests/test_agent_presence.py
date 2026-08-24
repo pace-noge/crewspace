@@ -110,6 +110,13 @@ def test_signed_agent_progress_reaches_channel_before_final_reply(client, app):
                     {"type": "reply", "message_id": message_id, "text": "done"},
                 )
             )
+            completed = chat.receive_json()
+            assert completed == {
+                "type": "agent_progress_complete",
+                "author_id": "agent_planner",
+                "channel_id": "chan_general",
+                "message_id": message_id,
+            }
             reply = chat.receive_json()
             assert reply["author_id"] == "agent_planner"
             assert reply["body"] == "done"

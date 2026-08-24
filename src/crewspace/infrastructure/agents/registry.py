@@ -139,6 +139,7 @@ class MultiAgentProvider:
         self, text: str, runner: ToolRunner, context: list[dict[str, str]] | None = None,
         on_engaged: "Callable[[str], Awaitable[None]] | None" = None,
         on_progress: "Callable[[str, str, str], Awaitable[None]] | None" = None,
+        on_progress_complete: "Callable[[str, str], Awaitable[None]] | None" = None,
     ) -> tuple[str, list[str]]:
         aid = self._resolve(text)
         if not aid:
@@ -152,13 +153,23 @@ class MultiAgentProvider:
                     if on_progress is not None:
                         await on_progress(aid, message_id, progress_text)
 
+                async def complete_progress(message_id: str) -> None:
+                    if on_progress_complete is not None:
+                        await on_progress_complete(aid, message_id)
+
                 payload = {
                     "type": "chat", "agent_id": aid, "text": text, "context": context or []
                 }
                 timeout = self._settings.agent_reply_timeout if self._settings else 20.0
                 if on_progress is not None:
                     reply = await agent_manager.send_and_wait(
-                        aid, payload, timeout=timeout, on_progress=forward_progress
+                        aid,
+                        payload,
+                        timeout=timeout,
+                        on_progress=forward_progress,
+                        on_progress_complete=(
+                            complete_progress if on_progress_complete is not None else None
+                        ),
                     )
                 else:
                     reply = await agent_manager.send_and_wait(aid, payload, timeout=timeout)

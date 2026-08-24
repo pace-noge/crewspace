@@ -226,6 +226,15 @@ async def chat_ws(
                             "text": text,
                         },
                     ),
+                    on_agent_output_complete=lambda aid, mid: manager.broadcast(
+                        channel_id,
+                        {
+                            "type": "agent_progress_complete",
+                            "author_id": aid,
+                            "channel_id": channel_id,
+                            "message_id": mid,
+                        },
+                    ),
                     on_human_persisted=on_human_persisted,
                 )
             for m in new_msgs:

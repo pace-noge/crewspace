@@ -95,6 +95,94 @@ async def test_slow_progress_handler_does_not_consume_reply_timeout():
 
 
 @pytest.mark.asyncio
+async def test_progress_is_bounded_per_request():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    forwarded: list[str] = []
+
+    async def on_progress(message_id: str, text: str) -> None:
+        forwarded.append(text)
+
+    pending = asyncio.create_task(
+        manager.send_and_wait(
+            "agent_a", {"type": "chat"}, timeout=0.1, on_progress=on_progress
+        )
+    )
+    await asyncio.sleep(0)
+    message_id = socket.sent[0]["message_id"]
+
+    accepted = [
+        await manager.deliver_progress("agent_a", message_id, "x")
+        for _ in range(257)
+    ]
+    manager.deliver_reply("agent_a", message_id, "done")
+
+    assert await pending == "done"
+    assert accepted.count(True) <= 256
+    assert accepted[-1] is False
+    assert len(forwarded) <= 256
+
+
+@pytest.mark.asyncio
+async def test_progress_completion_runs_on_timeout_without_masking_result():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+    completed: list[str] = []
+
+    async def on_progress(message_id: str, text: str) -> None:
+        pass
+
+    async def on_complete(message_id: str) -> None:
+        completed.append(message_id)
+
+    pending = asyncio.create_task(
+        manager.send_and_wait(
+            "agent_a",
+            {"type": "chat"},
+            timeout=0.01,
+            on_progress=on_progress,
+            on_progress_complete=on_complete,
+        )
+    )
+    await asyncio.sleep(0)
+    message_id = socket.sent[0]["message_id"]
+
+    with pytest.raises(TimeoutError):
+        await pending
+    assert completed == [message_id]
+
+
+@pytest.mark.asyncio
+async def test_progress_completion_failure_does_not_mask_final_reply():
+    manager = AgentConnectionManager()
+    socket = FakeWebSocket()
+    await manager.connect("agent_a", cast(WebSocket, socket))
+
+    async def on_progress(message_id: str, text: str) -> None:
+        pass
+
+    async def on_complete(message_id: str) -> None:
+        raise RuntimeError("chat client stalled")
+
+    pending = asyncio.create_task(
+        manager.send_and_wait(
+            "agent_a",
+            {"type": "chat"},
+            timeout=0.05,
+            on_progress=on_progress,
+            on_progress_complete=on_complete,
+        )
+    )
+    await asyncio.sleep(0)
+    message_id = socket.sent[0]["message_id"]
+    manager.deliver_reply("agent_a", message_id, "done")
+
+    assert await pending == "done"
+
+
+@pytest.mark.asyncio
 async def test_old_socket_disconnect_does_not_remove_replacement():
     manager = AgentConnectionManager()
     old_socket = FakeWebSocket()

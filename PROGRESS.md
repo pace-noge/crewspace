@@ -41,6 +41,10 @@ synced with `origin/master`. Working tree is clean (no uncommitted changes).
   64 KiB, and removes it when the persisted final agent reply arrives.
 - Progress broadcasts run independently of the final-reply timeout so a slow chat
   client cannot turn a valid final reply into a false timeout.
+- Follow-up review hardening: progress is bounded per request (256 frames / 1 MiB),
+  and a correlated `agent_progress_complete` frame clears only that request's live
+  output on success, timeout, or disconnect. Cleanup is bounded/best-effort and
+  cannot mask the final reply or original error.
 - `examples/claude_code_agent.py` streams subprocess stdout line-by-line, while
   preserving the final captured reply; `docs/AGENT_PROTOCOL.md` documents the wire contract.
 

@@ -62,6 +62,7 @@ class AgentConnectionManager:
             tuple[str, str], Callable[[str, str], Awaitable[None]]
         ] = {}
         self._progress_tasks: dict[tuple[str, str], set[asyncio.Task[None]]] = {}
+        self._progress_usage: dict[tuple[str, str], tuple[int, int]] = {}
 
     async def connect(self, agent_id: str, ws: WebSocket) -> None:
         await ws.accept()
@@ -85,6 +86,7 @@ class AgentConnectionManager:
             for task in tasks:
                 task.cancel()
         self._progress_tasks.clear()
+        self._progress_usage.clear()
 
     async def close(self, agent_id: str, code: int = 4004) -> None:
         ws = self._conns.pop(agent_id, None)
@@ -130,6 +132,7 @@ class AgentConnectionManager:
         payload: dict,
         timeout: float = 20.0,
         on_progress: Callable[[str, str], Awaitable[None]] | None = None,
+        on_progress_complete: Callable[[str], Awaitable[None]] | None = None,
     ) -> Any:
         """Send a frame to a connected agent and await its correlated reply."""
         if agent_id not in self._conns:
@@ -143,6 +146,7 @@ class AgentConnectionManager:
         if on_progress is not None:
             self._progress_handlers[waiter_key] = on_progress
             self._progress_tasks[waiter_key] = set()
+            self._progress_usage[waiter_key] = (0, 0)
         try:
             await self.send(agent_id, payload)
             result = await asyncio.wait_for(fut, timeout=timeout)
@@ -161,6 +165,14 @@ class AgentConnectionManager:
             for task in self._progress_tasks.pop(waiter_key, set()):
                 if not task.done():
                     task.cancel()
+            self._progress_usage.pop(waiter_key, None)
+            if on_progress_complete is not None:
+                try:
+                    await asyncio.wait_for(on_progress_complete(mid), timeout=1.0)
+                except Exception:
+                    # Completion is best-effort UI cleanup and must never mask
+                    # the final reply or the original timeout/disconnect error.
+                    pass
 
     async def deliver_progress(self, agent_id: str, message_id: str, text: str) -> bool:
         """Deliver progress only to the active request for this agent and message."""
@@ -168,6 +180,11 @@ class AgentConnectionManager:
         if handler is None:
             return False
         waiter_key = (agent_id, message_id)
+        frame_count, byte_count = self._progress_usage.get(waiter_key, (0, 0))
+        text_bytes = len(text.encode("utf-8"))
+        if frame_count >= 256 or byte_count + text_bytes > 1_048_576:
+            return False
+        self._progress_usage[waiter_key] = (frame_count + 1, byte_count + text_bytes)
         task = asyncio.ensure_future(handler(message_id, text))
         tasks = self._progress_tasks.setdefault(waiter_key, set())
         tasks.add(task)
