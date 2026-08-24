@@ -10,6 +10,7 @@ milestone commits are ready for the slice-gate push.
 4. Pick up `PLAN.md` M6.3 — Durable and cancellable agent runs.
 
 ## Commits this session (newest first)
+- `4b199be` [verified] feat: durable coding-run lifecycle and fail-closed transitions
 - `6a78496` [verified] feat: complete remote workspace lifecycle
 - `e8c6686` feat: stream remote agent output in chat
 - `b259473` feat: claude-code remote agent example + configurable remote reply timeout
@@ -60,7 +61,12 @@ milestone commits are ready for the slice-gate push.
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.2 — Isolated worktrees and structured change sets is DONE (7/7), committed as
+M6.3 — Durable and cancellable agent runs is IN PROGRESS (1/8). Slice 1 (durable
+run lifecycle + timestamps + fail-closed compare-and-set transitions + reversible
+migration 20260824_03) is committed as `4b199be`; 142-test bounded gate and an
+independent fail-closed re-review returned BLOCKERS: none. Next implement M6.3 item
+2 — run creation and state transitions transactional and authorization-scoped. M6.2
+— Isolated worktrees and structured change sets is DONE (7/7), committed as
 `6a78496`. Signed path-free lifecycle commands now drive allocator-owned remote
 retain/discard/cleanup. The worker protects retained, dirty, unmerged, replaced, and
 ref/reflog-provenance-mismatched workspaces; partial cleanup is retryable and repeated

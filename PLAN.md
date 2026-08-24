@@ -179,7 +179,7 @@ Last updated: 2026-08-24 (WIB)
 |------:|-------------|--------|----------|------------|----------|-------|
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
 | M6.2 | Isolated worktrees and structured change sets | DONE | 7/7 | M6.1 | `6a78496`; 179-test bounded lifecycle/POC/security gate; migration round trip; independent fail-closed review | Same-process remote lifecycle idempotence; cross-restart reconstruction belongs to M6.3 |
-| M6.3 | Durable and cancellable agent runs | PLANNED | 0/8 | M6.1 | — | Persistence/recovery substrate; can overlap M6.2 design only |
+| M6.3 | Durable and cancellable agent runs | IN PROGRESS | 1/8 | M6.1 | `4b199be`; 142-test bounded lifecycle/POC/security gate; populated migration upgrade/downgrade; independent fail-closed re-review | Lifecycle + timestamps + fail-closed CAS complete; cancellation/restart/UI deferred to later items |
 | M6.4 | Typed execution events and unified event envelope | PLANNED | 0/7 | M6.1, M6.3 | — | Includes replay cursor, ordering, and dedupe |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
 | M6.6 | Multi-agent delivery pipeline | PLANNED | 0/7 | M6.2–M6.5 | — | Planner -> coder -> reviewer -> test -> human approval |
@@ -223,7 +223,7 @@ Acceptance (7/7):
   - [x] Cleanup is idempotent and never deletes an unmerged retained workspace.
   - [x] Integration POC produces, verifies, reviews, and cleans a real change set.
 
-M6.3 — Durable and cancellable agent runs                    [L]  PLANNED
+M6.3 — Durable and cancellable agent runs                    [L]  IN PROGRESS
 Scope:
   - Add persistent agent-run lifecycle: queued, running, succeeded, failed,
     cancelled, timed_out, and interrupted.
@@ -232,8 +232,8 @@ Scope:
   - Restore active/recent run state after refresh; reconcile reconnect and app restart.
   - Handle late/duplicate frames and cancellation-vs-completion races idempotently.
 
-Acceptance (0/8):
-  - [ ] Migration/model/repository expose the complete lifecycle and timestamps.
+Acceptance (1/8):
+  - [x] Migration/model/repository expose the complete lifecycle and timestamps.
   - [ ] Run creation and state transitions are transactional and authorization-scoped.
   - [ ] Refresh restores status plus bounded recent output.
   - [ ] Cancellation terminates the example subprocess and reaches terminal state.
