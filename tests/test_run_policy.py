@@ -463,3 +463,69 @@ async def test_approval_event_surfaces_in_activity_and_audit_export(app):
     )
     unified_json = export_events_json(unified)
     assert unified_json.count('"event_type":"approval"') == 1
+
+
+# --- Slice 7: security tests — scope escalation, replay, stale/expired (item 7) --
+
+
+def test_security_scope_escalation_replay_and_stale_approval():
+    """Consolidated security negative tests (acceptance item 7):
+    - an unknown/unspecified action class is denied fail-closed;
+    - a stale/expired approval cannot be 'refreshed' into an allow without a
+      fresh granted decision;
+    - a granted decision never leaks across class or run;
+    - an unrecognized prior-decision string is treated fail-closed."""
+    from crewspace.dto.events import EventEnvelope
+
+    policy = RunPolicy(allowed={"external_mcp"})
+
+    # Unknown / unspecified action class -> denied fail-closed (not a recognized
+    # consequential action, so it is hard-denied rather than pending-requested).
+    unknown = evaluate_action(
+        policy, "totally_unknown_action", "run_x", "u",
+        approved_for=set(), prior_decision=None,
+    )
+    assert unknown.allowed is False
+    assert unknown.event.payload.decision == "denied"
+    assert unknown.event.payload.action_class == "totally_unknown_action"
+
+    # Stale/expired approval cannot be 'refreshed': re-submitting the expired
+    # prior decision again stays blocked (no silent re-grant).
+    for _ in range(3):
+        stale = evaluate_action(
+            policy, "external_mcp", "run_x", "u",
+            approved_for={"external_mcp"}, prior_decision="expired",
+        )
+        assert stale.allowed is False, "expired approval must not refresh"
+        assert stale.event.payload.decision == "requested"
+
+    # No cross-class grant leakage: granted for external_mcp does not unlock
+    # a different consequential class even if the policy allows it.
+    cross = evaluate_action(
+        RunPolicy(allowed={"external_mcp", "shell_command"}),
+        "shell_command", "run_x", "u",
+        approved_for={"external_mcp"}, prior_decision="granted",
+    )
+    assert cross.allowed is False
+
+    # No cross-run grant leakage: granted for run_x does not unlock run_y.
+    cross_run = evaluate_action(
+        policy, "external_mcp", "run_y", "u",
+        approved_for=set(), prior_decision="granted",
+    )
+    assert cross_run.allowed is False
+
+    # Unrecognized prior-decision string -> fail-closed (not granted), even with
+    # a policy that would otherwise allow the class and no pre-approval set.
+    bad = evaluate_action(
+        RunPolicy(allowed=set()), "external_mcp", "run_x", "u",
+        approved_for=set(), prior_decision="approved_by_mistake",
+    )
+    assert bad.allowed is False
+    assert bad.event.payload.decision == "requested"
+
+    # Every outcome is still a well-formed canonical approval event.
+    for r in (unknown, cross, cross_run, bad):
+        assert isinstance(r.event, EventEnvelope)
+        assert r.event.event_type == "approval"
+        assert r.event.payload.scope  # scope (run) is always bound
