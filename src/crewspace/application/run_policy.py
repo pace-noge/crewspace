@@ -111,8 +111,18 @@ def evaluate_action(
     approved_for = approved_for or set()
 
     if prior_decision == "granted" and policy.is_consequential(action_class):
-        # An explicit prior grant unlocks the action (if consequential).
-        decision = ActionDecision.GRANT
+        # An explicit prior grant unlocks the action — but ONLY for the specific
+        # action class it was granted for (scope-bound to run + principal +
+        # action class). The class must be in the run-scoped approval set,
+        # otherwise this is a scope escalation and the action stays blocked.
+        # When a prior decision is present the policy's own allow-list is
+        # ignored entirely, so a grant for one class cannot leak to another.
+        if action_class in approved_for:
+            decision = ActionDecision.GRANT
+        elif policy.is_consequential(action_class):
+            decision = ActionDecision.REQUEST
+        else:
+            decision = ActionDecision.DENY
     elif prior_decision in ("denied", "expired", "requested"):
         # A prior non-granted decision is fail-closed: it overrides any run
         # policy pre-approval (a revoked/expired/unresolved approval cannot

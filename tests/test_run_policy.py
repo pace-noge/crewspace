@@ -243,3 +243,59 @@ async def test_prior_approval_decision_is_honored_fail_closed(app):
     assert calls == []
     assert events and events[0].payload.decision == "requested"
     assert events[0].payload.action_class == "external_mcp"
+
+
+# --- Slice 4: decision bound to (run, principal, action class) (acceptance item 4) --
+
+
+def test_approval_decision_is_bound_to_run_principal_and_action_class():
+    """A granted approval is scoped to the exact (run, principal, action class):
+    it unlocks only that action class for that run/principal and cannot be used
+    to escalate to a different class. The recorded event binds all three."""
+    from crewspace.dto.events import EventEnvelope
+
+    policy = RunPolicy(allowed={"external_mcp"})
+
+    # granted for external_mcp (class present in approved_for) -> unlocks it
+    granted = evaluate_action(
+        policy, "external_mcp", "run_x", "user_bilal",
+        approved_for={"external_mcp"}, prior_decision="granted",
+    )
+    assert granted.allowed is True
+    assert granted.event.payload.decision == "granted"
+    assert granted.event.payload.action_class == "external_mcp"
+    assert granted.event.payload.scope == "run_x"
+    assert granted.event.payload.principal_id == "user_bilal"
+
+    # SCOPE ESCALATION: same granted prior, different class -> blocked.
+    escalated = evaluate_action(
+        policy, "shell_command", "run_x", "user_bilal",
+        approved_for={"external_mcp"}, prior_decision="granted",
+    )
+    assert escalated.allowed is False
+    assert escalated.event.payload.decision == "requested"
+    assert escalated.event.payload.action_class == "shell_command"
+    assert escalated.event.payload.scope == "run_x"
+    assert escalated.event.payload.principal_id == "user_bilal"
+
+    # Different principal on the SAME run/class -> independent decision.
+    other_principal = evaluate_action(
+        policy, "external_mcp", "run_x", "user_other",
+        approved_for={"external_mcp"}, prior_decision=None,
+    )
+    assert other_principal.allowed is True  # policy allows it; principal differs
+    assert other_principal.event.payload.principal_id == "user_other"
+    assert other_principal.event.payload.scope == "run_x"
+    assert other_principal.event.payload.action_class == "external_mcp"
+
+    # Different run on the SAME class/principal -> independent event binding.
+    other_run = evaluate_action(
+        policy, "external_mcp", "run_y", "user_bilal",
+        approved_for={"external_mcp"}, prior_decision="granted",
+    )
+    assert other_run.allowed is True
+    assert other_run.event.payload.scope == "run_y"
+
+    # Each outcome is an independently-bound canonical event.
+    assert isinstance(granted.event, EventEnvelope)
+    assert isinstance(escalated.event, EventEnvelope)
