@@ -61,6 +61,8 @@ class DeliveryPipeline:
     produced: set = field(default_factory=set, init=False)
     produced_by_stage: Dict[str, set] = field(default_factory=dict, init=False)
     evidence: Dict[str, object] = field(default_factory=dict, init=False)
+    delivery_decision: Optional[str] = field(default=None, init=False)
+    prior_approval_decision: Optional[str] = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if not validate_pipeline_graph(self.contracts):
@@ -126,6 +128,11 @@ class DeliveryPipeline:
             # A non-running stage (already SUCCEEDED, FAILED, or PENDING) cannot
             # re-emit artifacts -> no duplicate downstream work.
             raise IllegalPipelineTransition(f"stage {stage} is not running")
+        # The human_approval stage is a gated, no-auto-advance decision: it can
+        # only complete (producing the delivery decision) when an explicit human
+        # grant has been recorded. Any other state blocks delivery fail-closed.
+        if stage == "human_approval" and self.delivery_decision != "approved":
+            raise IllegalPipelineTransition("human approval not granted; delivery is blocked")
         self.stage_status[stage] = StageStatus.SUCCEEDED
         emitted = set(produced or [])
         self.produced_by_stage[stage] = emitted
@@ -168,6 +175,36 @@ class DeliveryPipeline:
         stale = self.produced_by_stage.pop(stage, set())
         self.produced -= stale
         self.stage_status[stage] = StageStatus.PENDING
+
+    def grant_human_approval(self, principal_id: Optional[str], approved: bool) -> None:
+        """Record the human approval decision for the delivery stage.
+
+        Fail-closed: a prior denied/expired/requested decision can NEVER be
+        overridden by a later grant (matches the M6.5 approval semantics). A
+        grant only counts when it is an explicit, signed decision
+        (principal_id present and approved=True); anything else resolves to
+        "denied" and blocks delivery.
+        """
+        if self.prior_approval_decision in ("denied", "expired", "requested"):
+            self.delivery_decision = "denied"
+            return
+        if approved and principal_id:
+            self.delivery_decision = "approved"
+        else:
+            self.delivery_decision = "denied"
+
+    def set_prior_approval_decision(self, decision: Optional[str]) -> None:
+        """Seed a prior approval decision (e.g. from RunPolicy.evaluate_action).
+
+        A denied/expired/requested prior locks delivery to "denied" fail-closed;
+        a granted prior is recorded but still requires an explicit signed grant
+        to actually advance (defense in depth). Unrecognized values are ignored.
+        """
+        self.prior_approval_decision = decision
+        if decision in ("denied", "expired", "requested"):
+            self.delivery_decision = "denied"
+        elif decision != "granted":
+            self.prior_approval_decision = None
 
     def cancel(self) -> None:
         if self._is_terminal():

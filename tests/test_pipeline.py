@@ -69,6 +69,7 @@ def test_pipeline_progresses_in_deterministic_stage_order():
 
     assert p.eligible_stage() == "human_approval"
     p.begin_stage("human_approval")
+    p.grant_human_approval("u_bilal", True)
     p.complete_stage("human_approval", produced=["delivery_decision"])
     assert p.stage_status["human_approval"] == StageStatus.SUCCEEDED
     assert p.status == PipelineStatus.SUCCEEDED
