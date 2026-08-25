@@ -2,17 +2,19 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. Verified milestone commit for M6.6 slice 7 is ready.
+(7/7) and pushed. M6.7 is IN PROGRESS (1/7). Verified milestone commit for
+M6.7 slice 1 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_pipeline.py tests/test_handoff_contracts.py tests/test_pipeline_reviewer_evidence.py tests/test_pipeline_no_duplicate_work.py tests/test_pipeline_human_approval.py tests/test_pipeline_view.py tests/test_pipeline_e2e_poc.py -q`
-   to confirm green (M6.6 bounded gate: 34 passed).
-4. Pick up PLAN.md M6.7 — Agent evaluation and reliability scorecards (PLANNED,
-   0/7): track success/timeout/disconnect/latency/tool-failure/cancellation/
-   verification-delta/human-acceptance/rework/token/cost; replayable benchmark
-   fixtures; regression thresholds that block rollout without auto-promotion.
+3. `uv run pytest tests/test_scorecard.py -q` to confirm green (M6.7 slice-1
+   bounded gate: 3 passed). M6.6 gate (34 passed) still green via
+   `tests/test_pipeline*.py`.
+4. Pick up PLAN.md M6.7 — Agent evaluation and reliability scorecards (IN
+   PROGRESS, 1/7): next item 2 (run/event data produces deterministic aggregate
+   metrics — a `compute_scorecard` pure function over CodingRun + AgentToolCall
+   records; item 1 shipped the documented metric definitions in dto/metrics.py).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -90,8 +92,15 @@ M6.5 fail-closed composition), the UI run-graph (pipeline_view.py +
 pipeline_graph.html), and a real-repo end-to-end POC (test_pipeline_e2e_poc.py)
 that drives planner->coder->reviewer->tester->human_approval to a verified,
 immutable, human-approved change set linked to a real git HEAD. M6.6 is complete
-and pushed. Next milestone: M6.7 — Agent evaluation and reliability scorecards
-(PLANNED, 0/7).
+and pushed. M6.7 — Agent evaluation and reliability scorecards is IN PROGRESS
+(1/7): slice 1 shipped documented metric definitions (dto/metrics.py:
+METRIC_DEFINITIONS with explicit denominator + privacy/retention note per
+metric, plus MetricValue carrying numerator/denominator) and a pure deterministic
+compute_scorecard(runs, tool_calls) over CodingRun + AgentToolCall records
+(application/metrics.py) — order-independent, div-by-zero safe, migration-safe.
+Next slice 2: run/event data produces deterministic aggregate metrics (extend
+compute_scorecard with verification-delta + human acceptance/rework from the
+change-set + pipeline records).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
