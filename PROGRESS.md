@@ -2,8 +2,8 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is IN PROGRESS (5/7). Verified
-milestone commits for M6.8 slices 1-5 are pushed.
+(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is IN PROGRESS (6/7). Verified
+milestone commits for M6.8 slices 1-6 are pushed.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`

@@ -23,6 +23,7 @@ from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
 from .application.coding_runs import reconcile_interrupted_runs
 from .application.inbox_store import inbox_store
+from .application.inbox_events import inbox_events
 from .api.connection import agent_manager, manager, thread_manager
 from .dto.mappers import to_message
 from .security import is_same_origin
@@ -95,6 +96,7 @@ async def lifespan(app: FastAPI):
         thread_manager.reset()
         agent_manager.reset()
         inbox_store.reset()
+        inbox_events.reset()
         await db.close()
         app.state.db_closed_by_lifespan = True
 

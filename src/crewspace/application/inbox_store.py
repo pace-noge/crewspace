@@ -16,6 +16,7 @@ from crewspace.application.inbox import (
     reconcile_inbox_for_team,
     resolve_item,
 )
+from crewspace.application.inbox_events import inbox_events
 
 
 class InboxStore:
@@ -30,6 +31,7 @@ class InboxStore:
     def reconcile(self, team_id: str, records: list[dict]) -> list[InboxItem]:
         items = reconcile_inbox_for_team(self._items.get(team_id, []), records, team_id)
         self._items[team_id] = items
+        inbox_events.publish(team_id, items)
         return list(items)
 
     def view(self, team_id: str, filters: InboxFilters | None = None) -> InboxView:
@@ -49,6 +51,7 @@ class InboxStore:
         if not any(item.item_id == item_id for item in current):
             return False
         self._items[team_id] = operation(current, item_id, *args)
+        inbox_events.publish(team_id, self._items[team_id])
         return True
 
 

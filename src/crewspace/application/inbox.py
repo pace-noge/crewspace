@@ -239,7 +239,7 @@ def build_inbox_view(items: List[InboxItem], filters: Optional[InboxFilters] = N
     return InboxView(
         items=visible,
         total=len(items),
-        unacknowledged=sum(1 for i in items if not i.acknowledged),
+        unacknowledged=sum(1 for i in items if not i.acknowledged and not i.resolved),
         by_kind=by_kind,
         filters=filters or InboxFilters(),
     )

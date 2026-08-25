@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ...application.inbox import InboxFilters
 from ...application.inbox_store import inbox_store
+from ...application.inbox_events import inbox_events
 from ..deps import CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import navigation_context, templates
 
@@ -92,6 +93,37 @@ async def inbox_page(
 
 def _redirect(team_id: str) -> RedirectResponse:
     return RedirectResponse(f"/inbox?team_id={team_id}", status_code=303)
+
+
+@router.get("/events")
+async def replay_inbox_events(
+    uow: UowDep,
+    current_user: CurrentUserOptionalDep,
+    team_id: str,
+    cursor: int | None = Query(default=None),
+) -> dict:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    assert current_user is not None
+    team = await _authorized_team(uow, current_user, team_id)
+    events = inbox_events.events_after(team.id, cursor)
+    return {
+        "events": [
+            {
+                "sequence": event.sequence,
+                "event_type": event.event_type,
+                "item_id": event.item_id,
+                "unread_count": event.unread_count,
+            }
+            for event in events
+        ],
+        "cursor": inbox_events.cursor(team.id),
+        "unread_count": sum(
+            1 for item in inbox_store.view(team.id).items
+            if not item.acknowledged and not item.resolved
+        ),
+    }
 
 
 @router.post("/{item_id}/acknowledge")

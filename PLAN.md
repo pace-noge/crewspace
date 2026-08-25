@@ -184,7 +184,7 @@ Last updated: 2026-08-25 (WIB)
 | M6.5 | Approval checkpoints and run-scoped policy | DONE | 7/7 | M6.3, M6.4 | `src/crewspace/application/run_policy.py` + `src/crewspace/application/mcp_tools.py` (opt-in checkpoint) + `tests/test_run_policy.py`; 12-test bounded gate | Reuse existing default-deny agent-tool/MCP governance; approval checkpoints record a canonical `approval` event via the M6.4 envelope so they surface in the activity stream without new UI plumbing |
 | M6.6 | Multi-agent delivery pipeline | DONE | 7/7 | M6.2–M6.5 | `src/crewspace/dto/handoffs.py` (contracts + ChangeSetEvidence) + `src/crewspace/application/pipeline.py` (state machine + attach_artifact + duplicate-work guards + human-approval gate) + `src/crewspace/application/pipeline_view.py` (view model) + `src/crewspace/templates/pipeline_graph.html` + `tests/test_handoff_contracts.py` + `tests/test_pipeline.py` + `tests/test_pipeline_reviewer_evidence.py` + `tests/test_pipeline_no_duplicate_work.py` + `tests/test_pipeline_human_approval.py` + `tests/test_pipeline_view.py` + `tests/test_pipeline_e2e_poc.py`; 34-test bounded gate | Pass structured handoff artifacts; planner -> coder -> reviewer -> test -> human approval |
 | M6.7 | Agent evaluation and reliability scorecards | DONE | 7/7 | M6.3, M6.4 | `src/crewspace/dto/metrics.py` + `src/crewspace/dto/benchmarks.py` (frozen fixture/suite/threshold DTOs) + `src/crewspace/application/metrics.py` (compute_scorecard + compute_team_scorecard) + `src/crewspace/application/benchmarks.py` (materialize_fixture + run_benchmark + compare_cohorts + rank_cohorts + evaluate_regression) + `src/crewspace/application/scorecard_view.py` (build_scorecard_view) + `src/crewspace/application/benchmark_poc.py` (run_benchmark_poc) + `src/crewspace/infrastructure/repositories.py` (coding_runs.list_for_team) + `src/crewspace/templates/scorecard.html` + `tests/test_scorecard*.py` + `tests/test_benchmark_*.py`; 24-test bounded gate | Replayable benchmarks and version/model comparisons |
-| M6.8 | Operational inbox | IN PROGRESS | 5/7 | M6.3–M6.5 | `application/inbox.py` + `application/inbox_store.py` + `api/routers/inbox.py` + `templates/inbox.html` + `tests/test_inbox_*.py`; 20-test bounded gate | Human-attention queue across agents, workflows, MCP |
+| M6.8 | Operational inbox | IN PROGRESS | 6/7 | M6.3–M6.5 | `application/inbox.py` + `application/inbox_store.py` + `application/inbox_events.py` + `api/routers/inbox.py` + `templates/inbox.html` + `tests/test_inbox_*.py`; 24-test bounded gate | Human-attention queue across agents, workflows, MCP |
 
 M6.1 — Agent capability negotiation                     [S–M]  DONE
 Scope:
@@ -325,13 +325,13 @@ Scope:
   - Provide filters, ownership, priority, acknowledgement, resolution, and deep links.
   - Keep this as a projection over source records/events, not a second source of truth.
 
-Acceptance (5/7):
+Acceptance (6/7):
   - [x] Inbox item taxonomy and source-to-item projection rules are documented.
   - [x] Items dedupe deterministically and update/resolve with their source record.
   - [x] Authorization prevents cross-tenant information leakage.
   - [x] Dedicated app-shell inbox supports filter, assign, acknowledge, and resolve.
   - [x] Every item deep-links to the relevant run/workflow/tool/review detail.
-  - [ ] Live updates and reconnect replay preserve correct unread counts.
+  - [x] Live updates and reconnect replay preserve correct unread counts.
   - [ ] Integration POC exercises at least one item from each supported source.
 
 M6 Progress log (append-only, newest first):
