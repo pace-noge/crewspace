@@ -167,3 +167,79 @@ async def test_external_mcp_checkpoint_emits_approval_event_before_action(app):
     assert len(events_allowed) == 1
     assert events_allowed[0].payload.decision == "granted"
     assert events_allowed[0].payload.action_class == "external_mcp"
+
+
+# --- Slice 3: prior approval decision honored at the seam (acceptance items 3-4) --
+
+
+async def test_prior_approval_decision_is_honored_fail_closed(app):
+    """With a policy that would allow the action, a prior `granted` decision
+    drives execution; a prior `denied`/`expired`/`requested` decision blocks the
+    action fail-closed (no execution) and the recorded event reflects the
+    fail-closed decision. The decision is tied to the run + action class."""
+    from crewspace.application.mcp_tools import build_agent_tool_runtime
+    from crewspace.application.tools import ToolPermissionDenied, build_registry
+    from crewspace.dto.events import EventEnvelope
+    from tests.test_mcp_execution import _seed_approved_tool
+
+    await _seed_approved_tool(app)
+    async with app.state.db.uow() as uow:
+        await uow.agent_policies.replace_mcp_tools(
+            "agent_crewspace", {("mcp_jira", "create_issue")}
+        )
+        await uow.commit()
+
+    class Executor:
+        def __init__(self): self.calls = []
+        async def call_tool(self, active_connection, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            return {"issue_key": "ENG-42", "title": arguments["title"]}
+
+    async def run_with(decision):
+        events: list[EventEnvelope] = []
+        executor = Executor()
+        async with app.state.db.uow() as uow:
+            runtime = await build_agent_tool_runtime(
+                build_registry(), uow,
+                principal_id="user_bilal", agent_id="agent_crewspace",
+                executor=executor,
+                policy=RunPolicy(allowed={"external_mcp"}), run_id="run_x",
+                event_recorder=events.append,
+                approval_decision=decision,
+            )
+            ran = False
+            try:
+                await runtime.runner.run("jira.create_issue", title="X")
+                ran = True
+            except ToolPermissionDenied:
+                pass
+        return ran, executor.calls, events
+
+    # prior granted -> executes (the granted decision drives the action)
+    ran, calls, events = await run_with("granted")
+    assert ran is True
+    assert calls == [("create_issue", {"title": "X"})]
+    assert events and events[0].payload.decision == "granted"
+    assert events[0].payload.action_class == "external_mcp"
+    assert events[0].payload.scope == "run_x"
+
+    # prior denied -> blocked fail-closed, no execution
+    ran, calls, events = await run_with("denied")
+    assert ran is False
+    assert calls == []
+    assert events and events[0].payload.decision == "requested"
+    assert events[0].payload.action_class == "external_mcp"
+
+    # prior expired -> blocked fail-closed, no execution
+    ran, calls, events = await run_with("expired")
+    assert ran is False
+    assert calls == []
+    assert events and events[0].payload.decision == "requested"
+    assert events[0].payload.action_class == "external_mcp"
+
+    # prior requested (unresolved) -> blocked fail-closed, no execution
+    ran, calls, events = await run_with("requested")
+    assert ran is False
+    assert calls == []
+    assert events and events[0].payload.decision == "requested"
+    assert events[0].payload.action_class == "external_mcp"

@@ -110,14 +110,18 @@ def evaluate_action(
     """
     approved_for = approved_for or set()
 
-    # A prior granted decision (e.g. from a human approval checkpoint) unlocks
-    # the action if the class is consequential; anything else stays blocked.
     if prior_decision == "granted" and policy.is_consequential(action_class):
+        # An explicit prior grant unlocks the action (if consequential).
         decision = ActionDecision.GRANT
+    elif prior_decision in ("denied", "expired", "requested"):
+        # A prior non-granted decision is fail-closed: it overrides any run
+        # policy pre-approval (a revoked/expired/unresolved approval cannot
+        # execute). Surface it as a `requested` event for the operator.
+        decision = ActionDecision.REQUEST
     else:
+        # No outstanding prior decision: resolve against the run policy and any
+        # run-scoped pre-approvals.
         decision, _ = policy.resolve(action_class, approved_for=approved_for)
-        # Surface a pending/unresolved state as a `requested` approval event
-        # rather than a flat deny, so the operator can resolve it.
         if decision is ActionDecision.DENY and policy.is_consequential(action_class):
             decision = ActionDecision.REQUEST
 

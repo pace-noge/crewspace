@@ -1,16 +1,16 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is DONE (7/7) and pushed; M6.5 is IN PROGRESS (2/7). Verified milestone
-commit for M6.5 slice 2 is ready.
+M6.4 is DONE (7/7) and pushed; M6.5 is IN PROGRESS (3/7). Verified milestone
+commit for M6.5 slice 3 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_run_policy.py tests/test_mcp_execution.py tests/test_mcp_connections.py tests/test_agent_tool_policy.py -q` to confirm green (M6.5 slice-2 bounded gate: 39 passed).
+3. `uv run pytest tests/test_run_policy.py tests/test_mcp_execution.py tests/test_mcp_connections.py tests/test_agent_tool_policy.py -q` to confirm green (M6.5 slice-3 bounded gate: 39 passed).
 4. Pick up PLAN.md M6.5 — Approval checkpoints and run-scoped policy, next item
-   3 (`granted` approvals allow the action; `denied`/`expired`/`requested` fail
-   closed and block execution).
+   4 (approval decision is tied to principal, run, and action class; the
+   canonical approval event already carries scope/principal_id/action_class).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -79,18 +79,18 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.5 — Approval checkpoints and run-scoped policy (IN PROGRESS, 2/7).
+milestone: M6.5 — Approval checkpoints and run-scoped policy (IN PROGRESS, 3/7).
 Slice 1 landed the run-scoped default-deny RunPolicy + evaluate_action. Slice 2
-wired the checkpoint into the external MCP execution seam (mcp_tools.py):
-build_agent_tool_runtime now accepts optional policy/run_id/event_recorder; when
-a RunPolicy is set, a consequential external MCP action emits a canonical
-`approval` (requested) EventEnvelope BEFORE the tool runs and is blocked
-fail-closed; an allowed policy lets it proceed and records `granted`. The check
-is opt-in (policy=None keeps current behavior), so existing MCP/ad-hoc paths are
-unchanged. Next slice 3: `granted` approvals allow the action; `denied`/
-`expired`/`requested` fail closed and block execution (wire the granted decision
-into the coding-run action path and assert the canonical granted event drives
-execution).
+wired the opt-in checkpoint into the external MCP seam (emits canonical approval
+requested event before the action, blocks fail-closed). Slice 3 threads a prior
+approval_decision through the seam into evaluate_action(prior_decision=...): a
+prior `granted` drives execution; a prior `denied`/`expired`/`requested`
+overrides any run-policy pre-approval and blocks fail-closed (a revoked
+approval cannot execute). The canonical approval event carries scope (run_id) /
+principal_id / action_class. Next slice 4: confirm the decision is tied to
+principal, run, and action class end-to-end (the recorded event already binds
+these three; add a test asserting principal/run/action_class identity pins the
+decision and that a different run/principal/action does not inherit it).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

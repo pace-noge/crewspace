@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from jsonschema import ValidationError
 from jsonschema.validators import validator_for
@@ -58,6 +58,7 @@ class _CompositeAgentToolRunner:
         policy: RunPolicy | None = None,
         run_id: str | None = None,
         event_recorder: Any | None = None,
+        approval_decision: Literal["granted", "denied", "expired", "requested"] | None = None,
     ) -> None:
         self._native_runner = native_runner
         self._uow = uow
@@ -73,6 +74,7 @@ class _CompositeAgentToolRunner:
         self._policy = policy
         self._run_id = run_id
         self._event_recorder = event_recorder
+        self._approval_decision = approval_decision
 
     async def run(self, tool_name: str, **args: Any) -> Any:
         target = self._external.get(tool_name)
@@ -104,6 +106,7 @@ class _CompositeAgentToolRunner:
                 run_id=self._run_id or "",
                 principal_id=self._principal_id,
                 approved_for={"external_mcp"} if "external_mcp" in self._policy._allowed else set(),
+                prior_decision=self._approval_decision,
             )
             if self._event_recorder is not None:
                 self._event_recorder(checkpoint.event)
@@ -183,6 +186,7 @@ async def build_agent_tool_runtime(
     policy: RunPolicy | None = None,
     run_id: str | None = None,
     event_recorder: Any | None = None,
+    approval_decision: Literal["granted", "denied", "expired", "requested"] | None = None,
 ) -> AgentToolRuntime:
     native_grants = await uow.agent_policies.list_enabled_native_tools(agent_id)
     native_tools = [
@@ -207,6 +211,7 @@ async def build_agent_tool_runtime(
             policy=policy,
             run_id=run_id,
             event_recorder=event_recorder,
+            approval_decision=approval_decision,
         ),
     )
 
