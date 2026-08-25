@@ -2,20 +2,20 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is IN PROGRESS (2/7). Verified
-milestone commit for M6.8 slice 2 is ready.
+(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is IN PROGRESS (4/7). Verified
+milestone commits for M6.8 slices 1-4 are pushed.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_inbox_projection.py tests/test_inbox_reconcile.py -q` to
-   confirm green (M6.8 bounded gate: 9 passed). M6.7 gate (24 passed) still green
-   via tests/test_scorecard*.py + tests/test_benchmark_*.py; M6.6 gate (34 passed)
-   via tests/test_pipeline*.py.
-4. Pick up PLAN.md M6.8 — Operational inbox (IN PROGRESS, 2/7): next item 3
-   (authorization prevents cross-tenant information leakage — the projection is already
-   team-scoped; add a fail-closed test asserting a non-member/other-team principal
-   cannot read another team's items, and document the rule).
+3. `uv run pytest tests/test_inbox_projection.py tests/test_inbox_reconcile.py
+   tests/test_inbox_auth.py -q` to confirm green (M6.8 bounded gate: 13 passed).
+   M6.7 gate (24 passed) still green via tests/test_scorecard*.py +
+   tests/test_benchmark_*.py; M6.6 gate (34 passed) via tests/test_pipeline*.py.
+4. Pick up PLAN.md M6.8 — Operational inbox (IN PROGRESS, 3/7): next item 4 (a
+   dedicated app-shell inbox that supports filter, assign, acknowledge, and resolve —
+   build a router + template that render the projected inbox and expose acknowledge
+   /assign/resolve transitions on inbox-local state).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -109,16 +109,13 @@ seeded benchmark POC demonstrating version comparison + regression alert —
 run_benchmark_poc (slice 7). M6.8 (Operational inbox) started: slice 1 shipped the
 inbox item taxonomy + source-to-item projection rules as executable documentation
 (application/inbox.py: INBOX_RULES + derive_inbox_id + build_inbox_item +
-project_inbox_for_team). Slice 2 added idempotent reconciliation:
-reconcile_inbox_for_team(previous, records, team_id) maintains the previous
-projection against a fresh source scan — a still-attentive source updates the SAME
-item in place, a source that clears its attention state drops its item (resolves
-with the source record, no orphan), a new attention state adds a fresh item, and
-inbox-local state (acknowledged, owner_id) survives re-projection. Cross-tenant
-records remain excluded. Next slice 3: authorization prevents cross-tenant leakage
-(the projection is already team-scoped; add a fail-closed test asserting a
-non-member/other-team principal cannot read another team's items, and document the
-rule).
+project_inbox_for_team). Slice 2 added idempotent reconciliation
+(reconcile_inbox_for_team). Slice 3 added the authorization gate (load_inbox_for_team)
+that re-checks the principal's team membership first and fails closed, so a
+non-member/other-team principal receives an empty list regardless of arguments — no
+cross-tenant leakage. Next slice 4: a dedicated app-shell inbox that supports filter,
+assign, acknowledge, and resolve — render the projected inbox and expose those
+transitions on inbox-local state.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

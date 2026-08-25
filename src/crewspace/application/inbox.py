@@ -9,8 +9,8 @@ source-derived id and never leak across tenants. Acceptance item 1.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
-from typing import List, Optional
+from dataclasses import dataclass, field, replace
+from typing import List, Optional, Tuple
 
 # Deterministic deep-link patterns per source type (real existing routes where they
 # exist; the inbox only renders links, it does not own the records).
@@ -189,3 +189,77 @@ def load_inbox_for_team(
     if not principal_team_id or principal_team_id != team_id:
         return []
     return project_inbox_for_team(records, team_id)
+
+
+@dataclass(frozen=True)
+class InboxFilters:
+    """User-facing filters for the app-shell inbox."""
+    kinds: Optional[Tuple[str, ...]] = None        # restrict to these item kinds
+    only_unacknowledged: bool = False               # hide acknowledged items
+    only_unresolved: bool = False                   # hide resolved items
+    min_priority: Optional[int] = None              # show items at/above this priority
+
+
+@dataclass(frozen=True)
+class InboxView:
+    """Render-ready view of the inbox: filtered items + summary counts."""
+    items: List[InboxItem]
+    total: int
+    unacknowledged: int
+    by_kind: dict
+    filters: InboxFilters
+
+
+def filter_inbox(items: List[InboxItem], filters: Optional[InboxFilters] = None) -> List[InboxItem]:
+    """Apply user-facing filters to a projected inbox (does not mutate input)."""
+    if filters is None:
+        filters = InboxFilters()
+    out = list(items)
+    if filters.kinds is not None:
+        wanted = set(filters.kinds)
+        out = [i for i in out if i.kind in wanted]
+    if filters.only_unacknowledged:
+        out = [i for i in out if not i.acknowledged]
+    if filters.only_unresolved:
+        out = [i for i in out if not i.resolved]
+    if filters.min_priority is not None:
+        out = [i for i in out if i.priority >= filters.min_priority]
+    return out
+
+
+def build_inbox_view(items: List[InboxItem], filters: Optional[InboxFilters] = None) -> InboxView:
+    """Turn a projected inbox into a render-ready view with summary counts."""
+    from collections import Counter
+    visible = filter_inbox(items, filters)
+    by_kind = dict(Counter(i.kind for i in visible))
+    return InboxView(
+        items=visible,
+        total=len(items),
+        unacknowledged=sum(1 for i in items if not i.acknowledged),
+        by_kind=by_kind,
+        filters=filters or InboxFilters(),
+    )
+
+
+def acknowledge_item(items: List[InboxItem], item_id: str) -> List[InboxItem]:
+    """Mark one inbox item acknowledged (inbox-local state). Returns a new list."""
+    return [
+        replace(i, acknowledged=True) if i.item_id == item_id else i
+        for i in items
+    ]
+
+
+def assign_item(items: List[InboxItem], item_id: str, owner_id: str) -> List[InboxItem]:
+    """Assign one inbox item to an owner (inbox-local state). Returns a new list."""
+    return [
+        replace(i, owner_id=owner_id) if i.item_id == item_id else i
+        for i in items
+    ]
+
+
+def resolve_item(items: List[InboxItem], item_id: str) -> List[InboxItem]:
+    """Mark one inbox item resolved (inbox-local state). Returns a new list."""
+    return [
+        replace(i, resolved=True) if i.item_id == item_id else i
+        for i in items
+    ]

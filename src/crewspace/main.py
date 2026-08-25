@@ -18,10 +18,11 @@ from .infrastructure.db import Database
 from .infrastructure.mcp_client import ExternalMcpToolExecutor, build_external_tool_executor
 from .infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from .api.routers import (agents, auth, boards, cards, change_sets, chat, coding_runs,
-                            cronjobs, pages, presence, teams, tools, workflows)
+                            cronjobs, inbox, pages, presence, teams, tools, workflows)
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
 from .application.coding_runs import reconcile_interrupted_runs
+from .application.inbox_store import inbox_store
 from .api.connection import agent_manager, manager, thread_manager
 from .dto.mappers import to_message
 from .security import is_same_origin
@@ -93,6 +94,7 @@ async def lifespan(app: FastAPI):
         manager.reset()
         thread_manager.reset()
         agent_manager.reset()
+        inbox_store.reset()
         await db.close()
         app.state.db_closed_by_lifespan = True
 
@@ -123,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(teams.router)
     app.include_router(change_sets.router)
     app.include_router(coding_runs.router)
+    app.include_router(inbox.router)
     app.include_router(cronjobs.router)
     app.include_router(tools.router)
     app.include_router(workflows.router)
