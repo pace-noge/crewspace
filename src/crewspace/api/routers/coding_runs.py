@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 
 from ...application.access import can_manage_team, is_team_member
 from ...application.coding_runs import cancel_coding_run, dispatch_coding_run
+from ...dto.events import run_to_activity
 from ..deps import CurrentUserDep, UowDep
 
 router = APIRouter(prefix="/api/coding/runs", tags=["coding-runs"])
@@ -102,6 +103,10 @@ async def get_coding_run(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict
         "timeline": timeline,
         "duration_ms": duration_ms,
         "result": result,
+        # Compact typed activity (M6.4 item 4): derived from the run's real
+        # fields; raw logs remain available on demand via recent_output.
+        "activity": [item.model_dump(mode="json") for item in run_to_activity(run)],
+        "has_raw_logs": bool(run.recent_output),
     }
 
 

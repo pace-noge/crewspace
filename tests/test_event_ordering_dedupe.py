@@ -130,6 +130,13 @@ def test_order_key_groups_by_run_then_sequence():
 def test_order_key_falls_back_to_event_id_without_run():
     no_run_1 = build_event("warning", occurred_at=_now(), payload={"code": "W", "message": "x"})
     no_run_2 = build_event("warning", occurred_at=_now(), payload={"code": "W", "message": "x"})
-    # different event ids -> stable, total order; never compares equal
+    # different event ids -> distinct, stable, total order keys
     assert order_key(no_run_1) != order_key(no_run_2)
-    assert sorted([no_run_2, no_run_1], key=order_key) == [no_run_1, no_run_2]
+    # sorting by order_key is deterministic and total: the larger id sorts last.
+    lo, hi = sorted([no_run_1, no_run_2], key=lambda e: e.event_id)
+    assert sorted([no_run_2, no_run_1], key=order_key) == sorted([no_run_1, no_run_2], key=order_key)
+    # The two no-run events bracket any run-bearing event (run_id sorts AFTER
+    # the empty no-run bucket: "" < "r1").
+    with_run = build_event("command", occurred_at=_now(), run_id="r1", sequence=0, payload={"command": "x"})
+    mixed = sorted([no_run_1, no_run_2, with_run], key=order_key)
+    assert mixed[-1] is with_run  # run-bearing sorts after no-run ones

@@ -1,13 +1,13 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is IN PROGRESS (3/7). Verified milestone commit for M6.4 slice 3 is ready.
+M6.4 is IN PROGRESS (4/7). Verified milestone commit for M6.4 slice 4 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -8` to confirm history matches below.
-3. `uv run pytest tests/test_event_envelope.py tests/test_event_ordering_dedupe.py tests/test_event_resume_cursor.py tests/test_change_sets.py -q` to confirm green (slice-3 bounded gate: 73 passed).
-4. Pick up PLAN.md M6.4 — Typed execution events and unified event envelope, next item 4 (UI renders compact typed activity with raw logs available on demand).
+3. `uv run pytest tests/test_event_activity.py tests/test_event_envelope.py tests/test_event_ordering_dedupe.py tests/test_event_resume_cursor.py tests/test_change_set_management.py -q` to confirm green (slice-4 bounded gate: 81 passed).
+4. Pick up PLAN.md M6.4 — Typed execution events and unified event envelope, next item 5 (audit JSON/CSV exports include the same canonical events).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -76,8 +76,9 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6). Next implement M6.4 item
-4 — UI renders compact typed activity with raw logs available on demand (build
-on `EventEnvelope`/`ResumeCursor`/`order_key` to feed a compact activity stream).
+5 — audit JSON/CSV exports include the same canonical events (reuse
+`to_activity_item`/`canonical_json` so exported audit rows match the in-app
+activity contract).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

@@ -1,0 +1,34 @@
+{# Compact typed activity stream (M6.4 item 4). One row per execution event;
+   each row shows the compact summary and (on demand) the raw payload. The raw
+   logs are surfaced separately via `recent_output` / `has_raw_logs`, not inline,
+   so the activity list stays compact. #}
+<div class="activity-list" id="activity-list">
+  {% if not activity %}
+    <p class="activity-empty">No activity yet.</p>
+  {% else %}
+    <ul class="activity-rows">
+      {% for item in activity %}
+        <li class="activity-row" data-event-id="{{ item.event_id }}"
+            data-event-type="{{ item.event_type }}">
+          <span class="activity-kind">{{ item.kind }}</span>
+          <span class="activity-summary">{{ item.summary }}</span>
+          {% if item.actor_id %}
+            <span class="activity-actor">{{ item.actor_id }}</span>
+          {% endif %}
+          <button type="button" class="activity-raw-toggle"
+                  aria-expanded="false"
+                  aria-controls="raw-{{ item.event_id }}"
+                  data-raw='{{ item.raw | tojson }}'>raw</button>
+          <pre class="activity-raw" id="raw-{{ item.event_id }}"
+               hidden>{{ item.raw | tojson }}</pre>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if has_raw_logs %}
+    <details class="activity-raw-logs">
+      <summary>Raw logs</summary>
+      <pre class="activity-raw-logs-body">{{ recent_output }}</pre>
+    </details>
+  {% endif %}
+</div>

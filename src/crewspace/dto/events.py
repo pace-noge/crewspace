@@ -421,3 +421,131 @@ def events_after(
             continue
         result.append(env)
     return result
+
+
+# --- Compact activity rendering (acceptance item 4) ---------------------------
+#
+# The UI renders a compact row per execution event plus the raw payload on
+# demand. `to_activity_item` maps an `EventEnvelope` to a frozen, UI-shaped
+# `ActivityItem`; `compact_summary` produces the one-line label. These are pure
+# DTOs (no template/db coupling) so they are unit-testable without a browser.
+
+
+class _Frozen(BaseModel):
+    """Frozen, no-ad-hoc-keys base so the UI contract cannot silently drift."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ActivityItem(_Frozen):
+    event_id: str
+    event_type: EventType
+    occurred_at: datetime
+    kind: str
+    summary: str
+    actor_id: SafeId | None = None
+    run_id: SafeId | None = None
+    correlation_id: SafeId | None = None
+    sequence: int | None = Field(default=None, ge=0)
+    raw: dict[str, Any]
+
+
+# One-line compact labels per event type. Bounded so the UI row stays short
+# (COMPACT_MAX); the full payload is always available in `ActivityItem.raw` on
+# demand, so truncating the label never loses information.
+COMPACT_MAX = 120
+
+
+def _trunc(text: str) -> str:
+    if len(text) <= COMPACT_MAX:
+        return text
+    return text[: COMPACT_MAX - 1].rstrip() + "…"
+
+
+def compact_summary(env: EventEnvelope) -> str:
+    p = env.payload
+    et = env.event_type
+    if et == "plan":
+        label = f"plan: {p.summary}".strip()
+    elif et == "file":
+        label = f"file {p.path}: {p.action}"
+    elif et == "command":
+        label = f"ran {p.command} (exit {p.exit_code})" if p.exit_code is not None else f"command {p.command}"
+    elif et == "test":
+        label = (
+            f"tests passed {p.passed}/{p.passed + p.failed}"
+            if p.passed is not None and p.failed is not None
+            else f"test {p.status}"
+        )
+    elif et == "artifact":
+        label = f"artifact {p.path} ({p.size_bytes} B)"
+    elif et == "approval":
+        label = f"approval {p.decision}: {p.action_class}"
+    elif et == "warning":
+        label = f"warning {p.code}: {p.message}"
+    elif et == "terminal":
+        label = f"terminal: {p.status}"
+    else:
+        label = et  # pragma: no cover - exhaustive union
+    return _trunc(label)
+
+
+def to_activity_item(env: EventEnvelope) -> ActivityItem:
+    return ActivityItem(
+        event_id=env.event_id,
+        event_type=env.event_type,
+        occurred_at=env.occurred_at,
+        kind=env.event_type,
+        summary=compact_summary(env),
+        actor_id=env.actor_id,
+        run_id=env.run_id,
+        correlation_id=env.correlation_id,
+        sequence=env.sequence,
+        raw=env.payload.model_dump(mode="json"),
+    )
+
+
+def run_to_activity(run: Any) -> list[ActivityItem]:
+    """Derive compact typed activity for a coding run from its real fields.
+
+    Produces the events a run naturally emits (plan/instruction, started,
+    terminal) as `EventEnvelope`s, then maps them to `ActivityItem`s in canonical
+    order. This is the source-of-truth the UI renders; the raw `recent_output` is
+    surfaced separately as on-demand "raw logs". Nothing here fabricates output
+    — every field comes from the run entity.
+    """
+    rid = getattr(run, "id", None)
+    actor = getattr(run, "agent_id", None)
+    created = getattr(run, "created_at", None)
+    started = getattr(run, "started_at", None)
+    finished = getattr(run, "finished_at", None)
+    instruction = getattr(run, "instruction", "") or ""
+    status = getattr(run, "status", "") or ""
+    failure_reason = getattr(run, "failure_reason", "") or ""
+
+    envelopes: list[EventEnvelope] = []
+    if created is not None:
+        envelopes.append(
+            build_event("plan", occurred_at=created, run_id=rid, actor_id=actor,
+                        payload={"summary": instruction or "(no instruction)"})
+        )
+    if started is not None:
+        envelopes.append(
+            build_event("command", occurred_at=started, run_id=rid, actor_id=actor,
+                        payload={"command": "execute run", "exit_code": None})
+        )
+    if finished is not None:
+        payload: dict[str, Any] = {"status": status}
+        if status == "failed" and failure_reason:
+            payload["reason"] = failure_reason
+        envelopes.append(
+            build_event("terminal", occurred_at=finished, run_id=rid, actor_id=actor,
+                        payload=payload)
+        )
+    # Run lifecycle is a time-ordered sequence, not a per-run sequence counter,
+    # so sort by occurred_at then a stable event-type priority (plan -> ... ->
+    # terminal). This differs from the cross-run order_key used for replay.
+    priority = {"plan": 0, "file": 1, "command": 2, "test": 3, "artifact": 4,
+                "approval": 5, "warning": 6, "terminal": 7}
+    envelopes.sort(key=lambda e: (e.occurred_at, priority.get(e.event_type, 99)))
+    return [to_activity_item(e) for e in envelopes]
