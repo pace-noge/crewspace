@@ -13,7 +13,7 @@ from typing import Tuple
 
 from crewspace.application.metrics import compute_scorecard
 from crewspace.domain.entities import AgentToolCall, CodingRun, StoredChangeSet
-from crewspace.dto.benchmarks import BenchmarkFixture
+from crewspace.dto.benchmarks import BenchmarkFixture, RegressionThreshold, RegressionVerdict
 from crewspace.dto.change_sets import VerificationResultDTO
 
 # Fixed epoch so materialized timestamps are deterministic across replays.
@@ -138,3 +138,36 @@ def rank_cohorts(cohorts: dict, metric_id: str, *, descending: bool = True) -> l
         rows.append((fixture_id, metric.value, data.get("cohort", fixture_id)))
     rows.sort(key=lambda r: r[1], reverse=descending)
     return rows
+
+
+def evaluate_regression(
+    baseline: dict, candidate: dict, thresholds: list[RegressionThreshold]
+) -> RegressionVerdict:
+    """Compare a candidate cohort to a baseline cohort under rollout gates.
+
+    For each threshold, a "higher_is_better" metric must stay within
+    baseline*(1 - allowed_regression_ratio); a "lower_is_better" metric must stay
+    within baseline*(1 + allowed_regression_ratio). Any breach is collected.
+
+    Fail-closed: the verdict can ONLY block (halt rollout). `promotes` is always
+    False — beating the baseline never auto-promotes a winner; promotion is an
+    explicit, separate rollout decision. A missing metric on either side is an
+    explicit KeyError (never a silent pass).
+    """
+    breaches: list[str] = []
+    for t in thresholds:
+        base = baseline.get(t.metric_id)
+        cand = candidate.get(t.metric_id)
+        if base is None or cand is None:
+            raise KeyError(f"metric {t.metric_id} missing from baseline/candidate")
+        bv = base.value if hasattr(base, "value") else float(base)
+        cv = cand.value if hasattr(cand, "value") else float(cand)
+        if t.higher_is_better:
+            floor = bv * (1.0 - t.allowed_regression_ratio)
+            if cv < floor - 1e-9:
+                breaches.append(t.metric_id)
+        else:
+            ceil = bv * (1.0 + t.allowed_regression_ratio)
+            if cv > ceil + 1e-9:
+                breaches.append(t.metric_id)
+    return RegressionVerdict(blocks=bool(breaches), breaches=tuple(breaches), promotes=False)

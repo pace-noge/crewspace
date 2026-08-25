@@ -44,3 +44,22 @@ class BenchmarkSuite(FrozenDTO):
 
     suite_id: str
     fixtures: Tuple[BenchmarkFixture, ...] = Field(default_factory=tuple)
+
+
+class RegressionThreshold(FrozenDTO):
+    """A rollout gate: a metric may not regress beyond `allowed_regression_ratio`
+    relative to the baseline cohort. `higher_is_better` says which direction is
+    good (e.g. success_rate=True, tool_failure_rate=False)."""
+
+    metric_id: str
+    higher_is_better: bool
+    allowed_regression_ratio: float = 0.0  # 0.05 allows up to a 5% relative drop
+
+
+class RegressionVerdict(FrozenDTO):
+    """Fail-closed rollout verdict. `blocks` halts rollout; `promotes` is ALWAYS
+    False — evaluation can only block, never auto-promote a winner."""
+
+    blocks: bool
+    breaches: Tuple[str, ...] = ()
+    promotes: bool = False
