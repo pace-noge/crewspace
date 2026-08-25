@@ -16,14 +16,15 @@ from crewspace.application.inbox import (
     reconcile_inbox_for_team,
     resolve_item,
 )
-from crewspace.application.inbox_events import inbox_events
+from crewspace.application.inbox_events import InboxEventStream, inbox_events
 
 
 class InboxStore:
     """Team-keyed in-memory store for inbox-local state only."""
 
-    def __init__(self) -> None:
+    def __init__(self, event_stream: InboxEventStream | None = None) -> None:
         self._items: dict[str, list[InboxItem]] = {}
+        self._events = event_stream or inbox_events
 
     def reset(self) -> None:
         self._items.clear()
@@ -31,7 +32,7 @@ class InboxStore:
     def reconcile(self, team_id: str, records: list[dict]) -> list[InboxItem]:
         items = reconcile_inbox_for_team(self._items.get(team_id, []), records, team_id)
         self._items[team_id] = items
-        inbox_events.publish(team_id, items)
+        self._events.publish(team_id, items)
         return list(items)
 
     def view(self, team_id: str, filters: InboxFilters | None = None) -> InboxView:
@@ -51,7 +52,7 @@ class InboxStore:
         if not any(item.item_id == item_id for item in current):
             return False
         self._items[team_id] = operation(current, item_id, *args)
-        inbox_events.publish(team_id, self._items[team_id])
+        self._events.publish(team_id, self._items[team_id])
         return True
 
 

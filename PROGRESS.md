@@ -2,20 +2,15 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is IN PROGRESS (6/7). Verified
-milestone commits for M6.8 slices 1-6 are pushed.
+(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is DONE (7/7). All M6.8
+acceptance items are verified; the final all-source POC and release tag are ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_inbox_projection.py tests/test_inbox_reconcile.py
-   tests/test_inbox_auth.py -q` to confirm green (M6.8 bounded gate: 13 passed).
-   M6.7 gate (24 passed) still green via tests/test_scorecard*.py +
-   tests/test_benchmark_*.py; M6.6 gate (34 passed) via tests/test_pipeline*.py.
-4. Pick up PLAN.md M6.8 — Operational inbox (IN PROGRESS, 3/7): next item 4 (a
-   dedicated app-shell inbox that supports filter, assign, acknowledge, and resolve —
-   build a router + template that render the projected inbox and expose acknowledge
-   /assign/resolve transitions on inbox-local state).
+3. `uv run pytest tests/test_inbox_*.py -q` to confirm the M6.8 bounded gate
+   (27 passed). M6.7 remains tagged at `milestone-m6.7`.
+4. M6.8 is complete. Choose the next milestone before adding implementation work.
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
