@@ -37,3 +37,10 @@ class BenchmarkFixture(FrozenDTO):
     model_version: str
     recorded_at: str  # ISO timestamp the fixture was captured
     runs: Tuple[BenchmarkRunSpec, ...] = Field(default_factory=tuple)
+
+
+class BenchmarkSuite(FrozenDTO):
+    """A named set of cohort fixtures to compare (never blended)."""
+
+    suite_id: str
+    fixtures: Tuple[BenchmarkFixture, ...] = Field(default_factory=tuple)

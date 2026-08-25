@@ -183,7 +183,7 @@ Last updated: 2026-08-25 (WIB)
 | M6.4 | Typed execution events and unified event envelope | DONE | 7/7 | M6.1, M6.3 | `src/crewspace/dto/events.py` (EventTransport Protocol + InMemory + Redis adapter) + `tests/test_event_{envelope,ordering_dedupe,resume_cursor,activity,audit_export,transport,acceptance}.py`; 101-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Replay cursor/resume, UI activity render, audit export, Redis/multi-worker seam all shipped; migration-compat guaranteed (pure DTO, no sqlalchemy) |
 | M6.5 | Approval checkpoints and run-scoped policy | DONE | 7/7 | M6.3, M6.4 | `src/crewspace/application/run_policy.py` + `src/crewspace/application/mcp_tools.py` (opt-in checkpoint) + `tests/test_run_policy.py`; 12-test bounded gate | Reuse existing default-deny agent-tool/MCP governance; approval checkpoints record a canonical `approval` event via the M6.4 envelope so they surface in the activity stream without new UI plumbing |
 | M6.6 | Multi-agent delivery pipeline | DONE | 7/7 | M6.2–M6.5 | `src/crewspace/dto/handoffs.py` (contracts + ChangeSetEvidence) + `src/crewspace/application/pipeline.py` (state machine + attach_artifact + duplicate-work guards + human-approval gate) + `src/crewspace/application/pipeline_view.py` (view model) + `src/crewspace/templates/pipeline_graph.html` + `tests/test_handoff_contracts.py` + `tests/test_pipeline.py` + `tests/test_pipeline_reviewer_evidence.py` + `tests/test_pipeline_no_duplicate_work.py` + `tests/test_pipeline_human_approval.py` + `tests/test_pipeline_view.py` + `tests/test_pipeline_e2e_poc.py`; 34-test bounded gate | Pass structured handoff artifacts; planner -> coder -> reviewer -> test -> human approval |
-| M6.7 | Agent evaluation and reliability scorecards | IN PROGRESS | 3/7 | M6.3, M6.4 | `src/crewspace/dto/metrics.py` + `src/crewspace/dto/benchmarks.py` (frozen fixture DTOs) + `src/crewspace/application/metrics.py` (compute_scorecard + compute_team_scorecard) + `src/crewspace/application/benchmarks.py` (materialize_fixture + run_benchmark) + `src/crewspace/infrastructure/repositories.py` (coding_runs.list_for_team) + `tests/test_scorecard.py` + `tests/test_scorecard_team.py` + `tests/test_benchmark_fixtures.py`; 8-test bounded gate | Replayable benchmarks and version/model comparisons |
+| M6.7 | Agent evaluation and reliability scorecards | IN PROGRESS | 4/7 | M6.3, M6.4 | `src/crewspace/dto/metrics.py` + `src/crewspace/dto/benchmarks.py` (frozen fixture/suite DTOs) + `src/crewspace/application/metrics.py` (compute_scorecard + compute_team_scorecard) + `src/crewspace/application/benchmarks.py` (materialize_fixture + run_benchmark + compare_cohorts + rank_cohorts) + `src/crewspace/infrastructure/repositories.py` (coding_runs.list_for_team) + `tests/test_scorecard.py` + `tests/test_scorecard_team.py` + `tests/test_benchmark_fixtures.py` + `tests/test_benchmark_suite.py`; 12-test bounded gate | Replayable benchmarks and version/model comparisons |
 | M6.8 | Operational inbox | PLANNED | 0/7 | M6.3–M6.5 | — | Human-attention queue across agents, workflows, MCP |
 
 M6.1 — Agent capability negotiation                     [S–M]  DONE
@@ -308,11 +308,11 @@ Scope:
   - Build replayable benchmark tasks and compare agent/model/version cohorts.
   - Separate product success metrics from transport health and model quality.
 
-Acceptance (3/7):
+Acceptance (4/7):
   - [x] Metric definitions, denominators, and privacy/retention policy are documented.
   - [x] Run/event data produces deterministic aggregate metrics.
   - [x] Benchmark fixtures are replayable and isolated from production workspaces.
-  - [ ] Scorecards compare agent implementation/model versions without misleading mixes.
+  - [x] Scorecards compare agent implementation/model versions without misleading mixes.
   - [ ] Regression thresholds can block rollout without auto-promoting a winner.
   - [ ] UI links every aggregate to inspectable supporting runs.
   - [ ] Seeded benchmark POC demonstrates a version comparison and regression alert.

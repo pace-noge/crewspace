@@ -101,3 +101,40 @@ def run_benchmark(fixture: BenchmarkFixture) -> dict:
         verification_results=verification_results,
         change_sets=change_sets,
     )
+
+
+def cohort_label(fixture: BenchmarkFixture) -> str:
+    """Stable attribution label: which agent + model version produced the cohort."""
+    return f"{fixture.agent_id}@{fixture.model_version}"
+
+
+def compare_cohorts(fixtures: list[BenchmarkFixture]) -> dict:
+    """Return per-fixture scorecards, each attributed to its agent+model version.
+
+    Cohorts are NEVER blended into a single average — comparing versions must not
+    mislead by mixing a worse cohort's runs into a better one's denominator. Each
+    fixture is scored independently from its own declared outcomes. The returned
+    dict is keyed by fixture_id; values carry the cohort label in `cohort`.
+    """
+    cohorts: dict = {}
+    for f in fixtures:
+        metrics = run_benchmark(f)
+        cohorts[f.fixture_id] = {**metrics, "cohort": cohort_label(f)}
+    return cohorts
+
+
+def rank_cohorts(cohorts: dict, metric_id: str, *, descending: bool = True) -> list:
+    """Order cohort fixture_ids by a metric value (attributed to agent+version).
+
+    Returns [(fixture_id, value, cohort_label), ...] sorted by the metric. This
+    makes version comparison explicit and attributable — it never fabricates a
+    blended row.
+    """
+    rows = []
+    for fixture_id, data in cohorts.items():
+        metric = data.get(metric_id)
+        if metric is None:
+            raise KeyError(f"metric {metric_id} not present in cohort {fixture_id}")
+        rows.append((fixture_id, metric.value, data.get("cohort", fixture_id)))
+    rows.sort(key=lambda r: r[1], reverse=descending)
+    return rows

@@ -2,19 +2,20 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. M6.7 is IN PROGRESS (3/7). Verified milestone commit for
-M6.7 slice 3 is ready.
+(7/7) and pushed. M6.7 is IN PROGRESS (4/7). Verified milestone commit for
+M6.7 slice 4 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_scorecard.py tests/test_scorecard_team.py tests/test_benchmark_fixtures.py -q`
-   to confirm green (M6.7 bounded gate: 8 passed). M6.6 gate (34 passed) still
+3. `uv run pytest tests/test_scorecard.py tests/test_scorecard_team.py tests/test_benchmark_fixtures.py tests/test_benchmark_suite.py -q`
+   to confirm green (M6.7 bounded gate: 12 passed). M6.6 gate (34 passed) still
    green via tests/test_pipeline*.py.
 4. Pick up PLAN.md M6.7 — Agent evaluation and reliability scorecards (IN
-   PROGRESS, 3/7): next item 4 (scorecards compare agent implementation/model
-   versions without misleading mixes — a BenchmarkSuite comparing cohort
-   fixtures by model_version, attributing every metric to its agent+version).
+   PROGRESS, 4/7): next item 5 (regression thresholds can block rollout without
+   auto-promoting a winner — compare_cohorts against a baseline cohort and raise
+   a RegressionAlert when a metric breaches its threshold; the alert only BLOCKS,
+   it never promotes a winner).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -97,16 +98,17 @@ and pushed. M6.7 — Agent evaluation and reliability scorecards is IN PROGRESS
 METRIC_DEFINITIONS with explicit denominator + privacy/retention note per
 metric, plus MetricValue carrying numerator/denominator) and a pure deterministic
 compute_scorecard(runs, tool_calls) over CodingRun + AgentToolCall records.
-Slice 3 added replayable benchmark fixtures isolated from production workspaces:
-dto/benchmarks.py (frozen BenchmarkFixture + BenchmarkRunSpec/ToolSpec/
-VerificationSpec, extra=forbid) and application/benchmarks.py (materialize_fixture
-builds the SAME real CodingRun/AgentToolCall/VerificationResultDTO/StoredChangeSet
-records every replay from a fixed epoch — no DB or live workspace touched; synthetic
-bench-scoped ids can't collide with production namespaces; run_benchmark delegates
-to compute_scorecard so replay is deterministic). Next slice 4: scorecards compare
-agent implementation/model versions without misleading mixes (a BenchmarkSuite
-comparing cohort fixtures by model_version, attributing every metric to its
-agent+version).
+Slice 4 added version comparison without misleading mixes: BenchmarkSuite (frozen
+container of cohort fixtures) in dto/benchmarks.py and compare_cohorts /
+rank_cohorts / cohort_label in application/benchmarks.py. compare_cohorts scores
+each fixture INDEPENDENTLY from its own declared outcomes and attributes every
+metric to agent+model_version (cohort_label); it NEVER blends cohorts into a
+single average, so a worse version cannot be hidden inside a better one's
+denominator. rank_cohorts orders cohorts by a metric (attributed to version) and
+errors on a missing metric rather than silently fabricating a blend. Next slice
+5: regression thresholds that block rollout without auto-promoting a winner
+(compare a candidate cohort to a baseline cohort; raise a RegressionAlert when a
+metric breaches its threshold — the alert can only BLOCK, never promote).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
