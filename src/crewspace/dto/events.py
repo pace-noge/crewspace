@@ -21,7 +21,7 @@ import json
 import secrets
 import uuid
 from datetime import datetime
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -616,3 +616,83 @@ def export_events_csv(events: list[EventEnvelope]) -> str:
             item.summary,
         ])
     return buffer.getvalue()
+
+
+# --- Transport seam (acceptance item 6) --------------------------------------
+#
+# The seam lets a future multi-worker deployment carry the same canonical events
+# over a Redis stream without touching routes/agents. `EventTransport` is a
+# Protocol: `publish` appends a canonical envelope (serialized via `to_wire`),
+# `read_after(stream, position)` returns the tail from a stream-position cursor
+# (no gaps, no duplicates on resume). `InMemoryEventTransport` ships today
+# (single worker); `RedisEventTransport` proves the same canonical events cross
+# the boundary unchanged via `to_wire`/`from_wire`. The redis client is injected
+# (and lazily imported) so this module loads without `redis` installed.
+
+
+@runtime_checkable
+class EventTransport(Protocol):
+    def publish(self, env: EventEnvelope) -> int:
+        """Append `env`; return its stream position (>= 0)."""
+        ...
+
+    def read_after(self, stream: str, position: int | None) -> tuple[list[EventEnvelope], int]:
+        """Return (events after `position`, new tail position) for `stream`.
+
+        `position is None` means "from the beginning". The result is strictly
+        after `position` so a reconnect at the last-seen cursor never re-emits a
+        delivered event.
+        """
+        ...
+
+
+class InMemoryEventTransport:
+    """Single-worker transport used today. Keeps per-stream ordered logs."""
+
+    def __init__(self) -> None:
+        self._streams: dict[str, list[EventEnvelope]] = {}
+
+    def publish(self, env: EventEnvelope) -> int:
+        self._streams.setdefault(env.run_id or "", []).append(env)
+        return len(self._streams[env.run_id or ""]) - 1
+
+    def read_after(self, stream: str, position: int | None):
+        log = self._streams.get(stream, [])
+        start = 0 if position is None else position + 1
+        tail = log[start:]
+        return tail, len(log)
+
+
+class RedisEventTransport:
+    """Redis-backed transport for a future multi-worker deployment.
+
+    Stores each canonical envelope as wire bytes on a namespaced stream key and
+    reads them back positionally. The injected `redis_client` must expose
+    `rpush(key, value) -> new_len` and `lrange(key, start, end) -> list[bytes]`
+    (the real `redis` client and a fake both satisfy this). `redis` is imported
+    lazily so this module is importable without the dependency installed.
+    """
+
+    def __init__(self, redis_client: Any, prefix: str = "crewspace:events") -> None:
+        self._redis = redis_client
+        self._prefix = prefix
+
+    def _key(self, stream: str) -> str:
+        return f"{self._prefix}:{stream}"
+
+    def publish(self, env: EventEnvelope) -> int:
+        new_len = self._redis.rpush(self._key(env.run_id or ""), json.dumps(env.to_wire()))
+        # Return the 0-based stream position so read_after(stream, position)
+        # with start = position + 1 is strictly-after (matches InMemoryTransport).
+        return new_len - 1
+
+    def read_after(self, stream: str, position: int | None):
+        start = 0 if position is None else position + 1
+        # lrange is inclusive on both ends; -1 means "to the end".
+        raw = self._redis.lrange(self._key(stream), start, -1)
+        events = [
+            EventEnvelope.from_wire(json.loads(r if isinstance(r, str) else r.decode("utf-8")))
+            for r in raw
+        ]
+        new_pos = start + len(events)
+        return events, new_pos
