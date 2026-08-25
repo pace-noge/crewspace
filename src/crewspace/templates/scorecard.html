@@ -1,0 +1,41 @@
+{# M6.7 slice 6 — scorecard view. One row per metric showing the value, its
+   documented denominator, and deep links to the inspectable supporting runs /
+   change sets behind the aggregate. Server-rendered from the ScorecardView view
+   model (build_scorecard_view). #}
+<div class="scorecard" id="scorecard">
+  <header class="scorecard-head">
+    <span class="scorecard-title">Scorecard</span>
+    <span class="scorecard-note">Each aggregate links to the records behind it.</span>
+  </header>
+
+  <table class="scorecard-metrics">
+    <thead>
+      <tr><th>Metric</th><th>Value</th><th>Based on</th><th>Supporting records</th></tr>
+    </thead>
+    <tbody>
+      {% for m in view.metrics %}
+        <tr class="scorecard-metric metric-{{ m.metric_id }}" data-metric="{{ m.metric_id }}">
+          <td class="metric-label">{{ m.label }}</td>
+          <td class="metric-value">
+            {{ "%.4g"|format(m.value) }}
+            <span class="metric-fraction">{{ m.numerator }}/{{ m.denominator }}</span>
+          </td>
+          <td class="metric-denominator">{{ m.denominator_label }}</td>
+          <td class="metric-supporting">
+            {% if m.supporting_run_ids %}
+              <span class="support-label">runs:</span>
+              {% for href in m.run_links %}<a class="support-link" href="{{ href }}">{{ m.supporting_run_ids[loop.index0] }}</a>{% endfor %}
+            {% endif %}
+            {% if m.supporting_change_set_ids %}
+              <span class="support-label">change sets:</span>
+              {% for href in m.change_set_links %}<a class="support-link" href="{{ href }}">{{ m.supporting_change_set_ids[loop.index0] }}</a>{% endfor %}
+            {% endif %}
+            {% if not m.supporting_run_ids and not m.supporting_change_set_ids %}
+              <span class="support-none">—</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
