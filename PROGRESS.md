@@ -2,19 +2,18 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. M6.7 is IN PROGRESS (6/7). Verified milestone commit for
-M6.7 slice 6 is ready.
+(7/7) and pushed. M6.7 is DONE (7/7) and pushed. Verified milestone commit for
+M6.7 slice 7 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
 3. `uv run pytest tests/test_scorecard*.py tests/test_benchmark_*.py -q` to confirm
-   green (M6.7 bounded gate: 21 passed). M6.6 gate (34 passed) still green via
+   green (M6.7 bounded gate: 24 passed). M6.6 gate (34 passed) still green via
    tests/test_pipeline*.py.
-4. Pick up PLAN.md M6.7 — Agent evaluation and reliability scorecards (IN
-   PROGRESS, 6/7): next item 7 (seeded benchmark POC demonstrating a version
-   comparison and regression alert — a scripted end-to-end that materializes two
-   cohort fixtures, compares them, and raises a RegressionVerdict on regression).
+4. Pick up PLAN.md M6.8 — Operational inbox (PLANNED, 0/7): a human-attention queue
+   across agents, workflows, and MCP; next is to define the inbox item shape +
+   ranking (item 1).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -97,17 +96,15 @@ and pushed. M6.7 — Agent evaluation and reliability scorecards is IN PROGRESS
 METRIC_DEFINITIONS with explicit denominator + privacy/retention note per
 metric, plus MetricValue carrying numerator/denominator) and a pure deterministic
 compute_scorecard(runs, tool_calls) over CodingRun + AgentToolCall records.
-Slice 6 added the scorecard UI that links every aggregate to inspectable supporting
-runs: application/scorecard_view.py (build_scorecard_view, pure, router-agnostic)
-and templates/scorecard.html. Each metric in the view carries its value +
-numerator/denominator (matching METRIC_DEFINITIONS) AND the ids of the supporting
-runs / change sets it was computed from, with run_links / change_set_links built
-from real existing routes (/api/coding/runs/{id} and /management/change-sets/{id}).
-No dead links: change-set-derived metrics carry only change-set ids, and when no
-change sets are in scope no management/change-sets link is emitted. Next slice 7:
-seeded benchmark POC demonstrating a version comparison and regression alert
-(materialize two cohort fixtures, compare them, raise a RegressionVerdict on
-regression).
+Slice 7 (final) added the seeded benchmark POC: application/benchmark_poc.py
+(run_benchmark_poc) materializes two cohort fixtures (baseline + candidate model),
+runs the WHOLE M6.7 stack on them (materialize -> scorecard -> compare_cohorts ->
+rank_cohorts -> evaluate_regression) with no DB or live workspace, and returns a
+frozen PocReport: cohort scores (attributed to agent+version), a ranking by a
+metric, and a fail-closed RegressionVerdict (blocks rollout, never auto-promotes).
+Deterministic + isolated. M6.7 is DONE (7/7). Next milestone: M6.8 — Operational
+inbox (PLANNED, 0/7): human-attention queue across agents, workflows, MCP; first
+slice defines the inbox item shape + ranking (acceptance item 1).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
