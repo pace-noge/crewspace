@@ -1,13 +1,13 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is IN PROGRESS (6/7). Verified milestone commit for M6.4 slice 6 is ready.
+M6.4 is DONE (7/7) and pushed. Verified milestone commit for M6.4 slice 7 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
-2. `git log --oneline -8` to confirm history matches below.
-3. `uv run pytest tests/test_event_transport.py tests/test_event_audit_export.py tests/test_event_activity.py tests/test_event_envelope.py tests/test_event_ordering_dedupe.py tests/test_event_resume_cursor.py tests/test_change_set_management.py -q` to confirm green (slice-6 bounded gate: 91 passed).
-4. Pick up PLAN.md M6.4 — Typed execution events and unified event envelope, next item 7 (contract, replay, reconnect, and migration-compatibility tests pass).
+2. `git log --oneline -10` to confirm history matches below.
+3. `uv run pytest tests/test_event_acceptance.py tests/test_event_transport.py tests/test_event_audit_export.py tests/test_event_activity.py tests/test_event_envelope.py tests/test_event_ordering_dedupe.py tests/test_event_resume_cursor.py tests/test_change_set_management.py -q` to confirm green (M6.4 bounded gate: 101 passed).
+4. Pick up PLAN.md M6.5 — Approval checkpoints and run-scoped policy (PLANNED, 0/7); M6.4 is complete.
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -75,12 +75,12 @@ BLOCKERS: none (verified in-process with executable checks; the delegated
 reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
-`c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6). Next implement M6.4 item
-7 — contract, replay, reconnect, and migration-compatibility tests pass
-(consolidate the per-slice contract tests into a cohesive M6.4 acceptance
-suite: schema-version rejection, typed payloads, deterministic id/dedupe,
-resume cursor, compact activity, audit export, transport seam — plus a
-migration-compat check that the event DTOs never require a DB schema change).
+`c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
+milestone: M6.5 — Approval checkpoints and run-scoped policy (PLANNED, 0/7).
+Reuse the existing default-deny tool/MCP governance; for each approval
+checkpoint, record a canonical `approval` event through the new event envelope
+(reusing EventEnvelope/ActivityItem so it shows in the activity stream without
+new UI plumbing).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
