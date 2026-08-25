@@ -174,3 +174,18 @@ def reconcile_inbox_for_team(
             )
         out[item.item_id] = item
     return sorted(out.values(), key=lambda i: (-i.priority, i.item_id))
+
+
+def load_inbox_for_team(
+    records: List[dict], team_id: str, *, principal_team_id: Optional[str]
+) -> List[InboxItem]:
+    """Authorization gate over the team-scoped projection (acceptance item 3).
+
+    A team_id ARGUMENT is not an authorization decision. This wrapper re-checks the
+    principal's team membership FIRST and FAILS CLOSED: a principal who is not a
+    member of `team_id` receives an empty list regardless of what records or team_id
+    are passed, so cross-tenant information can never leak through the inbox.
+    """
+    if not principal_team_id or principal_team_id != team_id:
+        return []
+    return project_inbox_for_team(records, team_id)
