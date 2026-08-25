@@ -7,14 +7,23 @@ to manage that team, before any run is persisted or dispatched.
 """
 from __future__ import annotations
 
+import csv
+import io
+import json
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import JSONResponse
 
 from ...application.access import can_manage_team, is_team_member
 from ...application.coding_runs import cancel_coding_run, dispatch_coding_run
-from ...dto.events import run_to_activity
+from ...dto.events import (
+    export_events_csv,
+    export_events_json,
+    run_to_activity,
+    run_to_events,
+)
 from ..deps import CurrentUserDep, UowDep
 
 router = APIRouter(prefix="/api/coding/runs", tags=["coding-runs"])
@@ -108,6 +117,36 @@ async def get_coding_run(run_id: str, user: CurrentUserDep, uow: UowDep) -> dict
         "activity": [item.model_dump(mode="json") for item in run_to_activity(run)],
         "has_raw_logs": bool(run.recent_output),
     }
+
+
+@router.get("/{run_id}/events/export")
+async def export_coding_run_events(
+    run_id: str, user: CurrentUserDep, uow: UowDep, format: str = "json",
+) -> Response:
+    """Audit export of a run's canonical events (M6.4 item 5).
+
+    Returns the same canonical `EventEnvelope`s the live activity stream renders,
+    as JSON (default) or CSV. Authorization reuses team membership so non-members
+    get 403 and unknown runs get 404 — no new permission surface.
+    """
+    run = await uow.coding_runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Coding run not found")
+    if not await is_team_member(user, run.team_id, uow):
+        raise HTTPException(status_code=403, detail="Not authorized for this team")
+
+    events = run_to_events(run)
+    if format == "csv":
+        return Response(
+            content=export_events_csv(events),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="coding_run_{run.id}_events.csv"'
+                )
+            },
+        )
+    return JSONResponse(json.loads(export_events_json(events)))
 
 
 @router.post("/{run_id}/cancel")

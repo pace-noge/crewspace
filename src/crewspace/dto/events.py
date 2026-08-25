@@ -15,6 +15,8 @@ blocks the replay/resume slice will build on.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import secrets
 import uuid
@@ -505,13 +507,15 @@ def to_activity_item(env: EventEnvelope) -> ActivityItem:
     )
 
 
-def run_to_activity(run: Any) -> list[ActivityItem]:
-    """Derive compact typed activity for a coding run from its real fields.
+def run_to_events(run: Any) -> list[EventEnvelope]:
+    """Derive the canonical events a coding run emits from its real fields.
 
-    Produces the events a run naturally emits (plan/instruction, started,
-    terminal) as `EventEnvelope`s, then maps them to `ActivityItem`s in canonical
-    order. This is the source-of-truth the UI renders; the raw `recent_output` is
-    surfaced separately as on-demand "raw logs". Nothing here fabricates output
+    Produces plan/instruction, started, and terminal `EventEnvelope`s. This is
+    the single source of truth both the UI activity stream and the audit export
+    consume, so they cannot diverge. Event ids are DETERMINISTIC per
+    (run_id, event_type) so the activity view and the audit export always show
+    the same canonical events (required by acceptance item 5); they remain
+    unique across runs because run_id is unique. Nothing here fabricates output
     — every field comes from the run entity.
     """
     rid = getattr(run, "id", None)
@@ -527,11 +531,13 @@ def run_to_activity(run: Any) -> list[ActivityItem]:
     if created is not None:
         envelopes.append(
             build_event("plan", occurred_at=created, run_id=rid, actor_id=actor,
+                        event_id=f"evt_{rid}_plan",
                         payload={"summary": instruction or "(no instruction)"})
         )
     if started is not None:
         envelopes.append(
             build_event("command", occurred_at=started, run_id=rid, actor_id=actor,
+                        event_id=f"evt_{rid}_cmd",
                         payload={"command": "execute run", "exit_code": None})
         )
     if finished is not None:
@@ -540,8 +546,22 @@ def run_to_activity(run: Any) -> list[ActivityItem]:
             payload["reason"] = failure_reason
         envelopes.append(
             build_event("terminal", occurred_at=finished, run_id=rid, actor_id=actor,
+                        event_id=f"evt_{rid}_term",
                         payload=payload)
         )
+    return envelopes
+
+
+def run_to_activity(run: Any) -> list[ActivityItem]:
+    """Derive compact typed activity for a coding run from its real fields.
+
+    Maps the canonical events (via `run_to_events`) to `ActivityItem`s in
+    lifecycle order (time + event-type priority). This is the source-of-truth
+    the UI renders; the raw `recent_output` is surfaced separately as on-demand
+    "raw logs". Nothing here fabricates output — every field comes from the run
+    entity.
+    """
+    envelopes = run_to_events(run)
     # Run lifecycle is a time-ordered sequence, not a per-run sequence counter,
     # so sort by occurred_at then a stable event-type priority (plan -> ... ->
     # terminal). This differs from the cross-run order_key used for replay.
@@ -549,3 +569,50 @@ def run_to_activity(run: Any) -> list[ActivityItem]:
                 "approval": 5, "warning": 6, "terminal": 7}
     envelopes.sort(key=lambda e: (e.occurred_at, priority.get(e.event_type, 99)))
     return [to_activity_item(e) for e in envelopes]
+
+
+# --- Audit JSON/CSV export (acceptance item 5) --------------------------------
+#
+# Exported rows must match the in-app activity contract (the same EventEnvelope
+# / ActivityItem the UI renders) so a downloaded audit and the live activity
+# stream cannot silently diverge. Both serializers are pure DTO (no DB /
+# websocket imports) and deterministic (sort-stable + canonical_json), so an
+# export is byte-reproducible for the same inputs.
+
+
+def export_events_json(events: list[EventEnvelope]) -> str:
+    ordered = sorted(events, key=lambda e: (e.occurred_at, e.event_type, e.event_id))
+    return json.dumps(
+        {
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "count": len(ordered),
+            "events": [json.loads(e.canonical_json()) for e in ordered],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def export_events_csv(events: list[EventEnvelope]) -> str:
+    ordered = sorted(events, key=lambda e: (e.occurred_at, e.event_type, e.event_id))
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["event_id", "event_type", "occurred_at", "actor_id", "channel_id",
+         "run_id", "correlation_id", "sequence", "kind", "summary"]
+    )
+    for env in ordered:
+        item = to_activity_item(env)
+        writer.writerow([
+            item.event_id,
+            item.event_type,
+            env.occurred_at.isoformat(),
+            item.actor_id or "",
+            env.channel_id or "",
+            item.run_id or "",
+            item.correlation_id or "",
+            "" if item.sequence is None else item.sequence,
+            item.kind,
+            item.summary,
+        ])
+    return buffer.getvalue()
