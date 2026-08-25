@@ -317,7 +317,7 @@ Acceptance (7/7):
   - [x] UI links every aggregate to inspectable supporting runs.
   - [x] Seeded benchmark POC demonstrates a version comparison and regression alert.
 
-M6.8 — Operational inbox                                     [M–L]  PLANNED
+M6.8 — Operational inbox                                     [M–L]  DONE
 Scope:
   - Create a unified human-attention queue for approval requests, failed/timed-out
     runs, disconnected agents with active work, workflow failures, pending MCP
