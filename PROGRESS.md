@@ -1,18 +1,18 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is IN
-PROGRESS (6/7). Verified milestone commit for M6.6 slice 6 is ready.
+M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
+(7/7) and pushed. Verified milestone commit for M6.6 slice 7 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_pipeline.py tests/test_handoff_contracts.py tests/test_pipeline_reviewer_evidence.py tests/test_pipeline_no_duplicate_work.py tests/test_pipeline_human_approval.py tests/test_pipeline_view.py -q`
-   to confirm green (M6.6 slice-1..6 bounded gate: 33 passed).
-4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline, next item 7 (end-to-end
-   real-repo POC reaches a verified human-approved change set — drive a real
-   planner->coder->reviewer->tester->human_approval run against a temp repo and
-   assert it terminates in a human-approved, captured change set).
+3. `uv run pytest tests/test_pipeline.py tests/test_handoff_contracts.py tests/test_pipeline_reviewer_evidence.py tests/test_pipeline_no_duplicate_work.py tests/test_pipeline_human_approval.py tests/test_pipeline_view.py tests/test_pipeline_e2e_poc.py -q`
+   to confirm green (M6.6 bounded gate: 34 passed).
+4. Pick up PLAN.md M6.7 — Agent evaluation and reliability scorecards (PLANNED,
+   0/7): track success/timeout/disconnect/latency/tool-failure/cancellation/
+   verification-delta/human-acceptance/rework/token/cost; replayable benchmark
+   fixtures; regression thresholds that block rollout without auto-promotion.
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -81,16 +81,17 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.6 — Multi-agent delivery pipeline (IN PROGRESS, 6/7). Slices 1-5
-landed versioned handoff contracts, the deterministic state machine (input-gated
-stage starts, RetryPolicy, fail-closed terminal FAILED, cancel blocks all
-transitions, immutable change-set evidence for the reviewer, duplicate-work
-guards, human-approval gate). Slice 6 added the UI run-graph: a pure
-build_pipeline_view(pipeline, owners) view model (src/crewspace/application/
-pipeline_view.py) and the pipeline_graph.html fragment rendering each stage's
-status, owner, required/produced artifacts, and blockers plus the delivery
-decision and pipeline-level blockers. Next slice 7: end-to-end real-repo POC
-reaching a verified human-approved change set.
+milestone: M6.6 — Multi-agent delivery pipeline (DONE, 7/7). All slices landed:
+versioned handoff contracts (handoffs.py), the deterministic state machine
+(pipeline.py: input-gated stage starts, RetryPolicy, fail-closed terminal
+FAILED, cancel blocks all transitions, immutable change-set evidence for the
+reviewer via ChangeSetEvidence, duplicate-work guards, human-approval gate with
+M6.5 fail-closed composition), the UI run-graph (pipeline_view.py +
+pipeline_graph.html), and a real-repo end-to-end POC (test_pipeline_e2e_poc.py)
+that drives planner->coder->reviewer->tester->human_approval to a verified,
+immutable, human-approved change set linked to a real git HEAD. M6.6 is complete
+and pushed. Next milestone: M6.7 — Agent evaluation and reliability scorecards
+(PLANNED, 0/7).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
