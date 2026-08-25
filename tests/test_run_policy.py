@@ -299,3 +299,84 @@ def test_approval_decision_is_bound_to_run_principal_and_action_class():
     # Each outcome is an independently-bound canonical event.
     assert isinstance(granted.event, EventEnvelope)
     assert isinstance(escalated.event, EventEnvelope)
+
+
+# --- Slice 5: denied/expired/replayed approvals cannot execute (acceptance item 5) --
+
+
+async def test_denied_or_expired_approval_cannot_be_replayed_to_execute(app):
+    """A denied/expired approval decision cannot be replayed to unlock the
+    protected action: re-submitting the same (replayed) prior decision blocks
+    the action again, and the external tool never executes. A granted decision
+    cannot be replayed across a different run/principal/action binding."""
+    from crewspace.application.mcp_tools import build_agent_tool_runtime
+    from crewspace.application.tools import ToolPermissionDenied, build_registry
+    from crewspace.dto.events import EventEnvelope
+    from tests.test_mcp_execution import _seed_approved_tool
+
+    await _seed_approved_tool(app)
+    async with app.state.db.uow() as uow:
+        await uow.agent_policies.replace_mcp_tools(
+            "agent_crewspace", {("mcp_jira", "create_issue")}
+        )
+        await uow.commit()
+
+    class Executor:
+        def __init__(self): self.calls = []
+        async def call_tool(self, active_connection, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            return {"issue_key": "ENG-42", "title": arguments["title"]}
+
+    async def run_with(decision):
+        events: list[EventEnvelope] = []
+        executor = Executor()
+        async with app.state.db.uow() as uow:
+            runtime = await build_agent_tool_runtime(
+                build_registry(), uow,
+                principal_id="user_bilal", agent_id="agent_crewspace",
+                executor=executor,
+                policy=RunPolicy(allowed={"external_mcp"}), run_id="run_x",
+                event_recorder=events.append,
+                approval_decision=decision,
+            )
+            ran = False
+            try:
+                await runtime.runner.run("jira.create_issue", title="X")
+                ran = True
+            except ToolPermissionDenied:
+                pass
+        return ran, executor.calls, events
+
+    # Replay a denied decision twice: both attempts blocked, no execution.
+    for attempt in range(2):
+        ran, calls, events = await run_with("denied")
+        assert ran is False, f"denied replay attempt {attempt} must block"
+        assert calls == [], "executor must never run on a denied decision"
+        assert events and events[0].payload.decision == "requested"
+
+    # Replay an expired decision twice: both blocked.
+    for attempt in range(2):
+        ran, calls, events = await run_with("expired")
+        assert ran is False, f"expired replay attempt {attempt} must block"
+        assert calls == []
+        assert events and events[0].payload.decision == "requested"
+
+    # A granted decision for run_x/external_mcp MUST NOT be replayable to unlock
+    # a different class (shell_command) even if the policy allows it.
+    from crewspace.application.run_policy import evaluate_action
+
+    granted_ext = evaluate_action(
+        RunPolicy(allowed={"external_mcp", "shell_command"}),
+        "shell_command", "run_x", "user_bilal",
+        approved_for={"external_mcp"}, prior_decision="granted",
+    )
+    assert granted_ext.allowed is False, "granted-for-external_mcp cannot replay to shell_command"
+
+    # And a granted decision for run_x MUST NOT unlock a different run unless
+    # that run's approved_for also carries the class (caller-scoped, not auto).
+    granted_run_y = evaluate_action(
+        RunPolicy(allowed={"external_mcp"}),
+        "external_mcp", "run_y", "user_bilal",
+        approved_for=set(), prior_decision="granted",
+    )
+    assert granted_run_y.allowed is False, "granted-for-run_x cannot replay to run_y without its own approval"
