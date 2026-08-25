@@ -22,6 +22,28 @@ def _empty_pipeline(max_attempts: int = 3) -> DeliveryPipeline:
     return DeliveryPipeline(retry_policy=RetryPolicy(max_attempts=max_attempts))
 
 
+def _attach_change_set(p: DeliveryPipeline, run_id: str = "run_coder") -> None:
+    """Attach an immutable change-set evidence artifact to the running coder."""
+    from crewspace.dto.handoffs import ChangeSetEvidence
+    from crewspace.dto.change_sets import ChangeSetDTO, ChangeCommitDTO, GitOid
+
+    cs = ChangeSetDTO(
+        repository_id="repo_x",
+        run_id=run_id,
+        branch="feat/x",
+        base_commit=GitOid("a" * 40),
+        head_commit=GitOid("b" * 40),
+        commits=(ChangeCommitDTO(sha=GitOid("c" * 40), subject="do the thing"),),
+        files=(),
+        additions=1,
+        deletions=0,
+        verification=(),
+        artifacts=(),
+    )
+    p.attach_artifact("coder", "change_set", ChangeSetEvidence(
+        producer_run_id=run_id, change_set=cs, captured_at="2026-08-25T00:00:00Z"))
+
+
 def test_pipeline_progresses_in_deterministic_stage_order():
     p = _empty_pipeline()
     assert p.status == PipelineStatus.IN_PROGRESS
@@ -36,7 +58,8 @@ def test_pipeline_progresses_in_deterministic_stage_order():
 
     assert p.eligible_stage() == "coder"
     p.begin_stage("coder")
-    p.complete_stage("coder", produced=["code"])
+    _attach_change_set(p)
+    p.complete_stage("coder", produced=["code", "change_set"])
     assert p.stage_status["coder"] == StageStatus.SUCCEEDED
 
     p.begin_stage("reviewer")
@@ -107,7 +130,8 @@ def test_failed_stage_does_not_silently_advance_downstream():
     # Successful retry then completes -> reviewer becomes eligible.
     p.retry_stage("coder")
     p.begin_stage("coder")
-    p.complete_stage("coder", produced=["code"])
+    _attach_change_set(p)
+    p.complete_stage("coder", produced=["code", "change_set"])
     assert p.eligible_stage() == "reviewer"
 
 

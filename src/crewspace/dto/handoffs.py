@@ -15,6 +15,8 @@ from typing import Dict, FrozenSet
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from crewspace.dto.change_sets import ChangeSetDTO
+
 
 class ArtifactType(str, Enum):
     """Structured artifacts passed between pipeline stages."""
@@ -25,6 +27,7 @@ class ArtifactType(str, Enum):
     VERIFICATION = "verification"
     DELIVERY_DECISION = "delivery_decision"
     TASK_SPEC = "task_spec"
+    CHANGE_SET = "change_set"
 
 
 class StageName(str, Enum):
@@ -49,6 +52,21 @@ class HandoffContract(BaseModel):
     produces: FrozenSet[str] = Field(default_factory=frozenset)
 
 
+class ChangeSetEvidence(BaseModel):
+    """Immutable, tamper-evident change-set handed from coder to reviewer.
+
+    Wraps the coder's frozen ChangeSetDTO (captured at terminal run state per
+    M6.3) plus the producing run id and capture time. Frozen + extra=forbid so
+    the reviewer receives evidence it cannot mutate (independent context).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    producer_run_id: str
+    change_set: ChangeSetDTO
+    captured_at: str
+
+
 # Ordered stage graph: planner -> coder -> reviewer -> tester -> human_approval.
 STAGE_CONTRACTS: Dict[str, HandoffContract] = {
     StageName.PLANNER.value: HandoffContract(
@@ -59,11 +77,11 @@ STAGE_CONTRACTS: Dict[str, HandoffContract] = {
     StageName.CODER.value: HandoffContract(
         schema_version="1.0",
         required_inputs=frozenset({ArtifactType.PLAN.value}),
-        produces=frozenset({ArtifactType.CODE.value}),
+        produces=frozenset({ArtifactType.CODE.value, ArtifactType.CHANGE_SET.value}),
     ),
     StageName.REVIEWER.value: HandoffContract(
         schema_version="1.0",
-        required_inputs=frozenset({ArtifactType.CODE.value}),
+        required_inputs=frozenset({ArtifactType.CHANGE_SET.value}),
         produces=frozenset({ArtifactType.REVIEW.value}),
     ),
     StageName.TESTER.value: HandoffContract(

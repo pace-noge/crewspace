@@ -59,6 +59,7 @@ class DeliveryPipeline:
     stage_status: Dict[str, StageStatus] = field(init=False)
     attempts: Dict[str, int] = field(init=False)
     produced: set = field(default_factory=set, init=False)
+    evidence: Dict[str, object] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if not validate_pipeline_graph(self.contracts):
@@ -136,6 +137,21 @@ class DeliveryPipeline:
         self.stage_status[stage] = StageStatus.FAILED
         if not self.can_retry(stage):
             self.status = PipelineStatus.FAILED
+
+    def attach_artifact(self, stage: str, name: str, payload: object) -> None:
+        """Attach an immutable artifact produced by a running stage (e.g. the
+        coder's change-set evidence for the reviewer). Only valid while the
+        producer stage is RUNNING; once the stage completes the evidence is
+        frozen and cannot be re-attached (tamper-evident)."""
+        if self._is_terminal():
+            raise IllegalPipelineTransition(f"pipeline is {self.status.value}; no transitions allowed")
+        if stage not in self.contracts:
+            raise IllegalPipelineTransition(f"unknown stage: {stage}")
+        if self.stage_status[stage] != StageStatus.RUNNING:
+            raise IllegalPipelineTransition(f"stage {stage} is not running; artifacts attach only while running")
+        if name in self.evidence:
+            raise IllegalPipelineTransition(f"artifact {name} is already attached and frozen")
+        self.evidence[name] = payload
 
     def retry_stage(self, stage: str) -> None:
         if not self.can_retry(stage):
