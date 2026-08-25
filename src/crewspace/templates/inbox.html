@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}Operational inbox — Crewspace{% endblock %}
+{% block nav_inbox %}active{% endblock %}
 {% block topbar %}Operational inbox{% endblock %}
 {% block head %}<style>
 .inbox-page{padding:28px;overflow:auto}.inbox-shell{max-width:1150px}.inbox-header{display:flex;justify-content:space-between;gap:16px;align-items:start;margin-bottom:18px}.inbox-header h1{margin:0}.muted,.empty{color:var(--muted)}.summary{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 20px}.filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elev);margin-bottom:16px}.filters label{display:grid;gap:4px;font-size:12px}.inbox-list{display:grid;gap:10px}.inbox-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:15px;border:1px solid var(--border);border-radius:10px;background:var(--bg-elev)}.inbox-item.resolved{opacity:.62}.item-title{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.meta{font-size:12px;color:var(--muted);margin-top:6px}.actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.actions form{margin:0;display:flex;gap:5px}.actions input{max-width:130px}.priority{font-variant-numeric:tabular-nums}

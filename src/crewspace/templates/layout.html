@@ -102,6 +102,7 @@
     {% endfor %}
 
     <div class="nav-group">Tools</div>
+    <a class="nav-link {% block nav_inbox %}{% endblock %}" href="/inbox"><span class="ico">📥</span> Inbox</a>
     <a class="nav-link {% block nav_board %}{% endblock %}" href="/board/board_main"><span class="ico">📋</span> Board</a>
     <a class="nav-link" href="/cronjobs"><span class="ico">⏱</span> Scheduled instructions</a>
     <a class="nav-link" href="/workflows"><span class="ico">⚡</span> Workflows</a>

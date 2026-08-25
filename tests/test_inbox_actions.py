@@ -70,6 +70,7 @@ def test_template_renders_filter_assign_acknowledge_resolve_controls():
 def test_app_shell_get_and_action_posts(client):
     response = client.get("/inbox")
     assert response.status_code == 200 and "Operational inbox" in response.text
+    assert '<a class="nav-link active" href="/inbox"><span class="ico">📥</span> Inbox</a>' in response.text
     match = re.search(r'name="team_id" value="([^"]+)"', response.text)
     assert match is not None
     team_id = match.group(1)
