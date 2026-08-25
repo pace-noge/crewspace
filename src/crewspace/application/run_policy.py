@@ -39,6 +39,10 @@ KNOWN_ACTION_CLASSES: frozenset[str] = frozenset(
         "network_egress",
         "shell_command",
         "file_write",
+        # Any external MCP tool execution is a consequential side effect (it acts
+        # outside the workspace), so it is its own consequential class. The
+        # default-deny policy blocks it unless explicitly allowed for the run.
+        "external_mcp",
     }
 )
 

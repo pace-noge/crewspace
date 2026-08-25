@@ -98,3 +98,72 @@ def test_checkpoint_fails_closed_on_denied_expired_or_unresolved():
     r4 = evaluate_action(policy, "git_push", "run_1", "u", approved_for={"git_push"},
                          prior_decision="granted")
     assert r4.allowed is True
+
+
+# --- Slice 2: wiring into the external MCP execution seam (acceptance item 2) --
+
+
+async def test_external_mcp_checkpoint_emits_approval_event_before_action(app):
+    """A consequential external MCP action emits a canonical `approval`
+    (requested) event BEFORE the tool runs, and is blocked fail-closed; an
+    allowed run policy lets it proceed and records a `granted` event."""
+    from crewspace.application.mcp_tools import build_agent_tool_runtime
+    from crewspace.application.tools import ToolPermissionDenied, build_registry
+    from crewspace.dto.events import EventEnvelope
+    from tests.test_mcp_execution import _seed_approved_tool
+
+    await _seed_approved_tool(app)
+    async with app.state.db.uow() as uow:
+        await uow.agent_policies.replace_mcp_tools(
+            "agent_crewspace", {("mcp_jira", "create_issue")}
+        )
+        await uow.commit()
+
+    class Executor:
+        def __init__(self): self.calls = []
+        async def call_tool(self, active_connection, tool_name, arguments):
+            self.calls.append((tool_name, arguments))
+            return {"issue_key": "ENG-42", "title": arguments["title"]}
+
+    # Blocked path: default-deny policy -> requested event recorded, no execution.
+    events_blocked: list[EventEnvelope] = []
+    executor = Executor()
+    async with app.state.db.uow() as uow:
+        runtime = await build_agent_tool_runtime(
+            build_registry(), uow,
+            principal_id="user_bilal", agent_id="agent_crewspace",
+            executor=executor,
+            policy=RunPolicy(allowed=set()), run_id="run_x",
+            event_recorder=events_blocked.append,
+        )
+        try:
+            await runtime.runner.run("jira.create_issue", title="Denied")
+        except ToolPermissionDenied:
+            pass
+        else:
+            raise AssertionError("policy-blocked MCP tool must not execute")
+    assert executor.calls == [], "external action must not run when blocked"
+    assert len(events_blocked) == 1
+    assert events_blocked[0].event_type == "approval"
+    assert events_blocked[0].payload.decision == "requested"
+    assert events_blocked[0].payload.action_class == "external_mcp"
+    assert events_blocked[0].payload.scope == "run_x"
+    assert events_blocked[0].payload.principal_id == "user_bilal"
+
+    # Allowed path: policy allows external_mcp -> granted event, tool runs.
+    events_allowed: list[EventEnvelope] = []
+    executor2 = Executor()
+    async with app.state.db.uow() as uow:
+        runtime = await build_agent_tool_runtime(
+            build_registry(), uow,
+            principal_id="user_bilal", agent_id="agent_crewspace",
+            executor=executor2,
+            policy=RunPolicy(allowed={"external_mcp"}), run_id="run_x",
+            event_recorder=events_allowed.append,
+        )
+        result = await runtime.runner.run("jira.create_issue", title="Ship")
+    assert executor2.calls == [("create_issue", {"title": "Ship"})]
+    assert result == {"issue_key": "ENG-42", "title": "Ship"}
+    assert len(events_allowed) == 1
+    assert events_allowed[0].payload.decision == "granted"
+    assert events_allowed[0].payload.action_class == "external_mcp"

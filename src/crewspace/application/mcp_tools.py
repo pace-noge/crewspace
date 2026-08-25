@@ -13,6 +13,7 @@ from jsonschema.validators import validator_for
 
 from ..domain.entities import AgentToolCall, McpConnection
 from ..domain.ports import ToolRunner, UnitOfWork
+from .run_policy import RunPolicy, evaluate_action
 from .tools import (
     Tool,
     ToolPermissionDenied,
@@ -54,6 +55,9 @@ class _CompositeAgentToolRunner:
         agent_id: str,
         external: dict[str, tuple[McpConnection, str]],
         executor: McpToolExecutor,
+        policy: RunPolicy | None = None,
+        run_id: str | None = None,
+        event_recorder: Any | None = None,
     ) -> None:
         self._native_runner = native_runner
         self._uow = uow
@@ -61,6 +65,14 @@ class _CompositeAgentToolRunner:
         self._agent_id = agent_id
         self._external = external
         self._executor = executor
+        # Optional run-scoped approval policy (M6.5). When None, external MCP
+        # tools are governed only by the existing default-deny agent/MCP policy
+        # (backward compatible). When set, a consequential external MCP action
+        # must clear the run policy or it is blocked fail-closed and a canonical
+        # `approval` (requested) event is recorded before any side effect.
+        self._policy = policy
+        self._run_id = run_id
+        self._event_recorder = event_recorder
 
     async def run(self, tool_name: str, **args: Any) -> Any:
         target = self._external.get(tool_name)
@@ -81,6 +93,27 @@ class _CompositeAgentToolRunner:
             created_at=dt.datetime.now(dt.timezone.utc),
         )
         self._uow.queue_agent_tool_call(call)
+
+        # M6.5 run-scoped approval checkpoint: emit the canonical `approval`
+        # (requested) event BEFORE any external side effect, and block the
+        # action fail-closed unless the run policy resolves to granted.
+        if self._policy is not None:
+            checkpoint = evaluate_action(
+                self._policy,
+                action_class="external_mcp",
+                run_id=self._run_id or "",
+                principal_id=self._principal_id,
+                approved_for={"external_mcp"} if "external_mcp" in self._policy._allowed else set(),
+            )
+            if self._event_recorder is not None:
+                self._event_recorder(checkpoint.event)
+            if not checkpoint.allowed:
+                call.status = "blocked"
+                call.error = "Run policy requires approval for external MCP action"
+                call.duration_ms = int((time.monotonic() - started) * 1000)
+                raise ToolPermissionDenied(
+                    f"External MCP tool {tool_name!r} requires run approval"
+                )
 
         try:
             active_connection = await self._uow.mcp_connections.get(connection.id)
@@ -147,6 +180,9 @@ async def build_agent_tool_runtime(
     principal_id: str | None,
     agent_id: str,
     executor: McpToolExecutor,
+    policy: RunPolicy | None = None,
+    run_id: str | None = None,
+    event_recorder: Any | None = None,
 ) -> AgentToolRuntime:
     native_grants = await uow.agent_policies.list_enabled_native_tools(agent_id)
     native_tools = [
@@ -168,6 +204,9 @@ async def build_agent_tool_runtime(
             agent_id=agent_id,
             external=all_external,
             executor=executor,
+            policy=policy,
+            run_id=run_id,
+            event_recorder=event_recorder,
         ),
     )
 
