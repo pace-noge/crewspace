@@ -17,6 +17,37 @@ LLM-backed agents can be connected through the documented agent protocol.
 > environment prefix, and `data/crewspace.db`. An existing legacy database is
 > moved automatically on first startup.
 
+## Latest milestone: M6.8 Operational inbox
+
+M6.8 adds a unified, team-authorized inbox for work that needs human attention.
+Open `/inbox` to see approval requests, failed or timed-out coding runs,
+disconnected agents with active work, workflow failures, pending MCP approvals,
+requested change-set reviews, and stale tasks in one app-shell view.
+
+What we built:
+
+- **Deterministic projection, not a second source of truth.** Inbox item IDs come
+  from their source records, so repeated scans deduplicate naturally. Items update
+  or disappear when the underlying run, workflow, review, tool, agent, or task
+  changes state.
+- **Team-safe authorization.** Projection, replay, and actions re-check team
+  membership and fail closed for unauthenticated, unknown, or cross-tenant access.
+- **Operational actions.** Users can filter by kind, priority, unread state, and
+  resolution state; assign ownership; acknowledge items; and resolve local inbox
+  state.
+- **Inspectable deep links.** Every item links to its relevant coding run, change
+  set, workflow, agent conversation, MCP connection, or board.
+- **Live updates and reconnect replay.** A monotonic, team-scoped event stream and
+  cursor-based replay endpoint preserve update ordering and unread counts after a
+  reconnect. Unread consistently means unresolved and unacknowledged.
+- **All-source integration proof.** The seeded POC exercises all eight item kinds
+  across coding runs, change sets, workflows, agents, MCP tools, and tasks.
+
+M6.8 is complete (7/7 acceptance items). Its focused gate contains 27 passing
+inbox tests with no database schema drift. See
+[`docs/RELEASE_M6.8.md`](docs/RELEASE_M6.8.md) for the full acceptance record,
+architecture notes, and verification results.
+
 ## Run it
 ```bash
 uv sync
