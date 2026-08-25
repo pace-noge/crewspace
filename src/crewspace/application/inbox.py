@@ -18,8 +18,9 @@ _DEEP_LINK = {
     "coding_run": "/api/coding/runs/{source_id}",
     "change_set": "/management/change-sets/{source_id}",
     "workflow_run": "/workflows/{source_id}",
-    "agent": "/management/agents",
-    "mcp_tool": "/management/mcp",
+    "agent": "/direct/{source_id}",
+    "mcp_tool": "/management/mcp/{source_id}",
+    "task": "/board/{source_id}",
 }
 
 
@@ -87,6 +88,7 @@ def build_inbox_item(
     summary: str = "",
     created_at: str = "",
     resolved: bool = False,
+    deep_link_id: Optional[str] = None,
 ) -> Optional["InboxItem"]:
     """Map a single source record to an InboxItem per INBOX_RULES.
 
@@ -98,7 +100,8 @@ def build_inbox_item(
     if kind is None:
         return None
     rule = INBOX_RULES[kind]
-    link = _DEEP_LINK.get(source_type, "").format(source_id=source_id)
+    link_target = deep_link_id or source_id
+    link = _DEEP_LINK.get(source_type, "").format(source_id=link_target)
     return InboxItem(
         item_id=derive_inbox_id(source_type, source_id),
         kind=kind,
@@ -136,6 +139,7 @@ def project_inbox_for_team(records: List[dict], team_id: str) -> List[InboxItem]
             summary=rec.get("summary", ""),
             created_at=rec.get("created_at", ""),
             resolved=bool(rec.get("resolved", False)),
+            deep_link_id=rec.get("deep_link_id"),
         )
         if item is None:
             continue
