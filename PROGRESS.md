@@ -1,13 +1,17 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is DONE (7/7) and pushed. Verified milestone commit for M6.4 slice 7 is ready.
+M6.4 is DONE (7/7) and pushed; M6.5 is IN PROGRESS (1/7). Verified milestone
+commit for M6.5 slice 1 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_event_acceptance.py tests/test_event_transport.py tests/test_event_audit_export.py tests/test_event_activity.py tests/test_event_envelope.py tests/test_event_ordering_dedupe.py tests/test_event_resume_cursor.py tests/test_change_set_management.py -q` to confirm green (M6.4 bounded gate: 101 passed).
-4. Pick up PLAN.md M6.5 — Approval checkpoints and run-scoped policy (PLANNED, 0/7); M6.4 is complete.
+3. `uv run pytest tests/test_run_policy.py -q` to confirm green (M6.5 slice-1
+   bounded gate: 6 passed).
+4. Pick up PLAN.md M6.5 — Approval checkpoints and run-scoped policy, next item
+   2 (a checkpoint that needs approval emits a canonical approval requested
+   event before the action runs).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -76,11 +80,14 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.5 — Approval checkpoints and run-scoped policy (PLANNED, 0/7).
-Reuse the existing default-deny tool/MCP governance; for each approval
-checkpoint, record a canonical `approval` event through the new event envelope
-(reusing EventEnvelope/ActivityItem so it shows in the activity stream without
-new UI plumbing).
+milestone: M6.5 — Approval checkpoints and run-scoped policy (IN PROGRESS, 1/7).
+Slice 1 landed the run-scoped default-deny RunPolicy + evaluate_action checkpoint
+that emits a canonical `approval` EventEnvelope (decision/action_class/scope/
+principal_id) — reusing the M6.4 envelope so it surfaces in the activity stream
+and audit export without new UI plumbing. Next slice 2: a checkpoint that needs
+approval emits a canonical `approval` (requested) event BEFORE the action runs
+(wire evaluate_action into the coding-run action path / external MCP execution
+so the requested event is recorded prior to any consequential side effect).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

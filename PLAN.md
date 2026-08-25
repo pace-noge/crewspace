@@ -181,7 +181,7 @@ Last updated: 2026-08-25 (WIB)
 | M6.2 | Isolated worktrees and structured change sets | DONE | 7/7 | M6.1 | `6a78496`; 179-test bounded lifecycle/POC/security gate; migration round trip; independent fail-closed review | Same-process remote lifecycle idempotence; cross-restart reconstruction belongs to M6.3 |
 | M6.3 | Durable and cancellable agent runs | DONE | 8/8 | | M6.1 | `4b199be` (item 1); `38c2e27` (item 2); item 3 persists bounded recent output + GET /api/coding/runs/{id}: `dispatch_coding_run` re-checks team↔repo grant via contracted `is_team_granted`, transitions queued→running in-UoW, dispatches distinct request_id; authenticated `POST /api/coding/runs`; 146-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Lifecycle + timestamps + fail-closed CAS complete; cancellation/restart/UI deferred to later items |
 | M6.4 | Typed execution events and unified event envelope | DONE | 7/7 | M6.1, M6.3 | `src/crewspace/dto/events.py` (EventTransport Protocol + InMemory + Redis adapter) + `tests/test_event_{envelope,ordering_dedupe,resume_cursor,activity,audit_export,transport,acceptance}.py`; 101-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Replay cursor/resume, UI activity render, audit export, Redis/multi-worker seam all shipped; migration-compat guaranteed (pure DTO, no sqlalchemy) |
-| M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
+| M6.5 | Approval checkpoints and run-scoped policy | IN PROGRESS | 1/7 | M6.3, M6.4 | `src/crewspace/application/run_policy.py` (new) + `src/crewspace/dto/events.py` ApprovalEvent reuse + `tests/test_run_policy.py`; 6-test bounded gate | Reuse existing default-deny agent-tool/MCP governance; approval checkpoints record a canonical `approval` event via the M6.4 envelope so they surface in the activity stream without new UI plumbing |
 | M6.6 | Multi-agent delivery pipeline | PLANNED | 0/7 | M6.2–M6.5 | — | Planner -> coder -> reviewer -> test -> human approval |
 | M6.7 | Agent evaluation and reliability scorecards | PLANNED | 0/7 | M6.3, M6.4 | — | Replayable benchmarks and version/model comparisons |
 | M6.8 | Operational inbox | PLANNED | 0/7 | M6.3–M6.5 | — | Human-attention queue across agents, workflows, MCP |
@@ -260,22 +260,30 @@ Acceptance (7/7):
   - [x] Transport seam supports a future Redis/multi-worker implementation.
   - [x] Contract, replay, reconnect, and migration-compatibility tests pass.
 
-M6.5 — Approval checkpoints and run-scoped policy            [M–L]  PLANNED
+M6.5 — Approval checkpoints and run-scoped policy            [M–L]  IN PROGRESS
 Scope:
-  - Add explicit approval requests for writes, commands, network, package install,
-    git push/PR, deployment, and other consequential operations.
-  - Support one-time, run-scoped, and policy-derived decisions with expiry.
-  - Enforce at discovery/advertisement and execution, reusing current agent-tool and
-    external MCP default-deny policy rather than adding a parallel authorization path.
+  - Define a run-scoped policy that maps a consequential action class
+    (git_push, deploy, package_install, network_egress, shell_command, file_write)
+    to a required approval decision, default-deny (anything unspecified is denied).
+  - Reuse the M6.4 canonical `ApprovalEvent` (decision/action_class/scope/
+    principal_id) so every checkpoint surfaces in the typed activity stream and
+    audit export without new UI plumbing.
+  - Enforce at execution: a consequential action cannot run until the run policy
+    resolves it to `granted`; `requested`/`denied`/`expired` block execution.
+  - Reuse the existing default-deny agent-tool and external MCP governance
+    rather than adding a parallel authorization path.
 
-Acceptance (0/7):
-  - [ ] Consequential action classes and default-deny policy are documented.
-  - [ ] Approval request/decision is persisted and tied to principal, run, and action.
-  - [ ] Dedicated app-shell approval form shows exact operation and consequences.
-  - [ ] Denied/expired/replayed approvals cannot execute.
-  - [ ] Policy is enforced at both capability discovery and execution.
-  - [ ] Every request, decision, and attempted use is auditable.
-  - [ ] Security tests cover impersonation, scope escalation, replay, and races.
+Acceptance (1/7):
+  - [x] Consequential action classes and the default-deny run policy are defined.
+  - [ ] A checkpoint that needs approval emits a canonical `approval` (requested)
+        event before the action runs.
+  - [ ] `granted` approvals allow the action; `denied`/`expired`/`requested`
+        (unresolved) fail closed and block execution.
+  - [ ] Approval decision is tied to principal, run, and action class.
+  - [ ] Denied/expired/replayed approvals cannot execute the protected action.
+  - [ ] Every request, decision, and attempted use is recorded as an auditable
+        canonical event (surfaces in activity stream + audit export).
+  - [ ] Security tests cover scope escalation, replay, and stale/expired approvals.
 
 M6.6 — Multi-agent delivery pipeline                         [L–XL]  PLANNED
 Scope:
