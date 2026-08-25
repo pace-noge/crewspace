@@ -34,6 +34,7 @@ class InboxItem:
     summary: str
     owner_id: Optional[str] = None
     created_at: str = ""
+    acknowledged: bool = False   # inbox-local state (survives re-projection)
     resolved: bool = False
     deep_link: str = ""
 
@@ -140,3 +141,36 @@ def project_inbox_for_team(records: List[dict], team_id: str) -> List[InboxItem]
             continue
         items[item.item_id] = item  # dedup by deterministic id
     return sorted(items.values(), key=lambda i: (-i.priority, i.item_id))
+
+
+def reconcile_inbox_for_team(
+    previous: List[InboxItem], records: List[dict], team_id: str
+) -> List[InboxItem]:
+    """Idempotent reconcile of a prior projection against a fresh source scan.
+
+    Because item ids are derived from the source record, this keeps the inbox a pure
+    projection:
+      - A source that is still in an attention state updates the SAME item in place
+        (source-derived fields such as summary/status refresh); inbox-local state
+        (acknowledged, owner_id) is preserved from the previous item.
+      - A source that has cleared its attention state (no longer maps to a kind) drops
+        its item — the item resolves with its source record, never orphaned.
+      - A brand-new attention state produces a fresh item.
+      - Cross-tenant records are still excluded (fail-closed on tenancy).
+    """
+    from dataclasses import replace
+
+    projected = project_inbox_for_team(records, team_id)
+    prev_by_id = {i.item_id: i for i in previous}
+    out: dict = {}
+    for item in projected:
+        prior = prev_by_id.get(item.item_id)
+        if prior is not None:
+            # refresh source-derived fields, keep inbox-local state
+            item = replace(
+                item,
+                acknowledged=prior.acknowledged,
+                owner_id=prior.owner_id if prior.owner_id is not None else item.owner_id,
+            )
+        out[item.item_id] = item
+    return sorted(out.values(), key=lambda i: (-i.priority, i.item_id))
