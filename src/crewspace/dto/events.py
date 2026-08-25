@@ -312,3 +312,112 @@ def order_key(env: EventEnvelope) -> tuple[str, int, str]:
     without a run_id sort first and are ordered solely by event_id.
     """
     return (env.run_id or "", env.sequence if env.sequence is not None else -1, env.event_id)
+
+
+# --- Resume cursor (acceptance item 3) ----------------------------------------
+#
+# Reconnect must resume from a cursor without gaps or duplicate UI entries. The
+# cursor is POSITIONAL over the canonical total order (order_key), not a list
+# index — so it stays valid across batches and re-sorts. It encodes the
+# last-delivered boundary as an opaque, serializable token and is fail-closed:
+# a malformed token raises rather than silently returning the whole stream.
+
+
+class ResumeCursor:
+    """Position in the canonical order after which the client resumes.
+
+    The boundary is (run_id, sequence, event_id). run_id=="" / sequence==-1
+    denotes the synthetic head before any no-run event.
+    """
+
+    __slots__ = ("run_id", "sequence", "event_id")
+
+    def __init__(self, run_id: str, sequence: int, event_id: str) -> None:
+        self.run_id = run_id
+        self.sequence = sequence
+        self.event_id = event_id
+
+    @classmethod
+    def from_event(cls, env: EventEnvelope) -> "ResumeCursor":
+        return cls(
+            run_id=env.run_id or "",
+            sequence=env.sequence if env.sequence is not None else -1,
+            event_id=env.event_id,
+        )
+
+    @classmethod
+    def from_token(cls, token: str) -> "ResumeCursor":
+        try:
+            data = json.loads(token)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("malformed resume token") from exc
+        if not isinstance(data, dict):
+            raise ValueError("resume token must be a JSON object")
+        if not all(k in data for k in ("run_id", "sequence", "event_id")):
+            raise ValueError("resume token missing required fields")
+        run_id = data["run_id"]
+        sequence = data["sequence"]
+        event_id = data["event_id"]
+        if not isinstance(run_id, str) or not isinstance(event_id, str):
+            raise ValueError("resume token has wrong field types")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            raise ValueError("resume token has wrong sequence type")
+        return cls(run_id=run_id, sequence=sequence, event_id=event_id)
+
+    def to_token(self) -> str:
+        return json.dumps(
+            {"run_id": self.run_id, "sequence": self.sequence, "event_id": self.event_id},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, ResumeCursor)
+            and self.run_id == other.run_id
+            and self.sequence == other.sequence
+            and self.event_id == other.event_id
+        )
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return f"ResumeCursor(run_id={self.run_id!r}, sequence={self.sequence}, event_id={self.event_id!r})"
+
+
+def events_after(
+    cursor: ResumeCursor | None,
+    events: list[EventEnvelope],
+    *,
+    dedupe: EventDedupeStore | None = None,
+) -> list[EventEnvelope]:
+    """Return the gap-free, duplicate-free tail after ``cursor`` in order_key order.
+
+    - Excludes the cursor's own event (exclusive upper boundary) and everything
+      ordered before it, so the tail is contiguous (no gaps).
+    - Dedupes by event_id; if ``dedupe`` is supplied, observed ids are marked
+      and previously-seen ids are skipped (idempotent across reconnects).
+    - Deterministic given the same inputs: sorts a fresh copy, never mutates.
+
+    Items sent before but whose event_id is not in the cursor's past are still
+    included (their position could not be known from the boundary); the caller's
+    ``dedupe`` store is the source of truth for already-rendered ids.
+    """
+    ordered = sorted(events, key=order_key)
+    start = 0
+    if cursor is not None:
+        # Index of the first event strictly after the cursor boundary.
+        for i, env in enumerate(ordered):
+            if order_key(env) > (cursor.run_id, cursor.sequence, cursor.event_id):
+                start = i
+                break
+        else:
+            # Cursor is at or beyond the end: nothing new.
+            start = len(ordered)
+    tail = ordered[start:]
+    if dedupe is None:
+        return tail
+    result: list[EventEnvelope] = []
+    for env in tail:
+        if dedupe.observe(env.event_id):
+            continue
+        result.append(env)
+    return result
