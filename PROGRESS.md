@@ -2,16 +2,17 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is IN
-PROGRESS (1/7). Verified milestone commit for M6.6 slice 1 is ready.
+PROGRESS (2/7). Verified milestone commit for M6.6 slice 2 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_handoff_contracts.py -q` to confirm green (M6.6
-   slice-1 bounded gate: 5 passed).
-4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline, next item 2 (pipeline
-   graph with deterministic transitions and bounded retry policy — build the
-   stage machine over the STAGE_CONTRACTS from slice 1).
+3. `uv run pytest tests/test_pipeline.py tests/test_handoff_contracts.py -q` to
+   confirm green (M6.6 slice-1/2 bounded gate: 12 passed).
+4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline, next item 3 (reviewer
+   receives independent context plus immutable change-set evidence — wire the
+   reviewer stage to consume the coder's change-set evidence, not the coder's
+   chat).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -80,16 +81,15 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.6 — Multi-agent delivery pipeline (IN PROGRESS, 1/7). Slice 1
-landed versioned handoff contracts (src/crewspace/dto/handoffs.py): a pure DTO
-layer (no sqlalchemy/websocket) with ArtifactType, HandoffContract
-(versioned, extra=forbid), STAGE_CONTRACTS for planner -> coder -> reviewer ->
-tester -> human_approval (each declaring required_inputs / produces), and
-validate_pipeline_graph (rejects broken handoffs). Next slice 2: a pipeline
-stage machine with deterministic transitions and a bounded retry policy built
-over STAGE_CONTRACTS (planner->coder->reviewer->tester->human_approval), so a
-stage only advances when its required inputs are satisfied and retries are
-capped.
+milestone: M6.6 — Multi-agent delivery pipeline (IN PROGRESS, 2/7). Slice 1
+landed versioned handoff contracts (src/crewspace/dto/handoffs.py). Slice 2
+added the deterministic stage machine (src/crewspace/application/pipeline.py):
+DeliveryPipeline over STAGE_CONTRACTS with input-gated stage starts, a
+RetryPolicy (capped attempts), fail-closed terminal FAILED when retries are
+exhausted, cancellation that blocks all transitions, and a broken-contract-graph
+guard at construction. Next slice 3: the reviewer stage receives independent
+context plus immutable change-set evidence (consume the coder's change-set, not
+chat).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

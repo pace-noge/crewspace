@@ -182,7 +182,7 @@ Last updated: 2026-08-25 (WIB)
 | M6.3 | Durable and cancellable agent runs | DONE | 8/8 | | M6.1 | `4b199be` (item 1); `38c2e27` (item 2); item 3 persists bounded recent output + GET /api/coding/runs/{id}: `dispatch_coding_run` re-checks team↔repo grant via contracted `is_team_granted`, transitions queued→running in-UoW, dispatches distinct request_id; authenticated `POST /api/coding/runs`; 146-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Lifecycle + timestamps + fail-closed CAS complete; cancellation/restart/UI deferred to later items |
 | M6.4 | Typed execution events and unified event envelope | DONE | 7/7 | M6.1, M6.3 | `src/crewspace/dto/events.py` (EventTransport Protocol + InMemory + Redis adapter) + `tests/test_event_{envelope,ordering_dedupe,resume_cursor,activity,audit_export,transport,acceptance}.py`; 101-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Replay cursor/resume, UI activity render, audit export, Redis/multi-worker seam all shipped; migration-compat guaranteed (pure DTO, no sqlalchemy) |
 | M6.5 | Approval checkpoints and run-scoped policy | DONE | 7/7 | M6.3, M6.4 | `src/crewspace/application/run_policy.py` + `src/crewspace/application/mcp_tools.py` (opt-in checkpoint) + `tests/test_run_policy.py`; 12-test bounded gate | Reuse existing default-deny agent-tool/MCP governance; approval checkpoints record a canonical `approval` event via the M6.4 envelope so they surface in the activity stream without new UI plumbing |
-| M6.6 | Multi-agent delivery pipeline | IN PROGRESS | 1/7 | M6.2–M6.5 | `src/crewspace/dto/handoffs.py` (versioned contracts) + `tests/test_handoff_contracts.py`; 5-test bounded gate | Pass structured handoff artifacts; planner -> coder -> reviewer -> test -> human approval |
+| M6.6 | Multi-agent delivery pipeline | IN PROGRESS | 2/7 | M6.2–M6.5 | `src/crewspace/dto/handoffs.py` (contracts) + `src/crewspace/application/pipeline.py` (state machine) + `tests/test_handoff_contracts.py` + `tests/test_pipeline.py`; 12-test bounded gate | Pass structured handoff artifacts; planner -> coder -> reviewer -> test -> human approval |
 | M6.7 | Agent evaluation and reliability scorecards | PLANNED | 0/7 | M6.3, M6.4 | — | Replayable benchmarks and version/model comparisons |
 | M6.8 | Operational inbox | PLANNED | 0/7 | M6.3–M6.5 | — | Human-attention queue across agents, workflows, MCP |
 
@@ -292,9 +292,9 @@ Scope:
   - Apply stage budgets, timeouts, terminal states, and no-free-loop safeguards.
   - Display one run graph with stage ownership and independent reviewer context.
 
-Acceptance (1/7):
+Acceptance (2/7):
   - [x] Versioned handoff contracts define required inputs/outputs per stage.
-  - [ ] Pipeline graph has deterministic transitions and bounded retry policy.
+  - [x] Pipeline graph has deterministic transitions and bounded retry policy.
   - [ ] Reviewer receives independent context plus immutable change-set evidence.
   - [ ] Failed/cancelled stages cannot silently advance or duplicate downstream work.
   - [ ] Human approval is required before configured delivery actions.
