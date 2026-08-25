@@ -80,6 +80,22 @@ METRIC_DEFINITIONS: tuple[ScorecardMetric, ...] = (
         privacy="Durations only.",
         description="Mean duration of tool calls that reported a duration.",
     ),
+    ScorecardMetric(
+        metric_id="verification_pass_rate",
+        label="Verification pass rate",
+        unit="ratio",
+        denominator="verification results with status=passed / total verification results in window",
+        privacy="Aggregate only; result names retained 90d.",
+        description="Share of change-set verification results that passed.",
+    ),
+    ScorecardMetric(
+        metric_id="change_set_approval_rate",
+        label="Change-set human approval rate",
+        unit="ratio",
+        denominator="change sets with status=reviewed (human accepted) / total captured change sets in window",
+        privacy="Aggregate only; artifact metadata retained 90d.",
+        description="Share of captured change sets a human reviewed/approved.",
+    ),
 )
 
 METRIC_BY_ID = {m.metric_id: m for m in METRIC_DEFINITIONS}

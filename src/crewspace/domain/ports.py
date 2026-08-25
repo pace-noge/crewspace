@@ -406,6 +406,7 @@ class CodingRunRepository(Protocol):
     async def search_active(
         self, agent_id: str | None = None, *, statuses: list[str] | None = None
     ) -> list: ...
+    async def list_for_team(self, team_id: str) -> list: ...
 
 
 @runtime_checkable

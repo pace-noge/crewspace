@@ -1,15 +1,21 @@
-"""M6.7 slice 1 — Deterministic scorecard computation (pure application logic).
+"""M6.7 — Deterministic scorecard computation (pure application logic + DB wiring).
 
-compute_scorecard(runs, tool_calls=...) is a pure function over CodingRun-like
-and AgentToolCall-like records. It is order-independent (deterministic) and emits
-MetricValue aggregates whose (numerator, denominator) match METRIC_DEFINITIONS.
-No DB, no framework — unit-testable and migration-safe.
+compute_scorecard(runs, tool_calls=..., verification_results=..., change_sets=...)
+is a PURE function over CodingRun-like, AgentToolCall-like, VerificationResultDTO,
+and StoredChangeSet-like records. It is order-independent (deterministic) and
+emits MetricValue aggregates whose (numerator, denominator) match
+METRIC_DEFINITIONS. No DB, no framework — unit-testable and migration-safe.
+
+compute_team_scorecard(uow, team_id) is the DB-backed wiring: it pulls the real
+records via the repositories and delegates to compute_scorecard, so the same
+deterministic aggregates are produced whether fed real rows or hand-built ones.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Iterable, Optional, Sequence
 
+from crewspace.dto.change_sets import VerificationResultDTO
 from crewspace.dto.metrics import METRIC_BY_ID, MetricValue
 
 
@@ -21,12 +27,15 @@ def _ratio(metric_id: str, numerator: int, denominator: int) -> MetricValue:
 def compute_scorecard(
     runs: Sequence[object],
     tool_calls: Optional[Iterable[object]] = None,
+    verification_results: Optional[Iterable[object]] = None,
+    change_sets: Optional[Iterable[object]] = None,
 ) -> dict[str, MetricValue]:
     """Compute deterministic aggregate reliability metrics.
 
-    `runs` are CodingRun-like (attrs: status:str, started_at:datetime|None,
-    finished_at:datetime|None). `tool_calls` are AgentToolCall-like (attrs:
-    status:str, duration_ms:int|None, error:str|None).
+    - `runs` are CodingRun-like (status:str, started_at/finished_at: datetime|None).
+    - `tool_calls` are AgentToolCall-like (status:str, duration_ms:int|None, error:str|None).
+    - `verification_results` are VerificationResultDTO-like (status:str).
+    - `change_sets` are StoredChangeSet-like (status:str; "reviewed" = human accepted).
     """
     runs = list(runs)
     total = len(runs)
@@ -55,6 +64,16 @@ def compute_scorecard(
     duration_n = len(durations)
     mean_duration = (duration_sum / duration_n) if duration_n else 0.0
 
+    # verification pass rate over change-set verification results
+    vresults = list(verification_results or [])
+    v_total = len(vresults)
+    v_passed = sum(1 for v in vresults if getattr(v, "status", None) == "passed")
+
+    # change-set human approval rate over captured change sets
+    csets = list(change_sets or [])
+    cs_total = len(csets)
+    cs_approved = sum(1 for c in csets if getattr(c, "status", None) == "reviewed")
+
     return {
         "success_rate": _ratio("success_rate", succeeded, total),
         "failure_rate": _ratio("failure_rate", failed, total),
@@ -73,4 +92,28 @@ def compute_scorecard(
             numerator=float(duration_sum),
             denominator=float(duration_n),
         ),
+        "verification_pass_rate": _ratio("verification_pass_rate", v_passed, v_total),
+        "change_set_approval_rate": _ratio("change_set_approval_rate", cs_approved, cs_total),
     }
+
+
+async def compute_team_scorecard(uow, team_id: str) -> dict[str, MetricValue]:
+    """DB-backed scorecard: pull real records for a team and delegate to compute_scorecard.
+
+    Run metrics + change-set approval rate come from the repositories (real query);
+    tool/verification metrics are derived from the change-set verification records
+    attached to the team's captured change sets. Returns the same deterministic
+    aggregates as compute_scorecard fed the same records directly.
+    """
+    runs = await uow.coding_runs.list_for_team(team_id)
+    stored_sets = await uow.change_sets.list_for_teams([team_id])
+    verification_results: list[VerificationResultDTO] = []
+    for stored in stored_sets:
+        payload = stored.payload if isinstance(stored.payload, dict) else {}
+        for v in payload.get("verification", ()):
+            verification_results.append(v if isinstance(v, VerificationResultDTO) else VerificationResultDTO(**v))
+    return compute_scorecard(
+        runs,
+        verification_results=verification_results,
+        change_sets=stored_sets,
+    )

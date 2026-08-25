@@ -586,6 +586,15 @@ class SqlAlchemyCodingRunRepository:
         row = await cur.fetchone()
         return self._map(row) if row else None
 
+    async def list_for_team(self, team_id: str) -> list[CodingRun]:
+        """Return every coding run for a team (all statuses) for scorecard rollups."""
+        cur = await self._conn.execute(
+            "SELECT * FROM coding_run WHERE team_id=? ORDER BY created_at ASC",
+            (team_id,),
+        )
+        rows = await cur.fetchall()
+        return [self._map(row) for row in rows]
+
     async def transition(
         self,
         run_id: str,
