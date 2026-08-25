@@ -1,17 +1,17 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed. Verified milestone
-commit for M6.5 slice 7 is ready.
+M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is IN
+PROGRESS (1/7). Verified milestone commit for M6.6 slice 1 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_run_policy.py tests/test_mcp_execution.py tests/test_mcp_connections.py tests/test_agent_tool_policy.py -q` to confirm green (M6.5 bounded gate: 41 passed).
-4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline (PLANNED, 0/7). M6.5 is
-   complete: run-scoped default-deny RunPolicy + evaluate_action checkpoint wired
-   into the external MCP seam, fail-closed, class/run/principal-bound, with the
-   canonical approval event surfacing in the M6.4 activity stream + audit export.
+3. `uv run pytest tests/test_handoff_contracts.py -q` to confirm green (M6.6
+   slice-1 bounded gate: 5 passed).
+4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline, next item 2 (pipeline
+   graph with deterministic transitions and bounded retry policy — build the
+   stage machine over the STAGE_CONTRACTS from slice 1).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -80,14 +80,16 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.5 — Approval checkpoints and run-scoped policy (DONE, 7/7). Final
-slice 7 consolidated security negative tests (acceptance item 7): unknown/
-unspecified action class is hard-denied fail-closed; a stale/expired approval
-cannot be "refreshed" without a fresh granted decision (replay stays blocked);
-a granted decision never leaks across class or run; an unrecognized prior-
-decision string is treated fail-closed. M6.5 is complete and pushed. Next
-milestone: M6.6 — Multi-agent delivery pipeline (PLANNED, 0/7): planner -> coder
--> reviewer -> test -> human approval.
+milestone: M6.6 — Multi-agent delivery pipeline (IN PROGRESS, 1/7). Slice 1
+landed versioned handoff contracts (src/crewspace/dto/handoffs.py): a pure DTO
+layer (no sqlalchemy/websocket) with ArtifactType, HandoffContract
+(versioned, extra=forbid), STAGE_CONTRACTS for planner -> coder -> reviewer ->
+tester -> human_approval (each declaring required_inputs / produces), and
+validate_pipeline_graph (rejects broken handoffs). Next slice 2: a pipeline
+stage machine with deterministic transitions and a bounded retry policy built
+over STAGE_CONTRACTS (planner->coder->reviewer->tester->human_approval), so a
+stage only advances when its required inputs are satisfied and retries are
+capped.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
