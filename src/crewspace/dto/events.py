@@ -1,0 +1,241 @@
+"""Typed execution events and the unified event envelope (M6.4 slice 1).
+
+This is the contract layer for Crewspace execution telemetry: a single versioned
+`EventEnvelope` that wraps a *typed* `payload` discriminated by `event_type`.
+
+The envelope is intentionally storage-agnostic. Nothing here imports the DB, the
+models, or the websocket layer: it is pure DTO at the application<->api boundary,
+so the same object can be (a) broadcast over the channel/control-plane socket,
+(b) persisted for replay/resume, (c) exported to JSON/CSV audit, and (d) rebuilt
+from a Redis stream in a future multi-worker deployment. Acceptance items 1 of
+M6.4 ("versioned schemas exist for envelope and initial typed event catalog")
+and 2 ("per-run sequence/order and event-id dedupe are deterministic") start here;
+the deterministic `event_id`, `canonical_json`, and `dedupe_key` are the building
+blocks the replay/resume slice will build on.
+"""
+from __future__ import annotations
+
+import json
+import secrets
+import uuid
+from datetime import datetime
+from typing import Annotated, Any, Literal, Union
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+# Bounded, traversal-free identifiers (reuse the same safety bar as change_sets).
+# Anchored so pydantic's pattern match (re.search) is equivalent to fullmatch —
+# an unanchored pattern would accept a *substring* of a traversal id like
+# '../../etc' (matches 'etc'), defeating fail-closed routing-context checks.
+SafeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
+BoundedText = Annotated[str, StringConstraints(max_length=8192)]
+ShortText = Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+# The only envelope schema version we emit today. `from_wire` rejects anything
+# else so a future major version cannot be silently misread by old consumers.
+CURRENT_SCHEMA_VERSION = "1.0"
+SUPPORTED_SCHEMA_VERSIONS = frozenset({CURRENT_SCHEMA_VERSION})
+
+
+def new_event_id() -> str:
+    """Generate a globally-unique, collision-resistant event id.
+
+    UUIDv4 + a random secret suffix keeps ids unique across workers without a
+    central sequence source, which is the property the dedupe/replay slice needs.
+    """
+    return f"evt_{uuid.uuid4().hex}{secrets.token_hex(8)}"
+
+
+# --- Typed event payloads ----------------------------------------------------
+#
+# Each event_type maps to exactly one payload model in EVENT_CATALOG below.
+# These are deliberately small, explicit contracts — add new fields as slices
+# consume them, and keep `extra="forbid"` so producers cannot slip in ad-hoc keys.
+
+
+class PlanEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    summary: BoundedText
+    step: ShortText | None = None
+    total_steps: int | None = Field(default=None, ge=0)
+
+
+class FileEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: BoundedText
+    action: Literal["created", "read", "write", "edit", "delete", "rename"]
+    bytes_written: int | None = Field(default=None, ge=0)
+
+
+class CommandEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    command: BoundedText
+    exit_code: int | None = None
+    timed_out: bool = False
+
+
+class TestEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["passed", "failed", "skipped", "running"]
+    name: ShortText | None = None
+    passed: int | None = Field(default=None, ge=0)
+    failed: int | None = Field(default=None, ge=0)
+
+
+class ArtifactEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: BoundedText
+    size_bytes: int = Field(ge=0)
+    kind: ShortText | None = None
+
+
+class ApprovalEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["requested", "granted", "denied", "expired"]
+    action_class: ShortText
+    scope: ShortText | None = None
+    principal_id: SafeId | None = None
+
+
+class WarningEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: ShortText
+    message: BoundedText
+    severity: Literal["info", "warning", "error"] = "warning"
+
+
+class TerminalEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: Literal[
+        "succeeded", "failed", "cancelled", "timed_out", "interrupted"
+    ]
+    reason: BoundedText | None = None
+    duration_ms: int | None = Field(default=None, ge=0)
+
+
+# Discriminated union so `payload` is validated against the model that matches
+# `event_type`. This is what makes build_event reject a wrong-type payload.
+_EVENT_UNION = Union[
+    PlanEvent,
+    FileEvent,
+    CommandEvent,
+    TestEvent,
+    ArtifactEvent,
+    ApprovalEvent,
+    WarningEvent,
+    TerminalEvent,
+]
+
+EVENT_CATALOG: dict[str, type[BaseModel]] = {
+    "plan": PlanEvent,
+    "file": FileEvent,
+    "command": CommandEvent,
+    "test": TestEvent,
+    "artifact": ArtifactEvent,
+    "approval": ApprovalEvent,
+    "warning": WarningEvent,
+    "terminal": TerminalEvent,
+}
+
+# Order matters for Literal generation: keep aligned with EVENT_CATALOG keys.
+EventType = Literal[
+    "plan",
+    "file",
+    "command",
+    "test",
+    "artifact",
+    "approval",
+    "warning",
+    "terminal",
+]
+
+
+class EventEnvelope(BaseModel):
+    """Versioned, typed execution event.
+
+    `schema_version` lets old consumers reject futures they cannot understand.
+    `payload` is a discriminated union keyed by `event_type`, so a malformed or
+    mismatched payload fails validation at the boundary rather than at the sink.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["1.0"] = CURRENT_SCHEMA_VERSION  # type: ignore[valid-type]
+    event_id: str
+    event_type: EventType
+    occurred_at: datetime
+    actor_id: SafeId | None = None
+    channel_id: SafeId | None = None
+    run_id: SafeId | None = None
+    correlation_id: SafeId | None = None
+    sequence: int | None = Field(default=None, ge=0)
+    payload: _EVENT_UNION
+
+    @classmethod
+    def from_wire(cls, data: dict[str, Any]) -> "EventEnvelope":
+        """Parse a wire dict, rejecting unsupported schema versions."""
+        version = data.get("schema_version")
+        if version not in SUPPORTED_SCHEMA_VERSIONS:
+            raise ValueError(
+                f"unsupported event schema_version: {version!r} "
+                f"(supported: {sorted(SUPPORTED_SCHEMA_VERSIONS)})"
+            )
+        return cls.model_validate(data)
+
+    def to_wire(self) -> dict[str, Any]:
+        """Serialize to a plain dict for transport/storage."""
+        return self.model_dump(mode="json")
+
+    def canonical_json(self) -> str:
+        """Sort-stable canonical bytes used for dedupe, audit, and export.
+
+        `sort_keys=True` makes identical events byte-identical across workers and
+        languages; `event_id` is included so this doubles as the canonical record.
+        """
+        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+
+    @property
+    def dedupe_key(self) -> str:
+        """Stable key for in-flight dedupe (and future resume cursors).
+
+        Event ids are unique by construction, so the id itself is the safe key;
+        a consumer that wants per-run ordering should combine `run_id`+`sequence`.
+        """
+        return self.event_id
+
+
+def build_event(
+    event_type: str,
+    *,
+    occurred_at: datetime,
+    payload: dict[str, Any],
+    event_id: str | None = None,
+    actor_id: str | None = None,
+    channel_id: str | None = None,
+    run_id: str | None = None,
+    correlation_id: str | None = None,
+    sequence: int | None = None,
+) -> EventEnvelope:
+    """Construct a validated envelope, dispatching payload to its typed model.
+
+    Raises pydantic.ValidationError if `event_type` is unknown or `payload` does
+    not satisfy the matching typed model. `actor_id`/`channel_id`/`run_id`/
+    `correlation_id` are bound to the SafeId pattern (rejects traversal/control
+    chars), so unauthorized or malformed routing context fails closed at the edge.
+    """
+    if event_type not in EVENT_CATALOG:
+        raise ValueError(f"unknown event_type: {event_type!r}")
+    # Validate the typed payload first so the error points at the payload, not
+    # the whole envelope.
+    EVENT_CATALOG[event_type].model_validate(payload)
+    return EventEnvelope(
+        event_id=event_id or new_event_id(),
+        event_type=event_type,  # type: ignore[arg-type]
+        occurred_at=occurred_at,
+        actor_id=actor_id,  # type: ignore[arg-type]
+        channel_id=channel_id,  # type: ignore[arg-type]
+        run_id=run_id,  # type: ignore[arg-type]
+        correlation_id=correlation_id,  # type: ignore[arg-type]
+        sequence=sequence,
+        payload=payload,  # type: ignore[arg-type]
+    )

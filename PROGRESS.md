@@ -1,13 +1,13 @@
 # Crewspace — Session Progress (resume handoff)
 
-Last updated: 2026-08-24 (WIB). M6.2 is complete on local `master`; verified
-milestone commits are ready for the slice-gate push.
+Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
+M6.4 is IN PROGRESS (1/7). Verified milestone commit for M6.4 slice 1 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -8` to confirm history matches below.
-3. `uv run pytest -q` to confirm green (current split-run baseline: 192 passed, 1 skipped).
-4. Pick up `PLAN.md` M6.3 — Durable and cancellable agent runs.
+3. `uv run pytest tests/test_event_envelope.py tests/test_change_sets.py -q` to confirm green (slice-1 bounded gate: 54 passed).
+4. Pick up PLAN.md M6.4 — Typed execution events and unified event envelope, next item 2 (deterministic per-run sequence/order + event-id dedupe).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -65,26 +65,22 @@ milestone commits are ready for the slice-gate push.
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.3 — Durable and cancellable agent runs — 8/8). Slice 1 (durable
-run lifecycle + timestamps + fail-closed compare-and-set transitions + reversible
-migration 20260824_03) is committed as `4b199be`; 142-test bounded gate and an
-independent fail-closed re-review returned BLOCKERS: none. Next implement M6.3 item
-4 — cancel remote runs with signed acknowledgement and subprocess termination. M6.2
-— Isolated worktrees and structured change sets is DONE (7/7), committed as
-`6a78496`. Signed path-free lifecycle commands now drive allocator-owned remote
-retain/discard/cleanup. The worker protects retained, dirty, unmerged, replaced, and
-ref/reflog-provenance-mismatched workspaces; partial cleanup is retryable and repeated
-removal is idempotent in the same worker process. Control-plane governance commits
-authorized intent before the remote wait, then records signed acknowledgement or a
-retryable generic failure in a fresh UoW. A real-Git POC allocated, captured, reviewed,
-discarded, and replayed cleanup successfully. The final bounded gate passed 179
-management, signed-protocol, real-Git, POC, and security tests; schema drift,
-compilation, diff, added-line security scan, and migration upgrade/downgrade/upgrade
-checks passed. Final independent fail-closed review found no blockers. Allocation,
-retention, partial-cleanup, and tombstone state are process-local by design; durable
-cross-restart reconstruction is explicitly deferred to M6.3. Next implement M6.3 —
-Durable and cancellable agent runs. Run-start UI/service and physical PR execution
-remain separate pending integration and are not claimed complete.
+M6.4 — Typed execution events and unified event envelope — IN PROGRESS 1/7.
+Slice 1 (versioned Envelope schema + initial typed event catalog: plan/file/
+command/test/artifact/approval/warning/terminal) added `src/crewspace/dto/
+events.py` + `tests/test_event_envelope.py`; bounded gate 54 tests green
+(event envelope + change_sets), makemigrations --check clean, compileall clean,
+diff --check clean, added-line security scan clean. An independent fail-closed
+review subagent stalled; an in-process review surfaced a real defect — the SafeId
+pattern was unanchored, so pydantic's re.search accepted a *substring* of a
+traversal id (`../../etc` matched `etc`), defeating fail-closed routing-context
+checks (acceptance item 6). Fixed by anchoring the pattern in both `events.py`
+and `change_sets.py` (where a compensating re.fullmatch validator had masked it),
+added parametrized rejection tests, and re-gated. BLOCKERS: none. M6.3 (Durable
+and cancellable agent runs) is DONE (8/8) and pushed as `c19eed7`; M6.2 is DONE
+(7/7) as `6a78496`; M6.1 is DONE (6/6). Next implement M6.4 item 2 — deterministic
+per-run sequence/order and event-id dedupe (build on the `sequence` field and
+`dedupe_key`/`canonical_json` already in slice 1).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

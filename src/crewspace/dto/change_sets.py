@@ -8,7 +8,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 
-SafeId = Annotated[str, StringConstraints(pattern=r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")]
+# Anchored so pydantic's pattern match (re.search) is equivalent to fullmatch —
+# an unanchored pattern accepts a *substring* of a traversal id (e.g. '../../etc'
+# matches 'etc'), defeating routing-context checks. The FrozenDTO validator
+# below also re-checks repository_id/run_id, but the pattern must be correct too.
+SafeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 GitOid = Annotated[str, StringConstraints(pattern=r"[0-9a-f]{40,64}")]
 BoundedText = Annotated[str, StringConstraints(max_length=4096)]
 RelativePath = Annotated[str, StringConstraints(min_length=1, max_length=4096)]
