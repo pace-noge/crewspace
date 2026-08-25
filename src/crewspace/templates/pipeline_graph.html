@@ -1,0 +1,48 @@
+{# M6.6 slice 6 — pipeline run graph. One card per stage showing status, owner,
+   required/produced artifacts, and per-stage blockers; plus the top-level
+   delivery decision and any pipeline-level blockers. Server-rendered from the
+   PipelineView view model (build_pipeline_view). #}
+<div class="pipeline-graph" id="pipeline-graph">
+  <header class="pipeline-head">
+    <span class="pipeline-status status-{{ view.status }}">{{ view.status|replace('_',' ') }}</span>
+    {% if view.delivery_decision %}
+      <span class="pipeline-decision decision-{{ view.delivery_decision }}">delivery: {{ view.delivery_decision }}</span>
+    {% else %}
+      <span class="pipeline-decision decision-none">delivery: pending</span>
+    {% endif %}
+  </header>
+
+  <ol class="pipeline-stages">
+    {% for stage in view.stages %}
+      <li class="pipeline-stage stage-{{ stage.status }}" data-stage="{{ stage.name }}">
+        <div class="stage-top">
+          <span class="stage-name">{{ stage.name }}</span>
+          <span class="stage-status status-{{ stage.status }}">{{ stage.status }}</span>
+        </div>
+        <div class="stage-meta">
+          {% if stage.owner %}<span class="stage-owner">owner: {{ stage.owner }}</span>{% else %}<span class="stage-owner stage-owner-empty">owner: —</span>{% endif %}
+        </div>
+        <div class="stage-artifacts">
+          {% if stage.required %}<span class="artifacts-label">requires:</span>
+            {% for a in stage.required %}<span class="artifact artifact-required">{{ a }}</span>{% endfor %}{% endif %}
+          {% if stage.produced %}<span class="artifacts-label">produces:</span>
+            {% for a in stage.produced %}<span class="artifact artifact-produced">{{ a }}</span>{% endfor %}{% endif %}
+        </div>
+        {% if stage.blockers %}
+          <ul class="stage-blockers">
+            {% for b in stage.blockers %}<li class="blocker">{{ b }}</li>{% endfor %}
+          </ul>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ol>
+
+  {% if view.blockers %}
+    <section class="pipeline-blockers">
+      <h2>Blockers</h2>
+      <ul>
+        {% for b in view.blockers %}<li class="blocker">{{ b }}</li>{% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+</div>
