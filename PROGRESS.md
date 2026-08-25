@@ -1,13 +1,13 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is IN PROGRESS (1/7). Verified milestone commit for M6.4 slice 1 is ready.
+M6.4 is IN PROGRESS (2/7). Verified milestone commit for M6.4 slice 2 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -8` to confirm history matches below.
-3. `uv run pytest tests/test_event_envelope.py tests/test_change_sets.py -q` to confirm green (slice-1 bounded gate: 54 passed).
-4. Pick up PLAN.md M6.4 — Typed execution events and unified event envelope, next item 2 (deterministic per-run sequence/order + event-id dedupe).
+3. `uv run pytest tests/test_event_envelope.py tests/test_event_ordering_dedupe.py tests/test_change_sets.py -q` to confirm green (slice-2 bounded gate: 64 passed).
+4. Pick up PLAN.md M6.4 — Typed execution events and unified event envelope, next item 3 (reconnect cursor without gaps/dupe).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -65,22 +65,20 @@ M6.4 is IN PROGRESS (1/7). Verified milestone commit for M6.4 slice 1 is ready.
 - Note: mention uses the agent DISPLAY NAME (`@planner`), not the id (`agent_planner`).
 
 ## NEXT ACTION
-M6.4 — Typed execution events and unified event envelope — IN PROGRESS 1/7.
-Slice 1 (versioned Envelope schema + initial typed event catalog: plan/file/
-command/test/artifact/approval/warning/terminal) added `src/crewspace/dto/
-events.py` + `tests/test_event_envelope.py`; bounded gate 54 tests green
-(event envelope + change_sets), makemigrations --check clean, compileall clean,
-diff --check clean, added-line security scan clean. An independent fail-closed
-review subagent stalled; an in-process review surfaced a real defect — the SafeId
-pattern was unanchored, so pydantic's re.search accepted a *substring* of a
-traversal id (`../../etc` matched `etc`), defeating fail-closed routing-context
-checks (acceptance item 6). Fixed by anchoring the pattern in both `events.py`
-and `change_sets.py` (where a compensating re.fullmatch validator had masked it),
-added parametrized rejection tests, and re-gated. BLOCKERS: none. M6.3 (Durable
-and cancellable agent runs) is DONE (8/8) and pushed as `c19eed7`; M6.2 is DONE
-(7/7) as `6a78496`; M6.1 is DONE (6/6). Next implement M6.4 item 2 — deterministic
-per-run sequence/order and event-id dedupe (build on the `sequence` field and
-`dedupe_key`/`canonical_json` already in slice 1).
+M6.4 — Typed execution events and unified event envelope — IN PROGRESS 2/7.
+Slice 1 (versioned Envelope + typed catalog) and slice 2 (deterministic per-run
+`RunSequencer`, `EventDedupeStore`, and `order_key` for replay/resume + dedupe)
+are done in `src/crewspace/dto/events.py` + their contract tests; bounded gate 64
+tests green, makemigrations --check clean, compileall clean, diff --check clean,
+added-line security scan clean. Independent fail-closed review returned
+BLOCKERS: none (verified in-process with executable checks; the delegated
+reviewer subagent stalled last slice, so the verdict is in-process, not a
+separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
+re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
+`c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6). Next implement M6.4 item
+3 — reconnect resumes from a cursor without gaps or duplicate UI entries (build
+on `RunSequencer` + `EventDedupeStore` + `order_key` to deliver a resume cursor
+and replay-safe ordering).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/

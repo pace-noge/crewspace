@@ -239,3 +239,76 @@ def build_event(
         sequence=sequence,
         payload=payload,  # type: ignore[arg-type]
     )
+
+
+# --- Deterministic ordering & dedupe primitives (acceptance item 2) ------------
+#
+# These are the transport-agnostic building blocks for ordered replay/resume and
+# cross-reconnect dedupe. They are deliberately in-process and pure; a future
+# Redis/multi-worker implementation must satisfy the SAME protocol (per-run
+# monotonic sequence, unseen->seen event-id transitions, stable order_key).
+
+
+class RunSequencer:
+    """Per-run monotonic sequence counter.
+
+    Each run gets its own independent counter starting at 0. The sequence is the
+    deterministic per-run ordering key replay/resume uses, so the same emission
+    pattern for a run always yields the same numbers regardless of process or
+    worker — that determinism is the contract (see test_run_sequencer_*).
+    """
+
+    def __init__(self) -> None:
+        self._seq: dict[str, int] = {}
+
+    def next(self, run_id: str) -> int:
+        n = self._seq.get(run_id, 0)
+        self._seq[run_id] = n + 1
+        return n
+
+    def peek(self, run_id: str) -> int:
+        return self._seq.get(run_id, 0)
+
+    def reset(self, run_id: str | None = None) -> None:
+        if run_id is None:
+            self._seq.clear()
+        else:
+            self._seq.pop(run_id, None)
+
+
+class EventDedupeStore:
+    """Idempotent event-id membership for dedupe across reconnects/replays.
+
+    `observe` returns False the first time an id is seen and True thereafter, so
+    a consumer can drop duplicates without re-processing. The store is bounded
+    by the caller (it is a pure primitive); persistent storage belongs to the
+    persistence slice.
+    """
+
+    def __init__(self) -> None:
+        self._seen: set[str] = set()
+
+    def observe(self, event_id: str) -> bool:
+        if event_id in self._seen:
+            return True
+        self._seen.add(event_id)
+        return False
+
+    def seen(self, event_id: str) -> bool:
+        return event_id in self._seen
+
+    def reset(self, event_id: str | None = None) -> None:
+        if event_id is None:
+            self._seen.clear()
+        else:
+            self._seen.discard(event_id)
+
+
+def order_key(env: EventEnvelope) -> tuple[str, int, str]:
+    """Stable total order for replay/resume and de-duplicated rendering.
+
+    Groups by run (so a run's events sort together by sequence) and breaks ties
+    within and across runs by event_id for a guaranteed total order. Events
+    without a run_id sort first and are ordered solely by event_id.
+    """
+    return (env.run_id or "", env.sequence if env.sequence is not None else -1, env.event_id)

@@ -180,7 +180,7 @@ Last updated: 2026-08-25 (WIB)
 | M6.1 | Agent capability negotiation | DONE | 6/6 | current signed WS protocol | `e7aba78`; 107 focused tests + full sequential suite + hardened live POC + independent review | No blockers |
 | M6.2 | Isolated worktrees and structured change sets | DONE | 7/7 | M6.1 | `6a78496`; 179-test bounded lifecycle/POC/security gate; migration round trip; independent fail-closed review | Same-process remote lifecycle idempotence; cross-restart reconstruction belongs to M6.3 |
 | M6.3 | Durable and cancellable agent runs | DONE | 8/8 | | M6.1 | `4b199be` (item 1); `38c2e27` (item 2); item 3 persists bounded recent output + GET /api/coding/runs/{id}: `dispatch_coding_run` re-checks team↔repo grant via contracted `is_team_granted`, transitions queued→running in-UoW, dispatches distinct request_id; authenticated `POST /api/coding/runs`; 146-test bounded gate + independent fail-closed re-review (BLOCKERS: none) | Lifecycle + timestamps + fail-closed CAS complete; cancellation/restart/UI deferred to later items |
-| M6.4 | Typed execution events and unified event envelope | IN PROGRESS | 1/7 | M6.1, M6.3 | `src/crewspace/dto/events.py` + `tests/test_event_envelope.py`; 54-test bounded gate (event envelope + change_sets) + independent fail-closed re-review (BLOCKERS: none; SafeId anchoring defect found and fixed during review) | Replay cursor/ordering/dedupe, UI activity render, audit export, Redis/multi-worker seam deferred to later items |
+| M6.4 | Typed execution events and unified event envelope | IN PROGRESS | 2/7 | M6.1, M6.3 | `src/crewspace/dto/events.py` + `tests/test_event_envelope.py` + `tests/test_event_ordering_dedupe.py`; 64-test bounded gate + independent fail-closed re-review (BLOCKERS: none; SafeId anchoring defect fixed in slice 1) | Replay cursor/resume, UI activity render, audit export, Redis/multi-worker seam deferred to later items |
 | M6.5 | Approval checkpoints and run-scoped policy | PLANNED | 0/7 | M6.3, M6.4 | — | Reuse existing default-deny tool/MCP governance |
 | M6.6 | Multi-agent delivery pipeline | PLANNED | 0/7 | M6.2–M6.5 | — | Planner -> coder -> reviewer -> test -> human approval |
 | M6.7 | Agent evaluation and reliability scorecards | PLANNED | 0/7 | M6.3, M6.4 | — | Replayable benchmarks and version/model comparisons |
@@ -251,9 +251,9 @@ Scope:
     semantics align; preserve explicit bounded adapters for legacy frames.
   - Support ordered replay/resume cursors and deduplication across reconnects.
 
-Acceptance (1/7):
+Acceptance (2/7):
   - [x] Versioned schemas exist for envelope and initial typed event catalog.
-  - [ ] Per-run sequence/order and event-id dedupe are deterministic.
+  - [x] Per-run sequence/order and event-id dedupe are deterministic.
   - [ ] Reconnect resumes from a cursor without gaps or duplicate UI entries.
   - [ ] UI renders compact typed activity with raw logs available on demand.
   - [ ] Audit JSON/CSV exports include the same canonical events.
