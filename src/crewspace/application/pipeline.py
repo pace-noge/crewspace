@@ -59,6 +59,7 @@ class DeliveryPipeline:
     stage_status: Dict[str, StageStatus] = field(init=False)
     attempts: Dict[str, int] = field(init=False)
     produced: set = field(default_factory=set, init=False)
+    produced_by_stage: Dict[str, set] = field(default_factory=dict, init=False)
     evidence: Dict[str, object] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
@@ -122,10 +123,13 @@ class DeliveryPipeline:
         if self._is_terminal():
             raise IllegalPipelineTransition(f"pipeline is {self.status.value}; no transitions allowed")
         if self.stage_status[stage] != StageStatus.RUNNING:
+            # A non-running stage (already SUCCEEDED, FAILED, or PENDING) cannot
+            # re-emit artifacts -> no duplicate downstream work.
             raise IllegalPipelineTransition(f"stage {stage} is not running")
         self.stage_status[stage] = StageStatus.SUCCEEDED
-        for art in produced or []:
-            self.produced.add(art)
+        emitted = set(produced or [])
+        self.produced_by_stage[stage] = emitted
+        self.produced |= emitted
         if self._first_incomplete() is None:
             self.status = PipelineStatus.SUCCEEDED
 
@@ -158,6 +162,11 @@ class DeliveryPipeline:
             raise IllegalPipelineTransition(
                 f"stage {stage} cannot be retried (exhausted or not failed)"
             )
+        # Purge this stage's previously-produced artifacts so any downstream work
+        # that depended on the prior attempt cannot silently advance; they must
+        # be re-produced by a successful re-run.
+        stale = self.produced_by_stage.pop(stage, set())
+        self.produced -= stale
         self.stage_status[stage] = StageStatus.PENDING
 
     def cancel(self) -> None:

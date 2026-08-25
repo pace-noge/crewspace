@@ -2,18 +2,18 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is IN
-PROGRESS (3/7). Verified milestone commit for M6.6 slice 3 is ready.
+PROGRESS (4/7). Verified milestone commit for M6.6 slice 4 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_pipeline.py tests/test_handoff_contracts.py tests/test_pipeline_reviewer_evidence.py -q`
-   to confirm green (M6.6 slice-1/2/3 bounded gate: 17 passed).
-4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline, next item 4 (failed/
-   cancelled stages cannot silently advance or duplicate downstream work — the
-   state machine already blocks downstream starts on terminal FAILED; add
-   explicit duplicate-work guards so a retried stage cannot re-emit the same
-   downstream artifact twice).
+3. `uv run pytest tests/test_pipeline.py tests/test_handoff_contracts.py tests/test_pipeline_reviewer_evidence.py tests/test_pipeline_no_duplicate_work.py -q`
+   to confirm green (M6.6 slice-1..4 bounded gate: 23 passed).
+4. Pick up PLAN.md M6.6 — Multi-agent delivery pipeline, next item 5 (human
+   approval is required before configured delivery actions — the
+   human_approval stage must be a gated, no-auto-advance decision: it cannot be
+   auto-completed; it produces a DELIVERY_DECISION only when an explicit human
+   grant is supplied, otherwise stays pending/blocked and blocks delivery).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -82,15 +82,16 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.6 — Multi-agent delivery pipeline (IN PROGRESS, 3/7). Slice 1 landed
-versioned handoff contracts (src/crewspace/dto/handoffs.py). Slice 2 added the
-deterministic state machine (src/crewspace/application/pipeline.py): input-gated
+milestone: M6.6 — Multi-agent delivery pipeline (IN PROGRESS, 4/7). Slices 1-3
+landed versioned handoff contracts, the deterministic state machine (input-gated
 stage starts, RetryPolicy, fail-closed terminal FAILED, cancel blocks all
-transitions, broken-contract-graph guard. Slice 3 made the reviewer consume an
-immutable change-set evidence artifact (ChangeSetEvidence wraps the M6.3
-frozen ChangeSetDTO; coder produces CHANGE_SET, reviewer requires it, evidence
-attaches only while the coder runs and is frozen after completion). Next slice
-4: failed/cancelled stages cannot silently advance or duplicate downstream work.
+transitions, immutable change-set evidence for the reviewer). Slice 4 added
+duplicate-work guards: completing an already-succeeded stage is rejected (no
+double-emit); a succeeded stage cannot be reopened; retry purges the stage's
+prior artifacts so stale downstream work cannot advance; terminal FAILED/
+CANCELLED blocks all production. Next slice 5: human approval required before
+configured delivery actions (the human_approval stage is a gated, no-auto-
+advance decision).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
