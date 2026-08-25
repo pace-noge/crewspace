@@ -380,3 +380,86 @@ async def test_denied_or_expired_approval_cannot_be_replayed_to_execute(app):
         approved_for=set(), prior_decision="granted",
     )
     assert granted_run_y.allowed is False, "granted-for-run_x cannot replay to run_y without its own approval"
+
+
+# --- Slice 6: every approval is an auditable canonical event (acceptance item 6) --
+
+
+async def test_approval_event_surfaces_in_activity_and_audit_export(app):
+    """Each checkpoint outcome is emitted as a canonical `approval` EventEnvelope
+    that surfaces in the M6.4 activity stream + audit export end-to-end: the
+    recorded envelopes serialize through export_events_json/csv, and merge with
+    a run's run_to_events output in the unified canonical export."""
+    from crewspace.application.mcp_tools import build_agent_tool_runtime
+    from crewspace.application.tools import ToolPermissionDenied, build_registry
+    from crewspace.dto.events import (
+        EventEnvelope, export_events_csv, export_events_json, run_to_events,
+    )
+    from tests.test_mcp_execution import _seed_approved_tool
+
+    await _seed_approved_tool(app)
+    async with app.state.db.uow() as uow:
+        await uow.agent_policies.replace_mcp_tools(
+            "agent_crewspace", {("mcp_jira", "create_issue")}
+        )
+        await uow.commit()
+
+    recorded: list[EventEnvelope] = []
+
+    class Executor:
+        async def call_tool(self, active_connection, tool_name, arguments):
+            return {"issue_key": "ENG-42", "title": arguments["title"]}
+
+    # Run an external MCP action under a policy that blocks it (default-deny):
+    # the checkpoint emits a `requested` approval event (recorded) and blocks.
+    async with app.state.db.uow() as uow:
+        runtime = await build_agent_tool_runtime(
+            build_registry(), uow,
+            principal_id="user_bilal", agent_id="agent_crewspace",
+            executor=Executor(),
+            policy=RunPolicy(allowed=set()), run_id="run_x",
+            event_recorder=recorded.append,
+        )
+        try:
+            await runtime.runner.run("jira.create_issue", title="X")
+        except ToolPermissionDenied:
+            pass
+    assert len(recorded) == 1
+    approval = recorded[0]
+    assert isinstance(approval, EventEnvelope)
+    assert approval.event_type == "approval"
+    assert approval.payload.decision == "requested"
+    assert approval.payload.action_class == "external_mcp"
+    assert approval.payload.scope == "run_x"
+
+    # Audit export: the approval canonical event serializes through JSON + CSV.
+    json_blob = export_events_json(recorded)
+    assert '"event_type":"approval"' in json_blob
+    assert '"decision":"requested"' in json_blob
+    assert '"action_class":"external_mcp"' in json_blob
+    csv_blob = export_events_csv(recorded)
+    assert "approval" in csv_blob and "requested" in csv_blob
+
+    # Unified export: the approval merges with the run's own lifecycle events.
+    # Build a minimal run-like object exposing the fields run_to_events reads.
+    class _Run:
+        id = "run_x"
+        team_id = "team_1"
+        repository_id = "repo_1"
+        agent_id = "agent_crewspace"
+        request_id = "req_1"
+        instruction = "ship it"
+        status = "queued"
+        created_at = None
+        started_at = None
+        finished_at = None
+        failure_reason = None
+        recent_output = None
+    run_events = run_to_events(_Run())
+    unified = [*run_events, *recorded]
+    assert any(
+        e.event_type == "approval" and e.payload.action_class == "external_mcp"
+        for e in unified
+    )
+    unified_json = export_events_json(unified)
+    assert unified_json.count('"event_type":"approval"') == 1

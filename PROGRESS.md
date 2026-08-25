@@ -1,17 +1,18 @@
 # Crewspace — Session Progress (resume handoff)
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
-M6.4 is DONE (7/7) and pushed; M6.5 is IN PROGRESS (5/7). Verified milestone
-commit for M6.5 slice 5 is ready.
+M6.4 is DONE (7/7) and pushed; M6.5 is IN PROGRESS (6/7). Verified milestone
+commit for M6.5 slice 6 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_run_policy.py tests/test_mcp_execution.py tests/test_mcp_connections.py tests/test_agent_tool_policy.py -q` to confirm green (M6.5 slice-5 bounded gate: 40 passed).
+3. `uv run pytest tests/test_run_policy.py tests/test_mcp_execution.py tests/test_mcp_connections.py tests/test_agent_tool_policy.py -q` to confirm green (M6.5 slice-6 bounded gate: 40 passed).
 4. Pick up PLAN.md M6.5 — Approval checkpoints and run-scoped policy, next item
-   6 (every request/decision/attempted use recorded as an auditable canonical
-   event; the checkpoint already emits one per outcome via the M6.4 envelope —
-   verify it surfaces in the activity stream + audit export end-to-end).
+   7 (security tests cover scope escalation, replay, stale/expired approvals —
+   items 4-6 already cover these; add a focused negative test asserting an
+   unknown/unspecified action class is denied and a stale/expired approval
+   cannot be refreshed without a fresh grant).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -80,17 +81,19 @@ reviewer subagent stalled last slice, so the verdict is in-process, not a
 separate agent). Slice 1 also fixed the unanchored SafeId defect (pydantic
 re.search accepted a substring of a traversal id). M6.3 is DONE (8/8, pushed
 `c19eed7`); M6.2 DONE (7/7, `6a78496`); M6.1 DONE (6/6); M6.4 DONE (7/7). Next
-milestone: M6.5 — Approval checkpoints and run-scoped policy (IN PROGRESS, 5/7).
+milestone: M6.5 — Approval checkpoints and run-scoped policy (IN PROGRESS, 6/7).
 Slice 1 landed the run-scoped default-deny RunPolicy + evaluate_action. Slice 2
 wired the opt-in checkpoint into the external MCP seam. Slice 3 threads a prior
-approval_decision into evaluate_action(prior_decision=...), fail-closed. Slice 4
-made the grant strictly class-bound (fixed scope-escalation). Slice 5 asserts
-denied/expired/replayed approvals cannot execute (replay at the seam twice ->
-both blocked; a granted decision cannot replay across a different
-run/principal/action class). The canonical approval event binds scope / principal_id / action_class. Next slice 6: every request/decision/attempted use
-is recorded as an auditable canonical event — verify the checkpoint's emitted
-approval EventEnvelope surfaces in the M6.4 activity stream + audit export
-end-to-end (run_to_activity / export_events_json already consume the envelope).
+approval_decision fail-closed. Slice 4 made the grant strictly class-bound
+(fixed scope-escalation). Slice 5 proved denied/expired/replayed approvals
+cannot execute. Slice 6 proves every checkpoint outcome is a canonical
+`approval` EventEnvelope that surfaces in the M6.4 activity stream + audit
+export end-to-end (recorded via the event_recorder, serialized by
+export_events_json/csv, and merged with run lifecycle events in the unified
+export). Next slice 7: security tests cover scope escalation, replay, and
+stale/expired approvals (items 4-6 already exercise these; add a focused
+negative test: unknown/unspecified action class is denied fail-closed, and a
+stale/expired approval cannot be "refreshed" without a fresh granted decision).
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
