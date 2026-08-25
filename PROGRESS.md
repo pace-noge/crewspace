@@ -3,7 +3,8 @@
 Last updated: 2026-08-25 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Current pushed HEAD: `9418e3a`
+Latest product/UI commit before this handoff: `9418e3a`
+Handoff state: this PROGRESS.md commit and `origin/master` are synchronized.
 Worktree at handoff: clean
 
 ## Current milestone state
@@ -22,8 +23,8 @@ Worktree at handoff: clean
 
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git status --short && git log -10 --oneline --decorate`
-3. Confirm `master` and `origin/master` point at `9418e3a` (or a newer intentional
-   commit) and the worktree is clean.
+3. Confirm `master` and `origin/master` point at the same commit and the worktree
+   is clean. `9418e3a` is the latest product/UI commit before the handoff docs.
 4. Re-run the focused completed-milestone gate if needed:
    `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
 5. Verify schema compatibility if touching models/application boundaries:
