@@ -2,18 +2,19 @@
 
 Last updated: 2026-08-25 (WIB). M6.3 is complete on local `master` and pushed;
 M6.4 is DONE (7/7) and pushed; M6.5 is DONE (7/7) and pushed; M6.6 is DONE
-(7/7) and pushed. M6.7 is DONE (7/7) and pushed. Verified milestone commit for
-M6.7 slice 7 is ready.
+(7/7) and pushed. M6.7 is DONE (7/7) and pushed. M6.8 is IN PROGRESS (1/7). Verified
+milestone commit for M6.8 slice 1 is ready.
 
 ## How to resume
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git log --oneline -10` to confirm history matches below.
-3. `uv run pytest tests/test_scorecard*.py tests/test_benchmark_*.py -q` to confirm
-   green (M6.7 bounded gate: 24 passed). M6.6 gate (34 passed) still green via
-   tests/test_pipeline*.py.
-4. Pick up PLAN.md M6.8 — Operational inbox (PLANNED, 0/7): a human-attention queue
-   across agents, workflows, and MCP; next is to define the inbox item shape +
-   ranking (item 1).
+3. `uv run pytest tests/test_inbox_projection.py -q` to confirm green (M6.8 bounded
+   gate: 5 passed). M6.7 gate (24 passed) still green via tests/test_scorecard*.py +
+   tests/test_benchmark_*.py; M6.6 gate (34 passed) via tests/test_pipeline*.py.
+4. Pick up PLAN.md M6.8 — Operational inbox (IN PROGRESS, 1/7): next item 2
+   (items dedupe deterministically and update/resolve with their source record —
+   since item ids are source-derived, re-projection of a changed source record must
+   update the same item in place, and a resolved source must drop/resolve it).
 
 ## Commits this session (newest first)
 - `38c2e27` [verified] feat: transactional auth-scoped coding-run dispatch
@@ -96,15 +97,22 @@ and pushed. M6.7 — Agent evaluation and reliability scorecards is IN PROGRESS
 METRIC_DEFINITIONS with explicit denominator + privacy/retention note per
 metric, plus MetricValue carrying numerator/denominator) and a pure deterministic
 compute_scorecard(runs, tool_calls) over CodingRun + AgentToolCall records.
-Slice 7 (final) added the seeded benchmark POC: application/benchmark_poc.py
-(run_benchmark_poc) materializes two cohort fixtures (baseline + candidate model),
-runs the WHOLE M6.7 stack on them (materialize -> scorecard -> compare_cohorts ->
-rank_cohorts -> evaluate_regression) with no DB or live workspace, and returns a
-frozen PocReport: cohort scores (attributed to agent+version), a ranking by a
-metric, and a fail-closed RegressionVerdict (blocks rollout, never auto-promotes).
-Deterministic + isolated. M6.7 is DONE (7/7). Next milestone: M6.8 — Operational
-inbox (PLANNED, 0/7): human-attention queue across agents, workflows, MCP; first
-slice defines the inbox item shape + ranking (acceptance item 1).
+M6.7 is DONE (7/7): documented metric definitions + deterministic compute_scorecard
+(slice 1); real-repository wiring via compute_team_scorecard + coding_runs.list_for_team
+(slice 2); replayable benchmark fixtures isolated from production (slice 3); version
+comparison without misleading cohort blends — BenchmarkSuite + compare_cohorts/
+rank_cohorts (slice 4); regression thresholds that block rollout without
+auto-promoting — evaluate_regression (slice 5); scorecard UI linking every aggregate
+to inspectable supporting runs — build_scorecard_view + scorecard.html (slice 6);
+seeded benchmark POC demonstrating version comparison + regression alert —
+run_benchmark_poc (slice 7). M6.8 (Operational inbox) started: slice 1 shipped the
+inbox item taxonomy + source-to-item projection rules as executable documentation
+(application/inbox.py: INBOX_RULES + derive_inbox_id + build_inbox_item +
+project_inbox_for_team). The inbox is a PROJECTION over source records/events, not a
+second source of truth: item ids are derived deterministically from the source
+(dedup by construction; items resolve with their source record) and projection is
+team-scoped (cross-tenant records are dropped, no leakage). Next slice 2: items
+dedupe deterministically and update/resolve with their source record.
 
 M6.1 — Agent capability negotiation is DONE (6/6). Verified behaviors: signed
 versioned `hello`, explicit legacy profile, capability gates, additive external/
