@@ -326,6 +326,34 @@ class Card:
 
 
 @dataclass
+class CardRunLink:
+    """Durable card ↔ coding-run link, created only from authenticated state.
+
+    ``linked_by`` is the authenticated member who linked the run to the card;
+    identity and team scope are derived at the call site, never from agent or
+    remote input.
+    """
+
+    card_id: str
+    run_id: str
+    linked_by: str
+    linked_at: datetime
+
+
+@dataclass
+class CardRunStatusView:
+    """Live projection of one linked run over its card (joined read model)."""
+
+    card_id: str
+    run_id: str
+    run_status: str
+    change_set_id: str | None = None
+    change_set_status: str | None = None
+    linked_by: str | None = None
+    linked_at: datetime | None = None
+
+
+@dataclass
 class Comment:
     id: str
     card_id: str

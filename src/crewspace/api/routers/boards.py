@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, Response
 from ...domain.identifiers import DEFAULT_CHANNEL_ID, DEFAULT_BOARD_ID
 from ...domain.ports import UnitOfWork
 from ...dto.markdown import render_message_markdown
-from ...dto.board import BoardDeltaDTO
+from ...dto.board import BoardDeltaDTO, card_run_badges
 from ..board_live import board_room
 from ..connection import manager
 from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
@@ -126,6 +126,13 @@ async def board_page(
     if board is None:
         raise HTTPException(status_code=404, detail="board not found")
     agents = await uow.auth.list_members(kind="agent")
+    # Live linked-run statuses per card (badges + deep links). Empty for a
+    # board the caller cannot access (authorization-scoped).
+    card_run_statuses = await svc.board_run_statuses(board_id, current_user, uow)
+    card_run_badge_links = {
+        card_id: [badge for status in statuses for badge in card_run_badges(status)]
+        for card_id, statuses in card_run_statuses.items()
+    }
     return templates.TemplateResponse(
         request=request,
         name="board.html",
@@ -133,6 +140,8 @@ async def board_page(
             "board": board,
             "current_user": current_user,
             "agents": agents,
+            "card_run_statuses": card_run_statuses,
+            "card_run_badge_links": card_run_badge_links,
             **await navigation_context(uow, current_user),
         },
     )

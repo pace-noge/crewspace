@@ -65,6 +65,58 @@ class CommentDTO(BaseModel):
     created_at: datetime
 
 
+class CardRunStatusDTO(BaseModel):
+    """Live, authorization-scoped projection of one run linked to a card."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    card_id: SafeId
+    run_id: SafeId
+    run_status: Literal[
+        "queued", "running", "succeeded", "failed", "cancelled", "timed_out", "interrupted"
+    ]
+    change_set_id: SafeId | None = None
+    change_set_status: Literal[
+        "captured",
+        "reviewed",
+        "pr_requested",
+        "retain_requested",
+        "retained",
+        "discard_requested",
+        "discarded",
+    ] | None = None
+    linked_by: SafeId
+    linked_at: datetime
+
+
+# Canonical deep-link targets for linked runs / change sets (view model).
+RUN_DETAIL_HREF = "/api/coding/runs/{run_id}"
+CHANGE_SET_HREF = "/management/change-sets/{change_set_id}"
+CHANGE_SET_REVIEW_HREF = "/management/change-sets/{change_set_id}/review"
+
+
+def card_run_badges(status: CardRunStatusDTO) -> list[dict[str, str]]:
+    """Render-ready badges for one linked run (label + deep link href).
+
+    Built here (not in the template) so route targets stay in one canonical
+    place and the template never invents URLs.
+    """
+    badges: list[dict[str, str]] = [
+        {"label": f"run {status.run_status}", "href": RUN_DETAIL_HREF.format(run_id=status.run_id)}
+    ]
+    if status.change_set_id:
+        badges.append({
+            "label": f"change set {status.change_set_status or 'captured'}",
+            "href": CHANGE_SET_HREF.format(change_set_id=status.change_set_id),
+        })
+        if status.change_set_status == "captured":
+            badges.append({
+                "label": "review",
+                "href": CHANGE_SET_REVIEW_HREF.format(change_set_id=status.change_set_id),
+            })
+    return badges
+
+
 class CardDTO(BaseModel):
     id: str
     column_id: str

@@ -112,7 +112,7 @@ Acceptance:
   - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
-M7.4 — Card ↔ coding-run / change-set linkage             [L]  PLANNED
+M7.4 — Card ↔ coding-run / change-set linkage             [L]  VERIFIED
 --------------------------------------------------------------------------------
 Feature:
   A card can be linked to coding runs and resulting change sets. The card shows
@@ -139,11 +139,11 @@ Code (concrete):
   - Unauthorized link reads/reveal nothing.
 
 Acceptance:
-  - [ ] A card can produce a coding run and display its live status badge.
-  - [ ] Completed runs annotate the card with change-set/review/approval state and deep links.
-  - [ ] Link creation and outcome updates are fail-closed and team-authorized.
-  - [ ] Migration-compat guard clean; makemigrations --check passes.
-  - [ ] Feature + code documented in the M7 progress log with tests + commit evidence.
+  - [x] A card can produce a coding run and display its live status badge.
+  - [x] Completed runs annotate the card with change-set/review/approval state and deep links.
+  - [x] Link creation and outcome updates are fail-closed and team-authorized.
+  - [x] Migration-compat guard clean; makemigrations --check passes.
+  - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
 M7.5 — Move-to-column workflow triggers                   [L]  PLANNED
@@ -233,6 +233,48 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
+- M7.4 — Card ↔ coding-run / change-set linkage — verified; BLOCKERS: none.
+
+  Feature: cards can be durably linked to one or more coding runs. The board
+  renders each linked run's live lifecycle state as a badge and, once capture
+  exists, adds change-set and review badges with canonical deep links. The
+  `spawn_coding_run_from_card` board tool derives team/requested-by identity
+  from authenticated state, dispatches the run, and links it to the source
+  card. Run outcomes need no duplicate annotation write: the card projection
+  joins the linked run and its immutable change set live, so retries remain
+  idempotent and terminal status changes appear on the next render.
+
+  Code:
+  - domain/entities.py + infrastructure/models.py: `CardRunLink`,
+    `CardRunStatusView`, and `card_run_link` with composite identity
+    `(card_id, run_id)` and card/run/member foreign keys.
+  - migration `20260830_01_card_run_links.py`: idempotent link-table creation
+    above `20260826_02`, with downgrade support.
+  - domain/ports.py + infrastructure/repositories.py: idempotent
+    `link_card_run` (`ON CONFLICT DO NOTHING`) plus card- and board-scoped live
+    projections joining `coding_run` and `stored_change_set`.
+  - dto/board.py + dto/mappers.py: strict, frozen, SQLAlchemy-free
+    `CardRunStatusDTO`, mapper, and canonical run/change-set/review badge links.
+  - application/services.py: `link_card_to_run`, `card_run_status`, and batch
+    `board_run_statuses`; board access, run-team equality, and team-management
+    authorization are rechecked before linking; unauthorized reads return no
+    link data.
+  - application/tools.py: authenticated `spawn_coding_run_from_card` tool;
+    derives the team from card → board → workspace and rechecks board scope,
+    team management, and repository grant before dispatch/link.
+  - api/routers/boards.py + templates/card.html: per-card live status lookup and
+    compact run/change-set/review deep-link badges.
+  - tests/test_board_run_links.py: 9 focused tests covering the real service,
+    repository, migration, change-set capture, badge, and registry-handler
+    paths; only remote agent transport is stubbed in the spawn-tool test.
+
+  Evidence: focused M7.4 tests green (9 passed); bounded board + live +
+  change-set regression gate green (108 passed); fresh-head migration drift
+  check clean at `20260830_01`; legacy `20260826_02` downgrade/upgrade
+  round-trip green; compileall OK; git diff --check clean; added-line security
+  scan clean. Independent fail-closed review: BLOCKERS: none, NON-BLOCKERS:
+  none. Verified implementation commit: pending.
+
 - M7.3 — Live board updates over WebSocket — verified; BLOCKERS: none.
   Agent-originated mutations broadcast via the registry publisher seam
   (api/board_live.py); standalone MCP is a separate process (no web

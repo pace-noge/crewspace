@@ -7,6 +7,11 @@
     {% if card.priority %}<span class="badge">{{ card.priority }}</span>{% endif %}
     {% if card.due_date %}<span class="badge">Due {{ card.due_date }}</span>{% endif %}
     {% for label in card.labels %}<span class="badge">{{ label }}</span>{% endfor %}
+    {% if card_run_badge_links is defined %}
+      {% for badge in card_run_badge_links.get(card.id, []) %}
+        <a class="badge run-badge" href="{{ badge.href }}" style="color:inherit; text-decoration:none;">{{ badge.label }}</a>
+      {% endfor %}
+    {% endif %}
   </div>
   {% if card.assignee_name %}
     <div class="meta" style="font-size:12px; opacity:.7; margin-top:4px;">{{ card.assignee_avatar }} {{ card.assignee_name }}</div>

@@ -21,10 +21,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..domain.identifiers import DEFAULT_BOARD_ID, PLANNER_AGENT_ID
-from ..domain.entities import AgentToolCall
+from ..domain.entities import AgentToolCall, CardRunLink
 from ..domain.ports import ToolRunner, UnitOfWork
 from ..dto.board import BoardDeltaDTO
-from .access import list_accessible_boards
+from .access import can_manage_team, list_accessible_boards
 
 
 # Optional board_delta publisher injected by the API composition root. The
@@ -393,6 +393,56 @@ def build_registry(publisher: BoardDeltaPublisher | None = None) -> ToolRegistry
         await require_board_scope(uow, principal_id, board_id)
         return await uow.boards.list_columns(board_id)
 
+    async def spawn_coding_run_from_card(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, card_id: str, agent_id: str, repository_id: str, instruction: str) -> dict:
+        """Dispatch a coding run for an existing card and link it to that card.
+
+        Authenticated: the principal must be able to access the card's board and
+        manage the run's team (derived from the card's board → workspace). The
+        team must be granted the repository. The new run is linked to the card
+        in the same unit of work so the card badge reflects it immediately.
+        """
+        from ..application.coding_runs import dispatch_coding_run
+
+        if principal_id is None:
+            raise PermissionError("spawn_coding_run_from_card requires an authenticated principal")
+        principal = await uow.auth.get_member(principal_id)
+        if not principal:
+            raise PermissionError("Principal not found")
+        board_id = await uow.boards.get_board_id_for_card(card_id)
+        if board_id is None:
+            raise KeyError(f"card not found: {card_id}")
+        await require_board_scope(uow, principal_id, board_id)
+        board = await uow.boards.get_board(board_id)
+        assert board is not None
+        workspace = await uow.workspaces.get_workspace(board.workspace_id)
+        if workspace is None:
+            raise PermissionError("Card's board is not in a workspace")
+        team_id = workspace.team_id
+        if not await can_manage_team(principal, team_id, uow):
+            raise PermissionError("Principal cannot manage the run's team")
+        if not await uow.coding_repositories.is_team_granted(team_id, repository_id):
+            raise PermissionError("Team is not granted this repository")
+
+        run_id = uuid.uuid4().hex
+        await dispatch_coding_run(
+            uow,
+            agent_id=agent_id,
+            team_id=team_id,
+            repository_id=repository_id,
+            run_id=run_id,
+            instruction=instruction,
+            requested_by=principal_id,
+        )
+        await uow.boards.link_card_run(
+            CardRunLink(
+                card_id=card_id,
+                run_id=run_id,
+                linked_by=principal_id,
+                linked_at=dt.datetime.now(dt.timezone.utc),
+            )
+        )
+        return {"run_id": run_id, "status": "running", "card_id": card_id}
+
     async def list_boards(uow: UnitOfWork, principal_id: str | None, actor_id: str | None) -> list[dict]:
         """List the boards available to the caller (id + name + team).
 
@@ -529,6 +579,21 @@ def build_registry(publisher: BoardDeltaPublisher | None = None) -> ToolRegistry
         },
         list_columns,
         category="boards", mutability="read", risk="low",
+    ))
+    reg.register(Tool(
+        "spawn_coding_run_from_card", "Dispatch a coding run for an existing card (as a linked run). Requires board + team authorization and an authenticated principal.",
+        {
+            "type": "object",
+            "properties": {
+                "card_id": {"type": "string", "description": "Card id to spawn the run from (linked to it)"},
+                "agent_id": {"type": "string", "description": "Agent id to run the coding task"},
+                "repository_id": {"type": "string", "description": "Repository id the team is granted"},
+                "instruction": {"type": "string", "description": "Instruction for the coding run"},
+            },
+            "required": ["card_id", "agent_id", "repository_id", "instruction"],
+        },
+        spawn_coding_run_from_card,
+        category="boards", mutability="write", risk="medium",
     ))
     reg.register(Tool(
         "list_boards", "List the boards available to you (id, name, and team). Call this when a board task needs a target and you don't know which board to use, or to let a multi-board user pick one.",

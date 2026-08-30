@@ -9,12 +9,20 @@ from __future__ import annotations
 from ..domain.entities import (
     BoardView,
     CardActivityView,
+    CardRunStatusView,
     CardView,
     ColumnView,
     CommentView,
     MessageView,
 )
-from .board import BoardDTO, CardDetailDTO, CardDTO, ColumnDTO, CommentDTO
+from .board import (
+    BoardDTO,
+    CardDetailDTO,
+    CardDTO,
+    CardRunStatusDTO,
+    ColumnDTO,
+    CommentDTO,
+)
 from .messages import MessageDTO
 from .markdown import render_message_markdown
 
@@ -43,6 +51,20 @@ def to_comment(c: CommentView) -> CommentDTO:
         author_kind=c.author_kind.value,
         avatar=c.author_avatar,
         created_at=c.created_at,
+    )
+
+
+def to_card_run_status(status: CardRunStatusView) -> CardRunStatusDTO:
+    assert status.linked_by is not None
+    assert status.linked_at is not None
+    return CardRunStatusDTO(
+        card_id=status.card_id,
+        run_id=status.run_id,
+        run_status=status.run_status,  # type: ignore[arg-type]
+        change_set_id=status.change_set_id,
+        change_set_status=status.change_set_status,  # type: ignore[arg-type]
+        linked_by=status.linked_by,
+        linked_at=status.linked_at,
     )
 
 

@@ -22,6 +22,8 @@ from .entities import (
     BoardView,
     ColumnView,
     CardActivityView,
+    CardRunLink,
+    CardRunStatusView,
     CardView,
     Channel,
     ChannelMembership,
@@ -170,6 +172,23 @@ class BoardRepository(Protocol):
     async def add_comment(
         self, card_id: str, author_id: str, body: str
     ) -> CommentView:
+        ...
+
+
+    async def link_card_run(self, link: "CardRunLink") -> None:
+        """Create a durable card↔run link (idempotent on (card_id, run_id)).
+
+        Callers MUST have already authorized both the card's board and the
+        run's team; this repository operation is not an authorization gate.
+        ...
+        """
+
+    async def list_card_run_statuses(self, card_id: str) -> "list[CardRunStatusView]":
+        """Live projection of every linked run for a card (run + change set)."""
+        ...
+
+    async def list_board_run_statuses(self, board_id: str) -> "list[CardRunStatusView]":
+        """Batch live projection for all linked cards on one board."""
         ...
 
     async def find_card_by_title(self, board_id: str, title: str) -> CardView | None:

@@ -18,16 +18,27 @@ from typing import Any
 from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, PLANNER_AGENT_ID
 from ..domain.entities import Board
 from ..domain.ports import UnitOfWork
+from ..domain.entities import CardRunLink
+from .access import can_access_board, can_manage_team
 from ..dto.board import (
     BoardCommandDTO,
     BoardDTO,
     CardDTO,
+    CardRunStatusDTO,
     CardDetailDTO,
     ColumnCommandDTO,
     ColumnDTO,
     CommentDTO,
 )
-from ..dto.mappers import to_board, to_card, to_card_detail, to_column, to_comment, to_message
+from ..dto.mappers import (
+    to_board,
+    to_card,
+    to_card_detail,
+    to_card_run_status,
+    to_column,
+    to_comment,
+    to_message,
+)
 from ..dto.messages import MessageDTO
 from ..config import Settings
 from ..infrastructure.agents.registry import AgentRegistry
@@ -342,3 +353,73 @@ class BoardService:
         self, card_id: str, author_id: str, body: str, uow: UnitOfWork
     ) -> CommentDTO:
         return to_comment(await uow.boards.add_comment(card_id, author_id, body))
+
+    async def link_card_to_run(
+        self, card_id: str, run_id: str, user: dict, uow: UnitOfWork
+    ) -> CardRunStatusDTO:
+        """Link a run to a card from authenticated state (fail-closed).
+
+        Authorization is enforced here, never delegated to the repository:
+        - the principal must be able to access the card's board;
+        - the principal must be able to manage the run's team;
+        - the run's team must equal the card's board's team (no cross-team
+          linkage).
+        Returns the live status projection of the linked run.
+        """
+        import datetime as _dt
+
+        board_id = await uow.boards.get_board_id_for_card(card_id)
+        if board_id is None or not await can_access_board(user, board_id, uow):
+            raise PermissionError("Not authorized for this card's board")
+        run = await uow.coding_runs.get(run_id)
+        if run is None:
+            raise KeyError("Coding run not found")
+        if not await can_manage_team(user, run.team_id, uow):
+            raise PermissionError("Not authorized for the run's team")
+        board = await uow.boards.get_board(board_id)
+        assert board is not None
+        workspace = await uow.workspaces.get_workspace(board.workspace_id)
+        if workspace is None or workspace.team_id != run.team_id:
+            raise PermissionError("Run team does not match the card's board team")
+        await uow.boards.link_card_run(
+            CardRunLink(
+                card_id=card_id,
+                run_id=run.id,
+                linked_by=user["id"],
+                linked_at=_dt.datetime.now(_dt.timezone.utc),
+            )
+        )
+        statuses = await uow.boards.list_card_run_statuses(card_id)
+        status = next((s for s in statuses if s.run_id == run.id), None)
+        assert status is not None
+        return to_card_run_status(status)
+
+    async def card_run_status(
+        self, card_id: str, user: dict, uow: UnitOfWork
+    ) -> list[CardRunStatusDTO]:
+        """Live status of every run linked to a card (authorization-scoped).
+
+        Reveals nothing when the principal cannot access the card's board —
+        the unauthorized caller gets an empty list, never partial data.
+        """
+        board_id = await uow.boards.get_board_id_for_card(card_id)
+        if board_id is None or not await can_access_board(user, board_id, uow):
+            return []
+        return [
+            to_card_run_status(s)
+            for s in await uow.boards.list_card_run_statuses(card_id)
+        ]
+
+    async def board_run_statuses(
+        self, board_id: str, user: dict, uow: UnitOfWork
+    ) -> dict[str, list[CardRunStatusDTO]]:
+        """Batch live status map {card_id: [CardRunStatusDTO, ...]} for a board.
+
+        Authorization-scoped: an unauthorized principal gets an empty map.
+        """
+        if not await can_access_board(user, board_id, uow):
+            return {}
+        by_card: dict[str, list[CardRunStatusDTO]] = {}
+        for s in await uow.boards.list_board_run_statuses(board_id):
+            by_card.setdefault(s.card_id, []).append(to_card_run_status(s))
+        return by_card

@@ -276,6 +276,25 @@ class CardCommentModel(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class CardRunLinkModel(Base):
+    """Durable card ↔ coding-run linkage, created only from authenticated state.
+
+    Unique (card_id, run_id) so retried/duplicate link requests are idempotent.
+    """
+
+    __tablename__ = "card_run_link"
+    __table_args__ = (UniqueConstraint("card_id", "run_id", name="uq_card_run_link"),)
+
+    card_id: Mapped[str] = mapped_column(
+        ForeignKey("card.id", ondelete="CASCADE"), primary_key=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        ForeignKey("coding_run.id", ondelete="CASCADE"), primary_key=True
+    )
+    linked_by: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+    linked_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class SessionModel(Base):
     __tablename__ = "session"
     id: Mapped[str] = mapped_column(String, primary_key=True)

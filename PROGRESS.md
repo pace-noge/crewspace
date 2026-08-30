@@ -115,8 +115,27 @@ Committed and pushed as f0a81b7.
    `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
-6. Next implementation: M7.4 — Card ↔ coding-run / change-set linkage. Follow
-   `PLAN_M7_BOARD.md`; M7.3 is verified and committed at f0a81b7; M7.4 is PLANNED.
+6. Next implementation: M7.5 — move-to-column workflow triggers. Follow
+   `PLAN_M7_BOARD.md`; M7.4 is verified and awaiting its recorded commit hash.
+
+## M7.4 — Card ↔ coding-run / change-set linkage — verified
+
+Feature: cards durably link to coding runs and show live run/change-set/review
+badges with canonical deep links. `spawn_coding_run_from_card` derives team and
+requester from authenticated card context, rechecks board/team/repository
+authorization, dispatches the run, and links it to the card. Terminal outcomes
+annotate through a live run/change-set projection, avoiding duplicate status
+writes and making retries idempotent.
+
+Code: `CardRunLink`/`CardRunStatusView`, `card_run_link` model + migration
+`20260830_01`, BoardRepository link/status projections, strict pure
+`CardRunStatusDTO`, BoardService authorization-scoped link/status methods,
+authenticated board tool, board-page status lookup, and compact card badges.
+
+Evidence: `tests/test_board_run_links.py` 9 passed; bounded board/live/change-set
+gate 108 passed; fresh-head migration drift clean at `20260830_01`; legacy
+upgrade/downgrade round-trip green; compileall/diff/security gates clean;
+independent review BLOCKERS: none, NON-BLOCKERS: none. Commit: pending.
 
 ## M6.8 — What shipped
 

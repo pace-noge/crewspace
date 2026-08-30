@@ -23,6 +23,8 @@ from ..domain.entities import (
     Board,
     BoardView,
     CardActivityView,
+    CardRunLink,
+    CardRunStatusView,
     CardView,
     Channel,
     ChannelMembership,
@@ -2176,6 +2178,78 @@ class SqlAlchemyBoardRepository:
             author_kind=MemberKind(r["author_kind"]),
             author_avatar=r["avatar"],
         )
+
+    async def link_card_run(self, link: CardRunLink) -> None:
+        """Create a durable card↔run link (insert-or-ignore on the PK so
+        retried/duplicate link requests are idempotent). Authorization is the
+        caller's responsibility."""
+        await self._conn.execute(
+            "INSERT INTO card_run_link (card_id, run_id, linked_by, linked_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(card_id, run_id) DO NOTHING",
+            (link.card_id, link.run_id, link.linked_by, _iso(link.linked_at)),
+        )
+
+    async def list_card_run_statuses(self, card_id: str) -> list[CardRunStatusView]:
+        """Live projection of every linked run for a card, joined with its change
+        set (if any). The change set is derived from the run's own identity, so a
+        linked run's status always reflects the run, not cross-team data."""
+        cur = await self._conn.execute(
+            """
+            SELECT crl.card_id, crl.run_id, crl.linked_by, crl.linked_at,
+                   run.status AS run_status,
+                   cs.id AS change_set_id, cs.status AS change_set_status
+            FROM card_run_link crl
+            JOIN coding_run run ON run.id = crl.run_id
+            LEFT JOIN stored_change_set cs ON cs.run_id = run.id
+            WHERE crl.card_id = ?
+            ORDER BY crl.linked_at ASC
+            """,
+            (card_id,),
+        )
+        rows = await cur.fetchall()
+        return [
+            CardRunStatusView(
+                card_id=r["card_id"],
+                run_id=r["run_id"],
+                run_status=r["run_status"],
+                change_set_id=r["change_set_id"],
+                change_set_status=r["change_set_status"],
+                linked_by=r["linked_by"],
+                linked_at=_parse(r["linked_at"]) if r["linked_at"] else None,
+            )
+            for r in rows
+        ]
+
+    async def list_board_run_statuses(self, board_id: str) -> list[CardRunStatusView]:
+        """Batch live projection for every linked card on one board."""
+        cur = await self._conn.execute(
+            """
+            SELECT crl.card_id, crl.run_id, crl.linked_by, crl.linked_at,
+                   run.status AS run_status,
+                   cs.id AS change_set_id, cs.status AS change_set_status
+            FROM card_run_link crl
+            JOIN card c ON c.id = crl.card_id
+            JOIN board_column bc ON bc.id = c.column_id
+            JOIN coding_run run ON run.id = crl.run_id
+            LEFT JOIN stored_change_set cs ON cs.run_id = run.id
+            WHERE bc.board_id = ?
+            ORDER BY crl.card_id, crl.linked_at ASC
+            """,
+            (board_id,),
+        )
+        rows = await cur.fetchall()
+        return [
+            CardRunStatusView(
+                card_id=r["card_id"],
+                run_id=r["run_id"],
+                run_status=r["run_status"],
+                change_set_id=r["change_set_id"],
+                change_set_status=r["change_set_status"],
+                linked_by=r["linked_by"],
+                linked_at=_parse(r["linked_at"]) if r["linked_at"] else None,
+            )
+            for r in rows
+        ]
 
     async def find_card_by_title(self, board_id: str, title: str) -> CardView | None:
         board = await self.get_board(board_id)
