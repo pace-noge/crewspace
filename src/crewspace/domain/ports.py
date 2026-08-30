@@ -18,7 +18,9 @@ from .entities import (
     AgentToolCall,
     McpConnection,
     McpDiscoveredTool,
+    Board,
     BoardView,
+    ColumnView,
     CardActivityView,
     CardView,
     Channel,
@@ -97,6 +99,18 @@ class BoardRepository(Protocol):
     async def get_board(self, board_id: str) -> BoardView | None:
         ...
 
+    async def create(self, board: Board) -> BoardView:
+        """Create a board (columns may be added separately)."""
+
+    async def rename(self, board_id: str, name: str) -> None:
+        ...
+
+    async def archive(self, board_id: str) -> None:
+        """Soft-delete a board; hidden from default views, recoverable."""
+
+    async def restore(self, board_id: str) -> None:
+        ...
+
     async def get_board_id_for_column(self, column_id: str) -> str | None:
         ...
 
@@ -108,6 +122,18 @@ class BoardRepository(Protocol):
 
     async def list_for_member(self, member_id: str) -> "list[BoardView]":
         """Boards whose workspace the member belongs to (joined with team name)."""
+
+    async def list_columns_active(self, board_id: str) -> "list[ColumnView]":
+        """Live (non-archived) columns of a board, in position order."""
+        ...
+
+    async def list_columns_archived(self, board_id: str) -> "list[ColumnView]":
+        """Archived (hidden, recoverable) columns of a board, in position order."""
+        ...
+
+    async def is_column_archived(self, column_id: str) -> bool:
+        """True when the column exists and is archived (fail-closed guards)."""
+        ...
 
     async def add_card(
         self, column_id: str, title: str, description: str | None = None, actor_id: str | None = None
@@ -151,6 +177,21 @@ class BoardRepository(Protocol):
 
     async def list_columns(self, board_id: str) -> dict[str, str]:
         """Map of lowercased column name -> column id (for agent commands)."""
+        ...
+
+    async def create_column(self, board_id: str, name: str) -> ColumnView:
+        """Append a column at the end of the column order."""
+
+    async def rename_column(self, column_id: str, name: str) -> None:
+        ...
+
+    async def reorder_column(self, column_id: str, before_column_id: str | None = None) -> None:
+        """Move a column before a sibling (or to the end when omitted)."""
+
+    async def archive_column(self, column_id: str) -> None:
+        """Soft-delete a column; hidden from the default board view, recoverable."""
+
+    async def restore_column(self, column_id: str) -> None:
         ...
 
 

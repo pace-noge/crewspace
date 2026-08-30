@@ -103,7 +103,18 @@
 
     <div class="nav-group">Tools</div>
     <a class="nav-link {% block nav_inbox %}{% endblock %}" href="/inbox"><span class="ico">📥</span> Inbox</a>
-    <a class="nav-link {% block nav_board %}{% endblock %}" href="/board/board_main"><span class="ico">📋</span> Board</a>
+    <div class="workspace-row">
+      <div class="nav-group" style="flex:1">Boards</div>
+      <a class="sidebar-action quick-action" href="/boards/new" aria-label="New board" title="New board">+</a>
+    </div>
+    {% for nav_board in boards_menu or [] %}
+      <div class="channel-row">
+        <a class="nav-link {% if board is defined and board.id == nav_board.id %}active{% endif %}" href="/board/{{ nav_board.id }}">
+          <span class="ico">📋</span> {{ nav_board.name }}{% if nav_board.archived %} <span class="badge">archived</span>{% endif %}
+        </a>
+        {% if current_user %}<details class="action-menu sidebar-action"><summary aria-label="Board actions">•••</summary><div class="menu-popover"><a href="/board/{{ nav_board.id }}">Open board</a>{% if nav_board.archived %}<form method="post" action="/boards/{{ nav_board.id }}/restore"><button type="submit">Restore board</button></form>{% else %}<form method="post" action="/boards/{{ nav_board.id }}/archive"><button type="submit">Archive board</button></form>{% endif %}</div></details>{% endif %}
+      </div>
+    {% endfor %}
     <a class="nav-link" href="/cronjobs"><span class="ico">⏱</span> Scheduled instructions</a>
     <a class="nav-link" href="/workflows"><span class="ico">⚡</span> Workflows</a>
 

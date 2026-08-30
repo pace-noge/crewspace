@@ -28,6 +28,8 @@ async def move_card(
     if board_id is None or target_board_id != board_id:
         raise HTTPException(status_code=404, detail="card not found")
     await require_board_access(current_user, board_id, uow)
+    if await uow.boards.is_column_archived(column_id):
+        raise HTTPException(status_code=404, detail="column not found")
     old_column_id, card = await svc.move_card(card_id, column_id, uow, actor_id=current_user["id"])
     if card is None:
         raise HTTPException(status_code=404, detail="card not found")

@@ -10,8 +10,30 @@ are also attribute-accessible from Jinja templates (for HTMX fragments).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, StringConstraints
+
+SafeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
+BoardName = Annotated[str, StringConstraints(min_length=1, max_length=120)]
+
+
+class BoardCommandDTO(BaseModel):
+    """Pure, validated command boundary for board create/rename actions."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    workspace_id: SafeId | None = None
+    board_id: SafeId | None = None
+    name: BoardName
+
+
+class ColumnCommandDTO(BaseModel):
+    """Pure, validated command boundary for column create/rename actions."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    board_id: SafeId
+    column_id: SafeId | None = None
+    name: BoardName
 
 
 class CommentDTO(BaseModel):
@@ -54,10 +76,13 @@ class ColumnDTO(BaseModel):
     id: str
     name: str
     position: int
+    archived_at: str | None = None
     cards: list[CardDTO] = []
 
 
 class BoardDTO(BaseModel):
     id: str
+    workspace_id: str
     name: str
+    archived_at: str | None = None
     columns: list[ColumnDTO] = []

@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% block title %}Board settings — {{ board.name }} — Crewspace{% endblock %}
+{% block nav_board %}active{% endblock %}
+{% block topbar %}Board settings{% endblock %}
+
+{% block content %}
+<main style="padding:24px; max-width:760px;">
+  <h1 style="margin:0 0 4px;">{{ board.name }}</h1>
+  <p style="color:var(--muted); margin:0 0 20px;">Manage the board and its columns. Archived items are recoverable from the switcher.</p>
+
+  <section style="border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:18px; background:var(--bg-elev);">
+    <h2 style="font-size:15px; margin:0 0 12px;">Board</h2>
+    <form method="post" action="/boards/{{ board.id }}/rename" style="display:flex; gap:8px; margin-bottom:12px;">
+      <input name="name" type="text" value="{{ board.name }}" maxlength="80" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--bg);" />
+      <button class="primary" type="submit">Rename</button>
+    </form>
+    <form method="post" action="/boards/{{ board.id }}/archive">
+      <button type="submit" style="color:var(--danger, #c0392b); border:1px solid var(--danger, #c0392b); border-radius:6px; padding:8px 12px; background:transparent;">Archive board…</button>
+    </form>
+  </section>
+
+  <section style="border:1px solid var(--border); border-radius:8px; padding:16px; background:var(--bg-elev);">
+    <h2 style="font-size:15px; margin:0 0 12px;">Columns</h2>
+    <form method="post" action="/boards/{{ board.id }}/columns" style="display:flex; gap:8px; margin-bottom:14px;">
+      <input name="name" type="text" required maxlength="60" placeholder="New column name" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--bg);" />
+      <button class="primary" type="submit">Add column</button>
+    </form>
+    <ul style="list-style:none; margin:0; padding:0; display:grid; gap:10px;">
+      {% for col in columns %}
+      <li style="display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:6px; padding:8px 10px;">
+        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/rename" style="display:flex; gap:6px; flex:1;">
+          <input name="name" type="text" value="{{ col.name }}" maxlength="60" style="flex:1; padding:6px; border:1px solid var(--border); border-radius:5px; background:var(--bg);" />
+          <button type="submit">Rename</button>
+        </form>
+        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/reorder">
+          <input type="hidden" name="before_column_id" value="" />
+          <button type="submit" title="Move to end">↓</button>
+        </form>
+        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/archive">
+          <button type="submit" title="Archive column">🗑</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if archived_columns %}
+    <h3 style="font-size:13px; margin:18px 0 8px;">Archived columns</h3>
+    <ul style="list-style:none; margin:0; padding:0; display:grid; gap:10px;">
+      {% for col in archived_columns %}
+      <li style="display:flex; align-items:center; gap:8px; border:1px dashed var(--border); border-radius:6px; padding:8px 10px; opacity:.85;">
+        <div style="flex:1; color:var(--muted);">{{ col.name }} <span class="badge">archived</span></div>
+        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/restore">
+          <button type="submit" title="Restore column">Restore</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}

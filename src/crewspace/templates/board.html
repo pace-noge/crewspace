@@ -4,6 +4,9 @@
 {% block topbar %}{{ board.name }}{% endblock %}
 
 {% block content %}
+  <div style="display:flex; justify-content:flex-end; padding:10px 16px 0;">
+    <a href="/boards/{{ board.id }}/settings" aria-label="Board settings">Board settings</a>
+  </div>
   <div id="board-wrap">
     <div class="board" style="display:flex; gap:12px; padding:16px; align-items:flex-start; overflow-x:auto;">
       {% set board_id = board.id %}

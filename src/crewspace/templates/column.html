@@ -1,6 +1,17 @@
 {# Column fragment — rendered inside board.html and board_fragment.html #}
 <div class="column" id="col-{{ column.id }}" style="background:var(--bg-elev); border:1px solid var(--border); border-radius:8px; width:280px; padding:10px; min-height:120px;">
-  <h3 style="margin:4px 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; opacity:.8;">{{ column.name }}</h3>
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:6px; margin:4px 0 10px;">
+    <h3 style="margin:0; font-size:13px; text-transform:uppercase; letter-spacing:.05em; opacity:.8;">{{ column.name }}</h3>
+    <details class="action-menu">
+      <summary aria-label="Column actions" title="Column actions">•••</summary>
+      <div class="menu-popover">
+        <a href="/boards/{{ board_id }}/settings">Manage column</a>
+        <form method="post" action="/boards/{{ board_id }}/columns/{{ column.id }}/archive">
+          <button type="submit">Archive column</button>
+        </form>
+      </div>
+    </details>
+  </div>
 
   {% for card in column.cards %}
     {% include "card.html" %}

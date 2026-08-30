@@ -303,6 +303,7 @@ class Board:
     id: str
     workspace_id: str
     name: str
+    archived_at: str | None = None
 
 
 @dataclass
@@ -311,6 +312,7 @@ class Column:
     board_id: str
     name: str
     position: int
+    archived_at: str | None = None
 
 
 @dataclass
@@ -391,6 +393,7 @@ class ColumnView:
     board_id: str
     name: str
     position: int
+    archived_at: str | None = None
     cards: list[CardView] = field(default_factory=list)
 
 
@@ -400,6 +403,7 @@ class BoardView:
     workspace_id: str
     name: str
     team_name: str | None = None
+    archived_at: str | None = None
     columns: list[ColumnView] = field(default_factory=list)
 
 

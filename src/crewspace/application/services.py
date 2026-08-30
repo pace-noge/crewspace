@@ -12,12 +12,22 @@ depend only on the domain ports + DTO boundary — no agent class is imported he
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+import uuid
 from typing import Any
 
 from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, PLANNER_AGENT_ID
+from ..domain.entities import Board
 from ..domain.ports import UnitOfWork
-from ..dto.board import BoardDTO, CardDTO, CardDetailDTO, ColumnDTO, CommentDTO
-from ..dto.mappers import to_board, to_card, to_card_detail, to_comment, to_message
+from ..dto.board import (
+    BoardCommandDTO,
+    BoardDTO,
+    CardDTO,
+    CardDetailDTO,
+    ColumnCommandDTO,
+    ColumnDTO,
+    CommentDTO,
+)
+from ..dto.mappers import to_board, to_card, to_card_detail, to_column, to_comment, to_message
 from ..dto.messages import MessageDTO
 from ..config import Settings
 from ..infrastructure.agents.registry import AgentRegistry
@@ -178,6 +188,69 @@ class BoardService:
     async def get_board(self, board_id: str, uow: UnitOfWork) -> BoardDTO | None:
         view = await uow.boards.get_board(board_id)
         return to_board(view) if view else None
+
+    async def create_board(self, workspace_id: str, name: str, uow: UnitOfWork) -> BoardDTO:
+        """Create a board in a workspace. The caller must have already
+        authorized the workspace (see ``can_access_workspace``)."""
+        name = BoardCommandDTO(name=name).name
+        if not name.strip():
+            raise ValueError("board name cannot be empty")
+        board_id = f"board_{uuid.uuid4().hex[:8]}"
+        await uow.boards.create(Board(id=board_id, workspace_id=workspace_id, name=name.strip()))
+        # A brand-new board ships with a sane default column set so cards have
+        # somewhere to go (mirrors the seeded board).
+        _DEFAULT_NEW_BOARD_COLUMNS = ("To Do", "In Progress", "Done")
+        for col_name in _DEFAULT_NEW_BOARD_COLUMNS:
+            await uow.boards.create_column(board_id, col_name)
+        return to_board(await uow.boards.get_board(board_id))  # type: ignore[return-value]
+
+    async def rename_board(self, board_id: str, name: str, uow: UnitOfWork) -> None:
+        name = BoardCommandDTO(name=name).name
+        if not name.strip():
+            raise ValueError("board name cannot be empty")
+        await uow.boards.rename(board_id, name.strip())
+
+    async def archive_board(self, board_id: str, uow: UnitOfWork) -> None:
+        await uow.boards.archive(board_id)
+
+    async def restore_board(self, board_id: str, uow: UnitOfWork) -> None:
+        await uow.boards.restore(board_id)
+
+    async def list_accessible_boards(self, member_id: str, uow: UnitOfWork) -> list[dict[str, str]]:
+        """Boards this member can act on, as {id, name, team} (used by the UI
+        switcher and the agent's board resolution). Non-archived only."""
+        member = await uow.auth.get_member(member_id)
+        if member is not None and member["role"] == "superadmin":
+            views = await uow.boards.list_all()
+        else:
+            views = await uow.boards.list_for_member(member_id)
+        return [
+            {"id": b.id, "name": b.name, "team": b.team_name or ""}
+            for b in views
+            if b.archived_at is None
+        ]
+
+    async def create_column(self, board_id: str, name: str, uow: UnitOfWork) -> ColumnDTO:
+        """Append a column to a board. Caller must have authorized the board."""
+        name = ColumnCommandDTO(board_id=board_id, name=name).name
+        if not name.strip():
+            raise ValueError("column name cannot be empty")
+        return to_column(await uow.boards.create_column(board_id, name.strip()))
+
+    async def rename_column(self, column_id: str, name: str, uow: UnitOfWork) -> None:
+        name = ColumnCommandDTO(board_id="x", name=name).name
+        if not name.strip():
+            raise ValueError("column name cannot be empty")
+        await uow.boards.rename_column(column_id, name.strip())
+
+    async def reorder_column(self, column_id: str, uow: UnitOfWork, before_column_id: str | None = None) -> None:
+        await uow.boards.reorder_column(column_id, before_column_id)
+
+    async def archive_column(self, column_id: str, uow: UnitOfWork) -> None:
+        await uow.boards.archive_column(column_id)
+
+    async def restore_column(self, column_id: str, uow: UnitOfWork) -> None:
+        await uow.boards.restore_column(column_id)
 
     async def get_card_detail(self, card_id: str, uow: UnitOfWork) -> CardDetailDTO | None:
         """The full card detail surface (card + edit history)."""

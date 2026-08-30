@@ -230,6 +230,61 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
+- M7.2 — Board & column management + board switcher — verification in progress.
+
+  Feature: create/rename/archive/restore boards from the UI (dedicated
+  app-shell forms), a board switcher in the sidebar listing only boards the
+  user can access (no cross-workspace leakage), board settings surface that
+  adds/renames/reorders/archives/restores columns (archived columns listed with
+  RESTORE actions), column-header management
+  menus, and archived board/columns hidden from the default view but fully
+  recoverable via the recovery index and switcher. Reorder targets must be
+  active siblings of the same board (missing/archived/foreign rejected);
+  archived columns reject card creation and moves (HTTP + agent tools).
+
+  Code:
+  - domain/entities.py: Board/Column gained `archived_at`; BoardView/ColumnView
+    carry it.
+  - dto/board.py: BoardDTO += workspace_id; ColumnDTO/BoardDTO carry
+    archived_at; BoardCommandDTO (pure create/rename DTO).
+  - domain/ports.py BoardRepository: create/rename/archive/restore,
+    list_columns_active, plus column CRUD (rename/reorder/archive/restore) and
+    list_columns.
+  - infrastructure/models.py: BoardModel/BoardColumnModel += archived_at.
+    repositories.py: get_board/list_all/list_for_member hydrate archived_at;
+    board + column CRUD; active/archived column queries; fail-closed archived
+    target guards.
+  - migration 20260826_02_board_column_archiving.py: idempotent ADD COLUMN
+    archived_at (board, board_column).
+  - application/services.py BoardService: create_board/rename_board/
+    archive_board/restore_board/create_column/rename_column/reorder_column/
+    archive_column/restore_column/list_columns_active; empty-name guards.
+    application/access.py: can_access_workspace, can_manage_archived_board
+    (recovery gate), list_accessible_boards.
+  - api/routers/boards.py: POST /boards, POST .../rename|archive|restore,
+    columns CRUD; GET /boards/new + GET /boards/{id}/settings (static routes
+    registered BEFORE dynamic GET /{board_id} so "new"/"settings" aren't eaten
+    as board ids); GET /board recovery index.
+  - api/routers/pages.py + rendering.py: board page redirect-to-index for
+    archived; sidebar `boards_menu` switcher (live + archived + team name).
+  - templates/: board_index.html, board_new.html, board_settings.html,
+    layout.html sidebar switcher, column.html header actions menu + card.html
+    dynamic move dropdown (no more hardcoded col_todo/col_doing/col_done).
+
+  Evidence: tests/test_board_management.py (19 tests) — red first for missing
+  board/column management, then green; reviewer-driven RED tests additionally
+  covered archived-column recovery UI, invalid/archived/foreign reorder targets,
+  and rejecting card creation/moves into archived columns before returning green;
+  bounded gate (test_board_card_detail, test_board_management, test_management,
+  test_security, test_app, test_agent_tool_policy, test_mcp_server) green
+  (excluding pre-existing test_lifespan_closes_an_injected_database_once, which
+  fails on master too). Migration drift clean (head 20260826_02) incl. legacy
+  upgrade + downgrade round-trip; compileall OK; git diff --check clean;
+  added-line security scan clean; independent fail-closed reviews: initial
+  findings (archived-column recovery UI + fail-closed reorder target) were
+  remediated with RED regression tests; final independent re-review:
+  BLOCKERS: none, NON-BLOCKERS: none.
+  Commit: pending (record the real verified commit hash after Git creates it).
 - M7.1 — Card detail view and edit — [verified] committed + pushed.
 
   Feature: clicking a card opens a detail view editing title, Markdown

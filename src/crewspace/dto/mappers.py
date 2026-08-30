@@ -90,6 +90,7 @@ def to_column(col: ColumnView) -> ColumnDTO:
         id=col.id,
         name=col.name,
         position=col.position,
+        archived_at=col.archived_at,
         cards=[to_card(c) for c in col.cards],
     )
 
@@ -97,6 +98,8 @@ def to_column(col: ColumnView) -> ColumnDTO:
 def to_board(b: BoardView) -> BoardDTO:
     return BoardDTO(
         id=b.id,
+        workspace_id=b.workspace_id,
         name=b.name,
+        archived_at=b.archived_at,
         columns=[to_column(c) for c in b.columns],
     )

@@ -16,7 +16,7 @@ Worktree at handoff: clean
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
 - Follow-up documentation and UI-discoverability fixes are on `master` after the
   milestone tag (latest pushed HEAD `9418e3a`).
-- M7 — Board as the Agent Operating Surface — is PLANNED (1/7 slices).
+- M7 — Board as the Agent Operating Surface — is active (2/7 slices).
   `PLAN.md` has the tracker; `PLAN_M7_BOARD.md` is the canonical detailed plan
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
@@ -55,7 +55,26 @@ test_management_cli.py makemigrations --check test stays green; compileall OK;
 git diff --check clean; added-line security scan clean. Independent fail-closed
 review: BLOCKERS: none. Commit: 33f9874 (pushed).
 
-Next slice: M7.2 — board/column management + board switcher.
+## M7.2 — Board/column management + board switcher — verification in progress
+
+Feature: dedicated app-shell forms create/rename/archive/restore boards;
+workspace-authorized sidebar switcher; board settings add/rename/reorder/archive/
+restore columns; archived boards/columns stay hidden from active views while
+remaining recoverable; card move dropdown derives from live columns instead of
+hardcoded seeded IDs.
+
+Code touches: Board/Column archive state across entities/DTOs/ports/models/repos;
+BoardService management operations; workspace/archive access gates; idempotent
+migration `20260826_02`; board management routes; navigation board menu; board
+index/new/settings templates; column actions menu; 19 focused tests.
+
+Verification: focused + regression board/security/tool gate green;
+`makemigrations --check` clean at head `20260826_02`; compileall/diff/security
+checks clean; migration legacy upgrade+downgrade round-trip preserves data.
+Initial independent review blockers remediated; final fail-closed re-review
+BLOCKERS: none, NON-BLOCKERS: none.
+
+Next slice: M7.3 — live board updates over WebSocket.
 
 ## How to resume
 
@@ -67,8 +86,8 @@ Next slice: M7.2 — board/column management + board switcher.
    `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
-6. Next implementation: M7.2 — board/column management + board switcher. Follow
-   `PLAN_M7_BOARD.md`; M7.1 is verified/committed/pushed.
+6. Next implementation: M7.3 — live board updates over WebSocket. Follow
+   `PLAN_M7_BOARD.md`; M7.2 is verified and awaiting its real commit hash.
 
 ## M6.8 — What shipped
 

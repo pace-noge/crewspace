@@ -23,9 +23,9 @@
           hx-swap="innerHTML"
           hx-trigger="change"
           style="margin-top:6px;">
-    <option value="col_todo" {% if card.column_id == "col_todo" %}selected{% endif %}>To Do</option>
-    <option value="col_doing" {% if card.column_id == "col_doing" %}selected{% endif %}>In Progress</option>
-    <option value="col_done" {% if card.column_id == "col_done" %}selected{% endif %}>Done</option>
+    {% for nav_col in board.columns %}
+      <option value="{{ nav_col.id }}" {% if card.column_id == nav_col.id %}selected{% endif %}>{{ nav_col.name }}</option>
+    {% endfor %}
   </select>
 
   <form hx-post="/cards/{{ card.id }}/comments"

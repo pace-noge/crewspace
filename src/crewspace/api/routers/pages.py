@@ -1,13 +1,13 @@
 """API: page router — top-level HTML pages + health."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from ..deps import BoardServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ...domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID
 from ..rendering import navigation_context, templates
-from ...application.access import require_board_access
+from ...application.access import can_access_board, can_manage_archived_board
 
 router = APIRouter(tags=["pages"])
 
@@ -93,13 +93,45 @@ async def channel_page(
     )
 
 
+@router.get("/board", response_class=HTMLResponse)
+async def board_list(request: Request, uow: UowDep, current_user: CurrentUserOptionalDep) -> Response:
+    """Board index: lists the user's live boards and lets them restore
+    archived ones. Also the redirect target after archiving a board."""
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
+    from ..rendering import _boards_menu
+
+    boards = await _boards_menu(uow, current_user)
+    return templates.TemplateResponse(
+        request=request,
+        name="board_index.html",
+        context={
+            "boards": boards,
+            "current_user": current_user,
+            "agents": await uow.auth.list_members(kind="agent"),
+            **await navigation_context(uow, current_user),
+        },
+    )
+
+
 @router.get("/board/{board_id}", response_class=HTMLResponse)
 async def board_page(request: Request, board_id: str, svc: BoardServiceDep, uow: UowDep, current_user: CurrentUserOptionalDep) -> Response:
     redirect = require_member_redirect(current_user)
     if redirect is not None:
         return redirect
     assert current_user is not None
-    await require_board_access(current_user, board_id, uow)
+    # Authorized workspace member viewing an archived board: recoverable but
+    # hidden from the default view — send them to the board index.
+    if await can_manage_archived_board(current_user, board_id, uow):
+        board = await svc.get_board(board_id, uow)
+        if board is not None and board.archived_at is not None:
+            return RedirectResponse("/board", status_code=303)
+    if not await can_access_board(current_user, board_id, uow):
+        # A board the user cannot access (unknown, foreign, or archived-and-
+        # outside-their-workspace) is indistinguishable from a 404.
+        raise HTTPException(status_code=404, detail="board not found")
     board = await svc.get_board(board_id, uow)
     if board is None:
         return HTMLResponse("<h1>Board not found</h1>", status_code=404)

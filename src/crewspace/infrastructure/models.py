@@ -228,6 +228,7 @@ class BoardModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(ForeignKey("workspace.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
+    archived_at: Mapped[str | None] = mapped_column(String)
 
 
 class BoardColumnModel(Base):
@@ -236,6 +237,7 @@ class BoardColumnModel(Base):
     board_id: Mapped[str] = mapped_column(ForeignKey("board.id"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    archived_at: Mapped[str | None] = mapped_column(String)
 
 
 class CardModel(Base):

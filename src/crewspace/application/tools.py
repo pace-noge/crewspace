@@ -251,6 +251,8 @@ def build_registry() -> ToolRegistry:
         board_id = await uow.boards.get_board_id_for_column(column_id)
         if board_id is None:
             raise KeyError(f"column not found: {column_id}")
+        if await uow.boards.is_column_archived(column_id):
+            raise KeyError(f"column is archived: {column_id}")
         await require_board_scope(uow, principal_id, board_id)
         card = await uow.boards.add_card(
             column_id, title, description, actor_id=actor_id or PLANNER_AGENT_ID
@@ -262,6 +264,8 @@ def build_registry() -> ToolRegistry:
         target_board_id = await uow.boards.get_board_id_for_column(column_id)
         if board_id is None or target_board_id != board_id:
             raise KeyError(f"card or target column not found: {card_id}")
+        if await uow.boards.is_column_archived(column_id):
+            raise KeyError(f"target column is archived: {column_id}")
         await require_board_scope(uow, principal_id, board_id)
         card = await uow.boards.move_card(card_id, column_id, actor_id or PLANNER_AGENT_ID)
         if card is None:

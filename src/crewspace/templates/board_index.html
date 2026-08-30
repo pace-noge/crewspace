@@ -1,0 +1,27 @@
+{% extends "layout.html" %}
+{% block title %}Boards — Crewspace{% endblock %}
+{% block topbar %}Boards{% endblock %}
+
+{% block content %}
+<main style="padding:24px; max-width:960px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:16px;">
+    <div><h1 style="margin:0;">Boards</h1><p style="color:var(--muted);">Open active boards or restore archived work.</p></div>
+  </div>
+  <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; margin-top:18px;">
+    {% for item in boards %}
+    <section style="border:1px solid var(--border); border-radius:8px; padding:14px; background:var(--bg-elev);">
+      <h2 style="font-size:16px; margin:0 0 4px;">{{ item.name }}</h2>
+      {% if item.team %}<div style="color:var(--muted); font-size:12px;">{{ item.team }}</div>{% endif %}
+      <div style="margin-top:12px;">
+        {% if item.archived %}
+          <span class="badge">archived</span>
+          <form method="post" action="/boards/{{ item.id }}/restore" style="display:inline;"><button type="submit">Restore</button></form>
+        {% else %}
+          <a class="button primary" href="/board/{{ item.id }}">Open</a>
+        {% endif %}
+      </div>
+    </section>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

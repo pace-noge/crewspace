@@ -20,6 +20,7 @@ from ..domain.entities import (
     AgentToolCall,
     McpConnection,
     McpDiscoveredTool,
+    Board,
     BoardView,
     CardActivityView,
     CardView,
@@ -1810,22 +1811,51 @@ class SqlAlchemyBoardRepository:
         self._conn = conn
 
     async def get_board(self, board_id: str) -> BoardView | None:
-        cur = await self._conn.execute("SELECT id, workspace_id, name FROM board WHERE id = ?", (board_id,))
+        cur = await self._conn.execute("SELECT id, workspace_id, name, archived_at FROM board WHERE id = ?", (board_id,))
         row = await cur.fetchone()
         if not row:
             return None
-        board = BoardView(id=row["id"], workspace_id=row["workspace_id"], name=row["name"])
+        board = BoardView(
+            id=row["id"], workspace_id=row["workspace_id"], name=row["name"],
+            archived_at=row["archived_at"],
+        )
         ccur = await self._conn.execute(
-            "SELECT id, board_id, name, position FROM board_column WHERE board_id = ? ORDER BY position ASC", (board_id,)
+            "SELECT id, board_id, name, position, archived_at FROM board_column WHERE board_id = ? AND archived_at IS NULL ORDER BY position ASC",
+            (board_id,),
         )
         for col in await ccur.fetchall():
             board.columns.append(await self._column_with_cards(col))
         return board
 
+    async def create(self, board: Board) -> BoardView:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        await self._conn.execute(
+            "INSERT INTO board (id, workspace_id, name, archived_at) VALUES (?, ?, ?, NULL)",
+            (board.id, board.workspace_id, board.name),
+        )
+        return BoardView(
+            id=board.id, workspace_id=board.workspace_id, name=board.name,
+            archived_at=None,
+        )
+
+    async def rename(self, board_id: str, name: str) -> None:
+        await self._conn.execute("UPDATE board SET name = ? WHERE id = ?", (name, board_id))
+
+    async def archive(self, board_id: str) -> None:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        await self._conn.execute(
+            "UPDATE board SET archived_at = ? WHERE id = ? AND archived_at IS NULL", (now, board_id),
+        )
+
+    async def restore(self, board_id: str) -> None:
+        await self._conn.execute(
+            "UPDATE board SET archived_at = NULL WHERE id = ?", (board_id,),
+        )
+
     async def list_all(self) -> list[BoardView]:
         cur = await self._conn.execute(
             """
-            SELECT b.id, b.workspace_id, b.name, t.name AS team_name
+            SELECT b.id, b.workspace_id, b.name, b.archived_at, t.name AS team_name
             FROM board b
             JOIN workspace w ON w.id = b.workspace_id
             LEFT JOIN team t ON t.id = w.team_id
@@ -1835,7 +1865,7 @@ class SqlAlchemyBoardRepository:
         return [
             BoardView(
                 id=r["id"], workspace_id=r["workspace_id"], name=r["name"],
-                team_name=r["team_name"],
+                team_name=r["team_name"], archived_at=r["archived_at"],
             )
             for r in await cur.fetchall()
         ]
@@ -1843,7 +1873,7 @@ class SqlAlchemyBoardRepository:
     async def list_for_member(self, member_id: str) -> list[BoardView]:
         cur = await self._conn.execute(
             """
-            SELECT b.id, b.workspace_id, b.name, t.name AS team_name
+            SELECT b.id, b.workspace_id, b.name, b.archived_at, t.name AS team_name
             FROM board b
             JOIN workspace w ON w.id = b.workspace_id
             LEFT JOIN team t ON t.id = w.team_id
@@ -1855,7 +1885,7 @@ class SqlAlchemyBoardRepository:
         return [
             BoardView(
                 id=r["id"], workspace_id=r["workspace_id"], name=r["name"],
-                team_name=r["team_name"],
+                team_name=r["team_name"], archived_at=r["archived_at"],
             )
             for r in await cur.fetchall()
         ]
@@ -2162,3 +2192,115 @@ class SqlAlchemyBoardRepository:
             "SELECT id, name FROM board_column WHERE board_id = ?", (board_id,)
         )
         return {r["name"].lower(): r["id"] for r in await cur.fetchall()}
+
+    async def list_columns_active(self, board_id: str) -> list[ColumnView]:
+        cur = await self._conn.execute(
+            "SELECT id, name, position, archived_at FROM board_column "
+            "WHERE board_id = ? AND archived_at IS NULL ORDER BY position ASC",
+            (board_id,),
+        )
+        return [
+            ColumnView(
+                id=r["id"], board_id=board_id, name=r["name"],
+                position=r["position"], archived_at=r["archived_at"],
+            )
+            for r in await cur.fetchall()
+        ]
+
+    async def list_columns_archived(self, board_id: str) -> list[ColumnView]:
+        cur = await self._conn.execute(
+            "SELECT id, name, position, archived_at FROM board_column "
+            "WHERE board_id = ? AND archived_at IS NOT NULL ORDER BY position ASC",
+            (board_id,),
+        )
+        return [
+            ColumnView(
+                id=r["id"], board_id=board_id, name=r["name"],
+                position=r["position"], archived_at=r["archived_at"],
+            )
+            for r in await cur.fetchall()
+        ]
+
+    async def is_column_archived(self, column_id: str) -> bool:
+        row = await (
+            await self._conn.execute(
+                "SELECT archived_at FROM board_column WHERE id = ?", (column_id,)
+            )
+        ).fetchone()
+        return row is not None and row["archived_at"] is not None
+
+    async def create_column(self, board_id: str, name: str) -> ColumnView:
+        cid = uuid.uuid4().hex
+        cur = await self._conn.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 AS pos FROM board_column WHERE board_id = ?", (board_id,)
+        )
+        pos_row = await cur.fetchone()
+        pos = pos_row["pos"] if pos_row else 0
+        await self._conn.execute(
+            "INSERT INTO board_column (id, board_id, name, position, archived_at) VALUES (?, ?, ?, ?, NULL)",
+            (cid, board_id, name, pos),
+        )
+        row = await (
+            await self._conn.execute(
+                "SELECT id, board_id, name, position, archived_at FROM board_column WHERE id = ?", (cid,)
+            )
+        ).fetchone()
+        assert row is not None
+        return ColumnView(
+            id=row["id"], board_id=row["board_id"], name=row["name"],
+            position=row["position"], archived_at=row["archived_at"],
+        )
+
+    async def rename_column(self, column_id: str, name: str) -> None:
+        await self._conn.execute(
+            "UPDATE board_column SET name = ? WHERE id = ?", (name, column_id)
+        )
+
+    async def reorder_column(self, column_id: str, before_column_id: str | None = None) -> None:
+        """Re-number positions so the column sits before ``before_column_id``
+        (or at the end when omitted). Positions stay dense and deterministic."""
+        row = await (
+            await self._conn.execute(
+                "SELECT board_id FROM board_column WHERE id = ?", (column_id,)
+            )
+        ).fetchone()
+        if row is None:
+            return
+        board_id = row["board_id"]
+        # Guard against a column that was archived after the caller's check.
+        col_row = await (
+            await self._conn.execute(
+                "SELECT archived_at FROM board_column WHERE id = ?", (column_id,)
+            )
+        ).fetchone()
+        if col_row is not None and col_row["archived_at"] is not None:
+            return
+        rows = await (
+            await self._conn.execute(
+                "SELECT id FROM board_column WHERE board_id = ? AND archived_at IS NULL ORDER BY position ASC",
+                (board_id,),
+            )
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        ids = [cid for cid in ids if cid != column_id]
+        if before_column_id is not None and before_column_id in ids:
+            insert_at = ids.index(before_column_id)
+        else:
+            insert_at = len(ids)
+        ids.insert(insert_at, column_id)
+        for position, cid in enumerate(ids):
+            await self._conn.execute(
+                "UPDATE board_column SET position = ? WHERE id = ?", (position, cid)
+            )
+
+    async def archive_column(self, column_id: str) -> None:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        await self._conn.execute(
+            "UPDATE board_column SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+            (now, column_id),
+        )
+
+    async def restore_column(self, column_id: str) -> None:
+        await self._conn.execute(
+            "UPDATE board_column SET archived_at = NULL WHERE id = ?", (column_id,)
+        )

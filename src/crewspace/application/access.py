@@ -33,15 +33,32 @@ async def can_manage_any_team(user: dict, uow: UnitOfWork) -> bool:
     return bool(await manageable_teams(user, uow))
 
 
-async def can_access_board(user: dict, board_id: str, uow: UnitOfWork) -> bool:
-    """Return whether the principal may access a board's workspace."""
+async def can_access_workspace(user: dict, workspace_id: str, uow: UnitOfWork) -> bool:
+    """Return whether the principal may act within a workspace."""
     if user["role"] == "superadmin":
-        return await uow.boards.get_board(board_id) is not None
+        return await uow.workspaces.get_workspace(workspace_id) is not None
+    return await uow.workspaces.get_membership(workspace_id, user["id"]) is not None
+
+
+async def can_access_board(user: dict, board_id: str, uow: UnitOfWork) -> bool:
+    """Return whether the principal may access a live board's workspace."""
     board = await uow.boards.get_board(board_id)
-    return bool(
-        board
-        and await uow.workspaces.get_membership(board.workspace_id, user["id"])
-    )
+    if board is None or board.archived_at is not None:
+        return False
+    if user["role"] == "superadmin":
+        return True
+    return bool(await uow.workspaces.get_membership(board.workspace_id, user["id"]))
+
+
+async def can_manage_archived_board(user: dict, board_id: str, uow: UnitOfWork) -> bool:
+    """Authorization used only by restore: archived boards are invisible to the
+    normal read path, but remain recoverable by their workspace members."""
+    board = await uow.boards.get_board(board_id)
+    if board is None:
+        return False
+    if user["role"] == "superadmin":
+        return True
+    return bool(await uow.workspaces.get_membership(board.workspace_id, user["id"]))
 
 
 async def require_board_access(user: dict, board_id: str, uow: UnitOfWork) -> None:
@@ -55,13 +72,16 @@ async def require_board_access(user: dict, board_id: str, uow: UnitOfWork) -> No
 async def list_accessible_boards(user: dict, uow: UnitOfWork) -> list[dict[str, str]]:
     """Boards the principal may act on, as {id, name, team} dicts.
 
-    Superadmin sees every board; everyone else sees only boards whose
-    workspace they belong to. Used by the agent so it can resolve "the board"
-    without asking for an id, and so higher-tier roles (superadmin /
-    engineering_manager) can be shown the menu of boards they manage.
+    Superadmin sees every LIVE board; everyone else sees only LIVE boards whose
+    workspace they belong to. Archived boards are excluded (they are hidden from
+    the default view), matching ``can_access_board``.
     """
     if user["role"] == "superadmin":
         boards = await uow.boards.list_all()
     else:
         boards = await uow.boards.list_for_member(user["id"])
-    return [{"id": b.id, "name": b.name, "team": b.team_name or ""} for b in boards]
+    return [
+        {"id": b.id, "name": b.name, "team": b.team_name or ""}
+        for b in boards
+        if b.archived_at is None
+    ]

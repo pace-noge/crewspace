@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block title %}New board — Crewspace{% endblock %}
+{% block nav_board %}active{% endblock %}
+{% block topbar %}New board{% endblock %}
+
+{% block content %}
+<main style="padding:24px; max-width:560px;">
+  <h1 style="margin:0 0 16px;">New board</h1>
+  <form method="post" action="/boards" style="display:grid; gap:14px;">
+    <label style="display:grid; gap:6px;">
+      <span style="color:var(--muted); font-size:13px;">Workspace</span>
+      <select name="workspace_id" required style="padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--bg-elev);">
+        {% for ws in workspaces %}
+          <option value="{{ ws.id }}">{{ ws.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label style="display:grid; gap:6px;">
+      <span style="color:var(--muted); font-size:13px;">Board name</span>
+      <input name="name" type="text" required maxlength="80" placeholder="e.g. Sprint 42" style="padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--bg-elev);" />
+    </label>
+    <div style="display:flex; gap:10px; margin-top:6px;">
+      <button class="primary" type="submit">Create board</button>
+      <a class="button" href="/board">Cancel</a>
+    </div>
+  </form>
+</main>
+{% endblock %}
