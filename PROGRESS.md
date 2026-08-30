@@ -116,7 +116,7 @@ Committed and pushed as f0a81b7.
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
 6. Next implementation: M7.5 — move-to-column workflow triggers. Follow
-   `PLAN_M7_BOARD.md`; M7.4 is verified and awaiting its recorded commit hash.
+   `PLAN_M7_BOARD.md`; M7.4 is verified and committed at 6a10d78.
 
 ## M7.4 — Card ↔ coding-run / change-set linkage — verified
 
@@ -135,7 +135,7 @@ authenticated board tool, board-page status lookup, and compact card badges.
 Evidence: `tests/test_board_run_links.py` 9 passed; bounded board/live/change-set
 gate 108 passed; fresh-head migration drift clean at `20260830_01`; legacy
 upgrade/downgrade round-trip green; compileall/diff/security gates clean;
-independent review BLOCKERS: none, NON-BLOCKERS: none. Commit: pending.
+independent review BLOCKERS: none, NON-BLOCKERS: none. Committed as 6a10d78.
 
 ## M6.8 — What shipped
 

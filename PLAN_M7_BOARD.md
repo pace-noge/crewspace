@@ -273,7 +273,7 @@ M7 Progress log (append-only, newest first):
   check clean at `20260830_01`; legacy `20260826_02` downgrade/upgrade
   round-trip green; compileall OK; git diff --check clean; added-line security
   scan clean. Independent fail-closed review: BLOCKERS: none, NON-BLOCKERS:
-  none. Verified implementation commit: pending.
+  none. Committed as 6a10d78.
 
 - M7.3 — Live board updates over WebSocket — verified; BLOCKERS: none.
   Agent-originated mutations broadcast via the registry publisher seam
