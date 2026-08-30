@@ -53,7 +53,7 @@ Verification: tests/test_board_card_detail.py (12 tests), test_agent_tool_policy
 (+2 tool tests), test_security.py (+1 authz test) — all green; the existing
 test_management_cli.py makemigrations --check test stays green; compileall OK;
 git diff --check clean; added-line security scan clean. Independent fail-closed
-review: BLOCKERS: none. Commit: <filled at push>.
+review: BLOCKERS: none. Commit: 33f9874 (pushed).
 
 Next slice: M7.2 — board/column management + board switcher.
 

@@ -265,4 +265,4 @@ M7 Progress log (append-only, newest first):
   (+2 tool tests), test_security.py (+1 authz test) — all green.
   Migration drift clean (head 20260826_01); compileall OK; git diff --check
   clean; added-line security scan clean; independent review BLOCKERS: none.
-  Commit: <pending — filled at commit time>.
+  Commit: 33f9874 (feat(board): M7.1 — card detail view and edit [verified]).
