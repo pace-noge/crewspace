@@ -16,8 +16,10 @@ Worktree at handoff: clean
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
 - Follow-up documentation and UI-discoverability fixes are on `master` after the
   milestone tag (latest pushed HEAD `9418e3a`).
-- PLAN.md defines no M6.9 or later milestone. Do not invent new scope: agree the
-  next milestone and acceptance criteria before implementation.
+- M7 — Board as the Agent Operating Surface — is now PLANNED (0/7 slices).
+  `PLAN.md` contains the tracker and `PLAN_M7_BOARD.md` is the canonical detailed
+  plan. Every slice documents its user-visible Feature and concrete Code
+  touchpoints, then follows the verified RED→GREEN/review/commit/push workflow.
 
 ## How to resume
 
@@ -29,8 +31,8 @@ Worktree at handoff: clean
    `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
-6. Next decision: define M6.9/new milestone scope and acceptance criteria. M6.8
-   requires no remaining implementation work.
+6. Next implementation: M7.1 — card detail view and edit. Follow
+   `PLAN_M7_BOARD.md`; M6.8 requires no remaining implementation work.
 
 ## M6.8 — What shipped
 

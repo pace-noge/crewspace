@@ -334,6 +334,39 @@ Acceptance (7/7):
   - [x] Live updates and reconnect replay preserve correct unread counts.
   - [x] Integration POC exercises at least one item from each supported source.
 
+------------------------------------------------------------------------------
+M7 — Board as the Agent Operating Surface                  [XL]  PLANNED
+------------------------------------------------------------------------------
+Goal:
+  Turn the board from a minimal Kanban surface into the visible operating layer
+  for the agent control plane. It will carry real task metadata, live multi-user
+  updates, and explicit links to coding runs, change sets, approvals, workflows,
+  and the operational inbox.
+
+Canonical detailed plan: `PLAN_M7_BOARD.md`.
+
+Tracking rules:
+  - M7 has seven verified slices: card detail; board/column management; live board
+    WebSocket updates; card↔run/change-set linkage; move-to-column workflow
+    triggers; planning views; end-to-end integration POC.
+  - EVERY slice documents both `Feature` (user-visible behavior) and `Code`
+    (concrete files, DTOs, repositories, routes/templates, migrations, tests).
+  - Each acceptance item uses RED → GREEN, bounded test gates,
+    `makemigrations --check`, compileall, `git diff --check`, added-line security
+    scan, and independent fail-closed review before a `[verified]` commit + push.
+  - Append objective test + commit evidence to the M7 progress log in
+    `PLAN_M7_BOARD.md`; do not mark a slice DONE based on intent.
+
+| Slice | Deliverable | Status | Progress | Depends on |
+|------:|-------------|--------|----------|------------|
+| M7.1 | Card detail view and edit | PLANNED | 0/7 | current board |
+| M7.2 | Board/column management + switcher | PLANNED | 0/6 | M7.1 |
+| M7.3 | Live board updates over WebSocket | PLANNED | 0/5 | M7.1 |
+| M7.4 | Card ↔ coding-run/change-set linkage | PLANNED | 0/5 | M7.1, M6.2–M6.5 |
+| M7.5 | Move-to-column workflow triggers | PLANNED | 0/5 | M7.2, M7.4, M6.6 |
+| M7.6 | Filters, swimlanes, timeline, saved views | PLANNED | 0/5 | M7.1, M7.2 |
+| M7.7 | Board operating-surface integration POC | PLANNED | 0/3 | M7.1–M7.6 |
+
 M6 Progress log (append-only, newest first):
   - 2026-08-24 — M6.2 durable change-set governance GREEN: logical repositories
     are authorized many-to-many per team; coding runs bind team, repository,
