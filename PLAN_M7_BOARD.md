@@ -230,7 +230,7 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
-- M7.2 — Board & column management + board switcher — verification in progress.
+- M7.2 — Board & column management + board switcher — [verified] committed.
 
   Feature: create/rename/archive/restore boards from the UI (dedicated
   app-shell forms), a board switcher in the sidebar listing only boards the
@@ -284,7 +284,7 @@ M7 Progress log (append-only, newest first):
   findings (archived-column recovery UI + fail-closed reorder target) were
   remediated with RED regression tests; final independent re-review:
   BLOCKERS: none, NON-BLOCKERS: none.
-  Commit: pending (record the real verified commit hash after Git creates it).
+  Commit: 40ea7be (feat(board): M7.2 — board and column management [verified]).
 - M7.1 — Card detail view and edit — [verified] committed + pushed.
 
   Feature: clicking a card opens a detail view editing title, Markdown

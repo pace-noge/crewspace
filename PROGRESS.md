@@ -55,7 +55,7 @@ test_management_cli.py makemigrations --check test stays green; compileall OK;
 git diff --check clean; added-line security scan clean. Independent fail-closed
 review: BLOCKERS: none. Commit: 33f9874 (pushed).
 
-## M7.2 — Board/column management + board switcher — verification in progress
+## M7.2 — Board/column management + board switcher — verified, committed
 
 Feature: dedicated app-shell forms create/rename/archive/restore boards;
 workspace-authorized sidebar switcher; board settings add/rename/reorder/archive/
@@ -87,7 +87,7 @@ Next slice: M7.3 — live board updates over WebSocket.
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
 6. Next implementation: M7.3 — live board updates over WebSocket. Follow
-   `PLAN_M7_BOARD.md`; M7.2 is verified and awaiting its real commit hash.
+   `PLAN_M7_BOARD.md`; M7.2 is verified and committed at 40ea7be.
 
 ## M6.8 — What shipped
 
