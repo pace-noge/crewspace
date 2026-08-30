@@ -16,10 +16,46 @@ Worktree at handoff: clean
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
 - Follow-up documentation and UI-discoverability fixes are on `master` after the
   milestone tag (latest pushed HEAD `9418e3a`).
-- M7 — Board as the Agent Operating Surface — is now PLANNED (0/7 slices).
-  `PLAN.md` contains the tracker and `PLAN_M7_BOARD.md` is the canonical detailed
-  plan. Every slice documents its user-visible Feature and concrete Code
-  touchpoints, then follows the verified RED→GREEN/review/commit/push workflow.
+- M7 — Board as the Agent Operating Surface — is PLANNED (1/7 slices).
+  `PLAN.md` has the tracker; `PLAN_M7_BOARD.md` is the canonical detailed plan
+  and carries the append-only per-slice progress log. Every slice documents its
+  user-visible Feature and concrete Code touchpoints, then follows the verified
+  RED→GREEN/review/commit/push workflow.
+
+## M7.1 — Card detail view and edit — [verified] committed + pushed
+
+Feature: clicking a card opens a detail view that edits title, Markdown
+description, assignee, due date, priority, and labels; server-side Markdown
+preview; an edit-history audit trail (`card_activity`); live metadata badges on
+the board; priority/assignee validation; fail-closed board authorization; and
+policy-enforced agent `get_card`/`update_card` tools. Empty optional fields can
+be cleared from the UI; an empty title is rejected at the service.
+
+Code touches:
+- domain/entities.py (CardView += due_date/priority/labels/activity;
+  CardActivityView), dto/board.py (+CardDetailDTO), dto/mappers.py (to_card /
+  to_card_detail), domain/ports.py (BoardRepository.update_card,
+  set_assignee, list_card_activity).
+- infrastructure/models.py (CardModel += due_date/priority/labels; new
+  CardActivityModel), infrastructure/repositories.py (hydrate new fields;
+  update_card empty-string-clears + per-change activity; set_assignee no-noise
+  on no-op; list_card_activity; _parse_labels/_json_labels), migration
+  20260826_01_card_detail_metadata.py (idempotent ADD COLUMN + card_activity
+  table + legacy builtin-agent tool backfill).
+- application/services.py (BoardService.get_card_detail, update_card empty-title
+  guard, set_assignee), application/tools.py (board-scoped get_card read +
+  update_card write tools).
+- api/routers/boards.py (GET/POST /boards/{board_id}/cards/{card_id} with
+  require_board_access + _require_card_in_board), templates/card.html (badges +
+  title link), templates/card_detail.html.
+
+Verification: tests/test_board_card_detail.py (12 tests), test_agent_tool_policy.py
+(+2 tool tests), test_security.py (+1 authz test) — all green; the existing
+test_management_cli.py makemigrations --check test stays green; compileall OK;
+git diff --check clean; added-line security scan clean. Independent fail-closed
+review: BLOCKERS: none. Commit: <filled at push>.
+
+Next slice: M7.2 — board/column management + board switcher.
 
 ## How to resume
 
@@ -31,8 +67,8 @@ Worktree at handoff: clean
    `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
-6. Next implementation: M7.1 — card detail view and edit. Follow
-   `PLAN_M7_BOARD.md`; M6.8 requires no remaining implementation work.
+6. Next implementation: M7.2 — board/column management + board switcher. Follow
+   `PLAN_M7_BOARD.md`; M7.1 is verified/committed/pushed.
 
 ## M6.8 — What shipped
 

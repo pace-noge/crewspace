@@ -19,6 +19,7 @@ from .entities import (
     McpConnection,
     McpDiscoveredTool,
     BoardView,
+    CardActivityView,
     CardView,
     Channel,
     ChannelMembership,
@@ -115,6 +116,27 @@ class BoardRepository(Protocol):
 
     async def get_card(self, card_id: str) -> CardView | None:
         ...
+
+    async def update_card(
+        self,
+        card_id: str,
+        *,
+        actor_id: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        due_date: str | None = None,
+        priority: str | None = None,
+        labels: list[str] | None = None,
+    ) -> CardView | None:
+        """Patch editable card fields, recording one activity row per change."""
+
+    async def set_assignee(
+        self, card_id: str, assignee_id: str | None, actor_id: str | None = None
+    ) -> CardView | None:
+        ...
+
+    async def list_card_activity(self, card_id: str) -> "list[CardActivityView]":
+        """Edit-history for the card detail view, oldest first."""
 
     async def move_card(self, card_id: str, column_id: str, actor_id: str | None = None) -> CardView | None:
         ...

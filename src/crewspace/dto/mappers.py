@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from ..domain.entities import (
     BoardView,
+    CardActivityView,
     CardView,
     ColumnView,
     CommentView,
     MessageView,
 )
-from .board import BoardDTO, CardDTO, ColumnDTO, CommentDTO
+from .board import BoardDTO, CardDetailDTO, CardDTO, ColumnDTO, CommentDTO
 from .messages import MessageDTO
 from .markdown import render_message_markdown
 
@@ -54,12 +55,33 @@ def to_card(c: CardView) -> CardDTO:
         assignee_id=c.assignee_id,
         assignee_name=c.assignee_name,
         assignee_avatar=c.assignee_avatar,
+        due_date=c.due_date,
+        priority=c.priority,
+        labels=list(c.labels),
         created_by=c.created_by,
         updated_by=c.updated_by,
         updated_at=c.updated_at,
         created_by_name=c.created_by_name,
         updated_by_name=c.updated_by_name,
         comments=[to_comment(cc) for cc in c.comments],
+    )
+
+
+def to_card_detail(c: CardView, activity: list[CardActivityView]) -> CardDetailDTO:
+    return CardDetailDTO(
+        card=to_card(c),
+        activity=[
+            {
+                "id": a.id,
+                "field": a.field,
+                "old_value": a.old_value,
+                "new_value": a.new_value,
+                "actor_id": a.actor_id,
+                "actor_name": a.actor_name,
+                "created_at": a.created_at,
+            }
+            for a in activity
+        ],
     )
 
 

@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from ...domain.identifiers import DEFAULT_CHANNEL_ID, DEFAULT_BOARD_ID
 from ...domain.ports import UnitOfWork
+from ...dto.markdown import render_message_markdown
 from ..connection import manager
 from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import templates
@@ -81,3 +82,90 @@ async def create_card(
     )
     await manager.broadcast(DEFAULT_CHANNEL_ID, ann.model_dump(mode="json"))
     return templates.TemplateResponse(request=request, name="board_fragment.html", context={"board": board})
+
+
+@router.get("/{board_id}/cards/{card_id}", response_class=HTMLResponse)
+async def card_detail_page(
+    request: Request, board_id: str, card_id: str, svc: BoardServiceDep,
+    uow: UowDep, current_user: CurrentUserOptionalDep,
+) -> Response:
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
+    await _require_card_in_board(uow, board_id, card_id)
+    await require_board_access(current_user, board_id, uow)
+    detail = await svc.get_card_detail(card_id, uow)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="card not found")
+    members = await uow.auth.list_members()
+    return templates.TemplateResponse(
+        request=request,
+        name="card_detail.html",
+        context={
+            "detail": detail,
+            "board_id": board_id,
+            "members": members,
+            "current_user": current_user,
+            "rendered_description": render_message_markdown(detail.card.description or "")
+            if detail.card.description
+            else None,
+        },
+    )
+
+
+@router.post("/{board_id}/cards/{card_id}", response_class=HTMLResponse)
+async def update_card_detail(
+    request: Request, board_id: str, card_id: str, svc: BoardServiceDep,
+    uow: UowDep, current_user: CurrentUserDep,
+    title: str = Form(...),
+    description: str = Form(""),
+    assignee_id: str = Form(""),
+    due_date: str = Form(""),
+    priority: str = Form(""),
+    labels: str = Form(""),
+) -> Response:
+    await _require_card_in_board(uow, board_id, card_id)
+    await require_board_access(current_user, board_id, uow)
+    if priority and priority not in {"low", "medium", "high", "urgent"}:
+        raise HTTPException(status_code=422, detail="invalid priority")
+    if assignee_id:
+        member = await uow.auth.get_member(assignee_id)
+        if member is None:
+            raise HTTPException(status_code=422, detail="unknown assignee")
+    parsed_labels = [x.strip() for x in labels.split(",") if x.strip()] if labels else []
+    updated = await svc.update_card(
+        card_id, uow,
+        actor_id=current_user["id"],
+        title=title,
+        description=description,
+        due_date=due_date,
+        priority=priority,
+        labels=parsed_labels,
+    )
+    await svc.set_assignee(card_id, assignee_id or None, uow, actor_id=current_user["id"])
+    if updated is None:
+        raise HTTPException(status_code=404, detail="card not found")
+    detail = await svc.get_card_detail(card_id, uow)
+    assert detail is not None
+    members = await uow.auth.list_members()
+    return templates.TemplateResponse(
+        request=request,
+        name="card_detail.html",
+        context={
+            "detail": detail,
+            "board_id": board_id,
+            "members": members,
+            "current_user": current_user,
+            "rendered_description": render_message_markdown(detail.card.description or "")
+            if detail.card.description
+            else None,
+        },
+    )
+
+
+async def _require_card_in_board(uow: UnitOfWork, board_id: str, card_id: str) -> None:
+    """404 unless the card exists and belongs to the given board (fail closed)."""
+    board_of_card = await uow.boards.get_board_id_for_card(card_id)
+    if board_of_card != board_id:
+        raise HTTPException(status_code=404, detail="card not found")

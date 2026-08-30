@@ -359,7 +359,7 @@ Tracking rules:
 
 | Slice | Deliverable | Status | Progress | Depends on |
 |------:|-------------|--------|----------|------------|
-| M7.1 | Card detail view and edit | PLANNED | 0/7 | current board |
+| M7.1 | Card detail view and edit | DONE | 7/7 | current board |
 | M7.2 | Board/column management + switcher | PLANNED | 0/6 | M7.1 |
 | M7.3 | Live board updates over WebSocket | PLANNED | 0/5 | M7.1 |
 | M7.4 | Card ↔ coding-run/change-set linkage | PLANNED | 0/5 | M7.1, M6.2–M6.5 |

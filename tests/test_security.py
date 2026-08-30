@@ -180,6 +180,35 @@ def test_outsider_cannot_read_or_create_cards_on_foreign_board(client):
     ).status_code == 404
 
 
+def test_outsider_cannot_read_or_edit_card_detail_on_foreign_board(client, app):
+    import asyncio
+
+    async def first_card_id() -> str:
+        async with app.state.db.uow() as uow:
+            row = await (
+                await uow._conn.execute(
+                    "SELECT id FROM card ORDER BY position LIMIT 1"
+                )
+            ).fetchone()
+            assert row is not None
+            return row["id"]
+
+    card_id = asyncio.run(first_card_id())
+    registered = client.post(
+        "/auth/register",
+        data={"username": "Detail Outsider", "password": "outsider-password"},
+        follow_redirects=False,
+    )
+    assert registered.status_code == 303
+
+    # The detail view and its save route must also fail closed for a non-member.
+    assert client.get(f"/boards/board_main/cards/{card_id}").status_code == 404
+    assert client.post(
+        f"/boards/board_main/cards/{card_id}",
+        data={"title": "x", "labels": ""},
+    ).status_code == 404
+
+
 def test_outsider_cannot_move_or_comment_on_foreign_card(client, app):
     import asyncio
 

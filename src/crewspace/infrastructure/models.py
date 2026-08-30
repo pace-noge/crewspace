@@ -245,10 +245,24 @@ class CardModel(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     assignee_id: Mapped[str | None] = mapped_column(ForeignKey("member.id"))
+    due_date: Mapped[str | None] = mapped_column(String)  # ISO date (YYYY-MM-DD)
+    priority: Mapped[str | None] = mapped_column(String)  # low|medium|high|urgent
+    labels: Mapped[str | None] = mapped_column(Text)  # JSON-encoded list[str]
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("member.id"))
     updated_by: Mapped[str | None] = mapped_column(ForeignKey("member.id"))
     updated_at: Mapped[str | None] = mapped_column(String)
+
+
+class CardActivityModel(Base):
+    __tablename__ = "card_activity"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    card_id: Mapped[str] = mapped_column(ForeignKey("card.id", ondelete="CASCADE"), nullable=False)
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("member.id"))
+    field: Mapped[str] = mapped_column(String, nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class CardCommentModel(Base):

@@ -284,6 +284,44 @@ def build_registry() -> ToolRegistry:
             return None
         return {"id": card.id, "title": card.title, "column_id": card.column_id}
 
+    async def get_card(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, card_id: str) -> dict | None:
+        board_id = await uow.boards.get_board_id_for_card(card_id)
+        if board_id is None:
+            raise KeyError(f"card not found: {card_id}")
+        await require_board_scope(uow, principal_id, board_id)
+        card = await uow.boards.get_card(card_id)
+        if card is None:
+            return None
+        return {
+            "id": card.id, "title": card.title, "column_id": card.column_id,
+            "description": card.description, "assignee_id": card.assignee_id,
+            "assignee_name": card.assignee_name, "due_date": card.due_date,
+            "priority": card.priority, "labels": card.labels,
+        }
+
+    async def update_card(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, card_id: str,
+                          title: str | None = None, description: str | None = None,
+                          due_date: str | None = None, priority: str | None = None,
+                          labels: list[str] | None = None) -> dict | None:
+        """Update a card's metadata (None = keep; empty string = clear optional). Board-scoped."""
+        board_id = await uow.boards.get_board_id_for_card(card_id)
+        if board_id is None:
+            raise KeyError(f"card not found: {card_id}")
+        await require_board_scope(uow, principal_id, board_id)
+        if priority and priority not in {"low", "medium", "high", "urgent"}:
+            raise ValueError(f"invalid priority: {priority}")
+        card = await uow.boards.update_card(
+            card_id, actor_id=actor_id, title=title, description=description,
+            due_date=due_date, priority=priority, labels=labels,
+        )
+        if card is None:
+            return None
+        return {
+            "id": card.id, "title": card.title, "column_id": card.column_id,
+            "description": card.description, "assignee_id": card.assignee_id,
+            "due_date": card.due_date, "priority": card.priority, "labels": card.labels,
+        }
+
     async def list_columns(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, board_id: str | None = None) -> dict:
         board_id = await resolve_board_id(uow, principal_id, board_id)
         await require_board_scope(uow, principal_id, board_id)
@@ -389,6 +427,33 @@ def build_registry() -> ToolRegistry:
         },
         find_card,
         category="boards", mutability="read", risk="low",
+    ))
+    reg.register(Tool(
+        "get_card", "Read a card's full metadata by id (board-scoped).",
+        {
+            "type": "object",
+            "properties": {"card_id": {"type": "string"}},
+            "required": ["card_id"],
+        },
+        get_card,
+        category="boards", mutability="read", risk="low",
+    ))
+    reg.register(Tool(
+        "update_card", "Update a card's title, description, due date, priority, or labels (board-scoped).",
+        {
+            "type": "object",
+            "properties": {
+                "card_id": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string", "description": "Empty string clears the description"},
+                "due_date": {"type": "string", "description": "ISO date YYYY-MM-DD; empty string clears"},
+                "priority": {"type": "string", "enum": ["", "low", "medium", "high", "urgent"]},
+                "labels": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["card_id"],
+        },
+        update_card,
+        category="boards", mutability="write", risk="medium",
     ))
     reg.register(Tool(
         "list_columns", "List a board's columns (id + name). If no board_id is given, the agent uses the caller's single board automatically, or lists available boards when there are several.",

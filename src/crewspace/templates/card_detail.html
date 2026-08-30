@@ -1,0 +1,85 @@
+{% extends "layout.html" %}
+{% block title %}{{ detail.card.title }} — Crewspace{% endblock %}
+{% block nav_board %}active{% endblock %}
+{% block topbar %}Card detail{% endblock %}
+
+{% block content %}
+<section id="card-detail" style="max-width:920px; margin:0 auto; padding:20px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px;">
+    <div>
+      <a href="/boards/{{ board_id }}" style="font-size:13px; opacity:.75;">← Back to board</a>
+      <h1 style="margin:6px 0 0;">{{ detail.card.title }}</h1>
+    </div>
+    {% if detail.card.updated_by_name %}
+      <span style="font-size:12px; opacity:.65;">Last edited by {{ detail.card.updated_by_name }}</span>
+    {% endif %}
+  </div>
+
+  <form hx-post="/boards/{{ board_id }}/cards/{{ detail.card.id }}"
+        hx-target="#card-detail" hx-swap="outerHTML"
+        style="display:grid; gap:14px; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:16px;">
+    <label>Title
+      <input name="title" value="{{ detail.card.title }}" required style="width:100%;" />
+    </label>
+    <label>Description
+      <textarea name="description" rows="7" style="width:100%;">{{ detail.card.description or '' }}</textarea>
+    </label>
+    {% if rendered_description %}
+      <article class="markdown-body" style="border-left:3px solid var(--border); padding-left:12px;">{{ rendered_description | safe }}</article>
+    {% endif %}
+    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
+      <label>Assignee
+        <select name="assignee_id" style="width:100%;">
+          <option value="">Unassigned</option>
+          {% for member in members %}
+            <option value="{{ member.id }}" {% if detail.card.assignee_id == member.id %}selected{% endif %}>{{ member.name }}{% if member.kind == 'agent' %} (agent){% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Due date
+        <input type="date" name="due_date" value="{{ detail.card.due_date or '' }}" style="width:100%;" />
+      </label>
+      <label>Priority
+        <select name="priority" style="width:100%;">
+          <option value="">None</option>
+          {% for p in ['low','medium','high','urgent'] %}
+            <option value="{{ p }}" {% if detail.card.priority == p %}selected{% endif %}>{{ p | title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Labels
+        <input name="labels" value="{{ detail.card.labels | join(', ') }}" placeholder="backend, auth" style="width:100%;" />
+      </label>
+    </div>
+    <div><button type="submit">Save card</button></div>
+  </form>
+
+  <section style="margin-top:20px;">
+    <h2>Comments</h2>
+    <div id="comments-{{ detail.card.id }}">
+      {% for comment in detail.card.comments %}{% include "comment.html" with context %}{% else %}<p style="opacity:.65;">No comments yet.</p>{% endfor %}
+    </div>
+    <form hx-post="/cards/{{ detail.card.id }}/comments" hx-target="#comments-{{ detail.card.id }}" hx-swap="beforeend" style="display:flex; gap:8px;">
+      <input name="body" placeholder="Add a comment…" required style="flex:1;" />
+      <input type="hidden" name="author_id" value="{{ current_user.id }}" />
+      <button type="submit">Comment</button>
+    </form>
+  </section>
+
+  <section style="margin-top:20px;">
+    <h2>Activity</h2>
+    <ol style="padding-left:20px;">
+      {% for item in detail.activity %}
+        <li style="margin-bottom:8px;">
+          <strong>{{ item.actor_name or 'System' }}</strong> changed <code>{{ item.field }}</code>
+          {% if item.old_value %}from <code>{{ item.old_value }}</code>{% endif %}
+          {% if item.new_value %}to <code>{{ item.new_value }}</code>{% endif %}
+          <small style="opacity:.65;">{{ item.created_at }}</small>
+        </li>
+      {% else %}
+        <li style="opacity:.65;">No edits yet.</li>
+      {% endfor %}
+    </ol>
+  </section>
+</section>
+{% endblock %}

@@ -254,3 +254,91 @@ async def test_seeded_builtin_agents_keep_compatibility_tools(app):
         assert await uow.agent_policies.list_enabled_native_tools(
             "agent_planner"
         ) == expected
+
+
+async def test_agent_get_card_returns_metadata_and_respects_scope(app):
+    from crewspace.application.tools import ToolPermissionDenied
+
+    async with app.state.db.uow() as uow:
+        runner = build_registry().bind(
+            uow,
+            principal_id="user_bilal",
+            agent_id="agent_crewspace",
+            allowed_tools={"get_card"},
+        )
+        # Create a card directly for a deterministic id.
+        card = await uow.boards.add_card("col_todo", "Tool card", description="desc")
+        result = await runner.run("get_card", card_id=card.id)
+        assert result is not None
+        assert result["id"] == card.id
+        assert result["description"] == "desc"
+        assert result["priority"] is None
+        assert "labels" in result
+        # Disallowed from the allowlist -> ToolPermissionDenied
+        denied = build_registry().bind(
+            uow,
+            principal_id="user_bilal",
+            agent_id="agent_crewspace",
+            allowed_tools={"list_boards"},
+        )
+        try:
+            await denied.run("get_card", card_id=card.id)
+        except ToolPermissionDenied as exc:
+            assert "not allowed" in str(exc)
+        else:
+            raise AssertionError("disabled get_card must not execute")
+
+
+async def test_agent_update_card_persists_and_clears(app):
+    from crewspace.application.tools import ToolPermissionDenied
+
+    async with app.state.db.uow() as uow:
+        runner = build_registry().bind(
+            uow,
+            principal_id="user_bilal",
+            agent_id="agent_crewspace",
+            allowed_tools={"update_card"},
+        )
+        card = await uow.boards.add_card("col_todo", "Update me", description="old")
+        result = await runner.run(
+            "update_card",
+            card_id=card.id,
+            description="new description",
+            due_date="2026-10-01",
+            priority="high",
+            labels=["backend", "auth"],
+        )
+        assert result["description"] == "new description"
+        assert result["due_date"] == "2026-10-01"
+        assert result["priority"] == "high"
+        assert set(result["labels"]) == {"backend", "auth"}
+
+        # Empty string clears optional fields.
+        cleared = await runner.run(
+            "update_card", card_id=card.id, description="", due_date="", priority=""
+        )
+        assert cleared["description"] is None
+        assert cleared["due_date"] is None
+        assert cleared["priority"] is None
+
+        # Invalid priority is rejected without persisting.
+        try:
+            await runner.run("update_card", card_id=card.id, priority="bogus")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid priority must raise ValueError")
+
+        # Policy deny still blocks the mutation.
+        denied = build_registry().bind(
+            uow,
+            principal_id="user_bilal",
+            agent_id="agent_crewspace",
+            allowed_tools={"get_card"},
+        )
+        try:
+            await denied.run("update_card", card_id=card.id, title="Blocked edit")
+        except ToolPermissionDenied as exc:
+            assert "not allowed" in str(exc)
+        else:
+            raise AssertionError("disabled update_card must not execute")

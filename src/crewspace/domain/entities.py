@@ -357,6 +357,9 @@ class CardView:
     description: str | None
     assignee_id: str | None
     position: int
+    due_date: str | None = None
+    priority: str | None = None
+    labels: list[str] = field(default_factory=list)
     assignee_name: str | None = None
     assignee_avatar: str | None = None
     created_by: str | None = None
@@ -365,6 +368,21 @@ class CardView:
     created_by_name: str | None = None
     updated_by_name: str | None = None
     comments: list[CommentView] = field(default_factory=list)
+    activity: list["CardActivityView"] = field(default_factory=list)
+
+
+@dataclass
+class CardActivityView:
+    """An audited field change on a card (used by the detail view + history)."""
+
+    id: str
+    card_id: str
+    actor_id: str | None
+    field: str
+    old_value: str | None
+    new_value: str | None
+    created_at: str
+    actor_name: str | None = None
 
 
 @dataclass

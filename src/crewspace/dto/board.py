@@ -32,12 +32,22 @@ class CardDTO(BaseModel):
     assignee_id: str | None = None
     assignee_name: str | None = None
     assignee_avatar: str | None = None
+    due_date: str | None = None
+    priority: str | None = None
+    labels: list[str] = []
     created_by: str | None = None
     updated_by: str | None = None
     updated_at: str | None = None
     created_by_name: str | None = None
     updated_by_name: str | None = None
     comments: list[CommentDTO] = []
+
+
+class CardDetailDTO(BaseModel):
+    """The full card detail surface (card + edit history), json-safe for the REST/UI."""
+
+    card: CardDTO
+    activity: list[dict] = []
 
 
 class ColumnDTO(BaseModel):

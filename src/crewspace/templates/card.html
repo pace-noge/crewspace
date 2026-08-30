@@ -1,6 +1,13 @@
 {# Card fragment — rendered standalone (after create/move) and inside column.html #}
 <div class="card" id="card-{{ card.id }}" style="background:var(--surface); border-radius:6px; padding:8px; margin-bottom:8px;">
-  <div class="title" style="font-weight:600;">{{ card.title }}</div>
+  <div class="title" style="font-weight:600;">
+    <a href="/boards/{{ board_id }}/cards/{{ card.id }}" style="color:inherit; text-decoration:none;">{{ card.title }}</a>
+  </div>
+  <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; font-size:11px;">
+    {% if card.priority %}<span class="badge">{{ card.priority }}</span>{% endif %}
+    {% if card.due_date %}<span class="badge">Due {{ card.due_date }}</span>{% endif %}
+    {% for label in card.labels %}<span class="badge">{{ label }}</span>{% endfor %}
+  </div>
   {% if card.assignee_name %}
     <div class="meta" style="font-size:12px; opacity:.7; margin-top:4px;">{{ card.assignee_avatar }} {{ card.assignee_name }}</div>
   {% endif %}

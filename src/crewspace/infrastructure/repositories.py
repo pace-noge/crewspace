@@ -21,6 +21,7 @@ from ..domain.entities import (
     McpConnection,
     McpDiscoveredTool,
     BoardView,
+    CardActivityView,
     CardView,
     Channel,
     ChannelMembership,
@@ -64,6 +65,31 @@ def _parse(ts: str) -> dt.datetime:
 
 def _iso(value: dt.datetime | str) -> str:
     return value.isoformat() if isinstance(value, dt.datetime) else value
+
+
+def _parse_labels(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
+
+
+def _json_labels(labels: list[str] | None) -> str | None:
+    if labels is None:
+        return None
+    return json.dumps(list(labels), ensure_ascii=False)
+
+
+def _apply(field_value: object, current) -> str | None:
+    """Resolve an update value: empty string clears, None keeps, value sets."""
+    if field_value is None:
+        return current
+    if field_value == "":
+        return None
+    return str(field_value)
 
 
 class SqlAlchemyChatRepository:
@@ -1857,6 +1883,7 @@ class SqlAlchemyBoardRepository:
         ccur = await self._conn.execute(
             """
             SELECT c.id, c.column_id, c.title, c.description, c.position, c.assignee_id,
+                   c.due_date, c.priority, c.labels,
                    mem.name AS assignee_name, mem.avatar AS assignee_avatar,
                    c.created_by, c.updated_by, c.updated_at,
                    cb.name AS created_by_name, ub.name AS updated_by_name
@@ -1879,6 +1906,9 @@ class SqlAlchemyBoardRepository:
                     description=r["description"],
                     assignee_id=r["assignee_id"],
                     position=r["position"],
+                    due_date=r["due_date"],
+                    priority=r["priority"],
+                    labels=_parse_labels(r["labels"]),
                     assignee_name=r["assignee_name"],
                     assignee_avatar=r["assignee_avatar"],
                     created_by=r["created_by"],
@@ -1936,6 +1966,7 @@ class SqlAlchemyBoardRepository:
         cur = await self._conn.execute(
             """
             SELECT c.id, c.column_id, c.title, c.description, c.position, c.assignee_id,
+                   c.due_date, c.priority, c.labels,
                    mem.name AS assignee_name, mem.avatar AS assignee_avatar,
                    c.created_by, c.updated_by, c.updated_at,
                    cb.name AS created_by_name, ub.name AS updated_by_name
@@ -1957,6 +1988,9 @@ class SqlAlchemyBoardRepository:
             description=row["description"],
             assignee_id=row["assignee_id"],
             position=row["position"],
+            due_date=row["due_date"],
+            priority=row["priority"],
+            labels=_parse_labels(row["labels"]),
             assignee_name=row["assignee_name"],
             assignee_avatar=row["assignee_avatar"],
             created_by=row["created_by"],
@@ -1965,6 +1999,116 @@ class SqlAlchemyBoardRepository:
             created_by_name=row["created_by_name"],
             updated_by_name=row["updated_by_name"],
             comments=await self._comments(row["id"]),
+            activity=await self.list_card_activity(card_id),
+        )
+
+    async def update_card(
+        self,
+        card_id: str,
+        *,
+        actor_id: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        due_date: str | None = None,
+        priority: str | None = None,
+        labels: list[str] | None = None,
+    ) -> CardView | None:
+        """Patch a card's editable fields, recording one card_activity row per changed field.
+
+        Semantics per field:
+          - ``None``  -> leave unchanged
+          - empty string -> explicitly clear to None (for optional fields)
+          - otherwise -> set to that value
+        """
+        existing = await self.get_card(card_id)
+        if existing is None:
+            return None
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+
+        def _norm(field_value: object, current) -> tuple[bool, str | None]:
+            """Return (changed, new_value) for one field."""
+            if field_value is None:
+                return (False, current)
+            if field_value == "":
+                return (current is not None, None)
+            return (True, str(field_value))
+
+        changes: list[tuple[str, str | None, str | None]] = []
+        for field, new, current in (
+            ("title", title, existing.title),
+            ("description", description, existing.description),
+            ("due_date", due_date, existing.due_date),
+            ("priority", priority, existing.priority),
+        ):
+            changed, value = _norm(new, current)
+            if value is not None:
+                value = str(value)
+            if changed and value != current:
+                changes.append((field, current, value))
+        if labels is not None and sorted(labels) != sorted(existing.labels):
+            changes.append(("labels", _json_labels(existing.labels), _json_labels(labels)))
+
+        if not changes:
+            return existing
+
+        new_title = title if title is not None else existing.title
+        new_desc = _apply(description, existing.description)
+        new_due = _apply(due_date, existing.due_date)
+        new_pri = _apply(priority, existing.priority)
+        new_labels = _json_labels(labels) if labels is not None else _json_labels(existing.labels)
+        await self._conn.execute(
+            "UPDATE card SET title = ?, description = ?, due_date = ?, priority = ?, labels = ?, updated_by = ?, updated_at = ? WHERE id = ?",
+            (new_title, new_desc, new_due, new_pri, new_labels, actor_id, now, card_id),
+        )
+        for field, old, new in changes:
+            await self._add_activity(card_id, actor_id, field, old, new)
+        return await self.get_card(card_id)
+
+    async def set_assignee(self, card_id: str, assignee_id: str | None, actor_id: str | None = None) -> CardView | None:
+        existing = await self.get_card(card_id)
+        if existing is None:
+            return None
+        if existing.assignee_id == assignee_id:
+            # No change: preserve history (don't write a redundant activity row).
+            return existing
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        await self._conn.execute(
+            "UPDATE card SET assignee_id = ?, updated_by = ?, updated_at = ? WHERE id = ?",
+            (assignee_id, actor_id, now, card_id),
+        )
+        await self._add_activity(card_id, actor_id, "assignee_id", existing.assignee_id, assignee_id)
+        return await self.get_card(card_id)
+
+    async def list_card_activity(self, card_id: str) -> list[CardActivityView]:
+        cur = await self._conn.execute(
+            """
+            SELECT a.id, a.card_id, a.actor_id, a.field, a.old_value, a.new_value, a.created_at,
+                   mem.name AS actor_name
+            FROM card_activity a
+            LEFT JOIN member mem ON mem.id = a.actor_id
+            WHERE a.card_id = ? ORDER BY a.created_at ASC
+            """,
+            (card_id,),
+        )
+        return [
+            CardActivityView(
+                id=r["id"],
+                card_id=r["card_id"],
+                actor_id=r["actor_id"],
+                field=r["field"],
+                old_value=r["old_value"],
+                new_value=r["new_value"],
+                created_at=r["created_at"],
+                actor_name=r["actor_name"],
+            )
+            for r in await cur.fetchall()
+        ]
+
+    async def _add_activity(self, card_id: str, actor_id: str | None, field: str, old_value: str | None, new_value: str | None) -> None:
+        await self._conn.execute(
+            "INSERT INTO card_activity (id, card_id, actor_id, field, old_value, new_value, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (uuid.uuid4().hex, card_id, actor_id, field, old_value, new_value,
+             dt.datetime.now(dt.timezone.utc).isoformat()),
         )
 
     async def move_card(self, card_id: str, column_id: str, actor_id: str | None = None) -> CardView | None:

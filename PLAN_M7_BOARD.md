@@ -230,4 +230,39 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
-  (empty — M7 is PLANNED; each verified slice appends its record here.)
+- M7.1 — Card detail view and edit — [verified] committed + pushed.
+
+  Feature: clicking a card opens a detail view editing title, Markdown
+  description, assignee, due date, priority, and labels; server-side Markdown
+  preview; edit history via a `card_activity` audit trail; live badges on the
+  board; priority/assignee validation; fail-closed board authorization; and
+  policy-enforced agent `get_card`/`update_card` tools. Empty optional fields
+  can be cleared from the UI; an empty title is rejected at the service.
+
+  Code:
+  - domain/entities.py: CardView += due_date/priority/labels/activity; new
+    CardActivityView.
+  - dto/board.py: CardDTO += fields; new CardDetailDTO. dto/mappers.py:
+    to_card carries fields; to_card_detail.
+  - domain/ports.py BoardRepository: update_card, set_assignee,
+    list_card_activity.
+  - infrastructure/models.py: CardModel += due_date/priority/labels; new
+    CardActivityModel. repositories.py: get_card/_column_with_cards hydrate new
+    fields; update_card (empty-string clears, activity per change); set_assignee
+    (no-noise on no-op); list_card_activity/_add_activity; _parse_labels/
+    _json_labels helpers.
+  - migration 20260826_01_card_detail_metadata.py: idempotent ADD COLUMN +
+    card_activity table + backfill of get_card/update_card for legacy builtin
+    agents.
+  - application/services.py BoardService: get_card_detail, update_card (empty
+    title guard), set_assignee. application/tools.py: get_card (read) and
+    update_card (write) native tools, board-scoped.
+  - api/routers/boards.py: GET/POST /boards/{board_id}/cards/{card_id}
+    (+ require_board_access + _require_card_in_board); card.html badges + title
+    link; templates/card_detail.html.
+
+  Evidence: tests/test_board_card_detail.py (10 tests), test_agent_tool_policy.py
+  (+2 tool tests), test_security.py (+1 authz test) — all green.
+  Migration drift clean (head 20260826_01); compileall OK; git diff --check
+  clean; added-line security scan clean; independent review BLOCKERS: none.
+  Commit: <pending — filled at commit time>.

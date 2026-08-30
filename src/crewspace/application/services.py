@@ -16,8 +16,8 @@ from typing import Any
 
 from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, PLANNER_AGENT_ID
 from ..domain.ports import UnitOfWork
-from ..dto.board import BoardDTO, CardDTO, ColumnDTO, CommentDTO
-from ..dto.mappers import to_board, to_card, to_comment, to_message
+from ..dto.board import BoardDTO, CardDTO, CardDetailDTO, ColumnDTO, CommentDTO
+from ..dto.mappers import to_board, to_card, to_card_detail, to_comment, to_message
 from ..dto.messages import MessageDTO
 from ..config import Settings
 from ..infrastructure.agents.registry import AgentRegistry
@@ -178,6 +178,46 @@ class BoardService:
     async def get_board(self, board_id: str, uow: UnitOfWork) -> BoardDTO | None:
         view = await uow.boards.get_board(board_id)
         return to_board(view) if view else None
+
+    async def get_card_detail(self, card_id: str, uow: UnitOfWork) -> CardDetailDTO | None:
+        """The full card detail surface (card + edit history)."""
+        view = await uow.boards.get_card(card_id)
+        if not view:
+            return None
+        activity = await uow.boards.list_card_activity(card_id)
+        return to_card_detail(view, activity)
+
+    async def update_card(
+        self,
+        card_id: str,
+        uow: UnitOfWork,
+        *,
+        actor_id: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        due_date: str | None = None,
+        priority: str | None = None,
+        labels: list[str] | None = None,
+    ) -> CardDTO | None:
+        """Patch editable card fields; None leaves a field unchanged (see repository)."""
+        if title == "":
+            raise ValueError("card title cannot be empty")
+        card = await uow.boards.update_card(
+            card_id,
+            actor_id=actor_id,
+            title=title,
+            description=description,
+            due_date=due_date,
+            priority=priority,
+            labels=labels,
+        )
+        return to_card(card) if card else None
+
+    async def set_assignee(
+        self, card_id: str, assignee_id: str | None, uow: UnitOfWork, actor_id: str | None = None
+    ) -> CardDTO | None:
+        card = await uow.boards.set_assignee(card_id, assignee_id, actor_id)
+        return to_card(card) if card else None
 
     async def get_column(self, board_id: str, column_id: str, uow: UnitOfWork) -> ColumnDTO | None:
         """Return a single column (canonical source of truth) re-rendered in order."""
