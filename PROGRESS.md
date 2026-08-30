@@ -1,9 +1,9 @@
 # Crewspace — Session Progress (fresh-session handoff)
 
-Last updated: 2026-08-25 (WIB)
+Last updated: 2026-08-30 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest product/UI commit before this handoff: `9418e3a`
+Latest verified product commit before this handoff: `51c6f9f`
 Handoff state: this PROGRESS.md commit and `origin/master` are synchronized.
 Worktree at handoff: clean
 
@@ -14,8 +14,7 @@ Worktree at handoff: clean
 - M6.8 — Operational inbox — is DONE 7/7.
 - M6.8 implementation/release tag: `milestone-m6.8` → `6b734bc`
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
-- Follow-up documentation and UI-discoverability fixes are on `master` after the
-  milestone tag (latest pushed HEAD `9418e3a`).
+- Latest verified M7 product slice is M7.5 at `51c6f9f`.
 - M7 — Board as the Agent Operating Surface — is active (5/7 slices).
   `PLAN.md` has the tracker; `PLAN_M7_BOARD.md` is the canonical detailed plan
   and carries the append-only per-slice progress log. Every slice documents its
@@ -137,13 +136,24 @@ Committed and pushed as f0a81b7.
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git status --short && git log -10 --oneline --decorate`
 3. Confirm `master` and `origin/master` point at the same commit and the worktree
-   is clean. `9418e3a` is the latest product/UI commit before the handoff docs.
+   is clean. Product commit `51c6f9f` contains verified M7.5; the handoff-only
+   docs commit immediately after it is expected once this file is saved.
 4. Re-run the focused completed-milestone gate if needed:
-   `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
+   `uv run pytest tests/test_board_column_triggers.py -q` (last result: 13 passed).
 5. Verify schema compatibility if touching models/application boundaries:
-   `uv run crewspace-manage makemigrations --check`.
-6. Next implementation: M7.5 — move-to-column workflow triggers. Follow
-   `PLAN_M7_BOARD.md`; M7.4 is verified and committed at 6a10d78.
+   upgrade a fresh temporary DB to head, then run
+   `uv run crewspace-manage makemigrations --check`; current head is
+   `20260830_02`. Do not export `CREWSPACE_DATABASE_URL` globally.
+6. Next implementation: M7.6 — board planning views (filters, group-by,
+   swimlanes, timeline, and authorization-scoped saved views). Follow the M7.6
+   section in `PLAN_M7_BOARD.md` using the verified RED→GREEN/review/commit/push
+   workflow. Preserve shipped M7.1–M7.5 behavior.
+7. M7.5 verification context: 13 focused tests, 70 board/M7 regressions, and 46
+   workflow regressions passed. A broad run parked at 92% in the documented
+   teardown/cross-test behavior; its three cached failures passed independently.
+   Independent reviewer inspection and focused tests completed but its response
+   parked; the documented executable fallback concluded `BLOCKERS: None` and
+   `NON-BLOCKERS: None`.
 
 ## M7.4 — Card ↔ coding-run / change-set linkage — verified
 
