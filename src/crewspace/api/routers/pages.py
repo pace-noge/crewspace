@@ -8,6 +8,8 @@ from ..deps import BoardServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowD
 from ...domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID
 from ..rendering import navigation_context, templates
 from ...application.access import can_access_board, can_manage_archived_board
+from ...application.column_triggers import board_workflow_badges
+from ...dto.board import card_run_badges
 
 router = APIRouter(tags=["pages"])
 
@@ -136,10 +138,18 @@ async def board_page(request: Request, board_id: str, svc: BoardServiceDep, uow:
     if board is None:
         return HTMLResponse("<h1>Board not found</h1>", status_code=404)
     agents = await uow.auth.list_members(kind="agent")
+    card_run_statuses = await svc.board_run_statuses(board_id, current_user, uow)
+    card_run_badge_links = {
+        card_id: [badge for status in statuses for badge in card_run_badges(status)]
+        for card_id, statuses in card_run_statuses.items()
+    }
     context = {
         "board": board,
         "current_user": current_user,
         "agents": agents,
+        "card_run_statuses": card_run_statuses,
+        "card_run_badge_links": card_run_badge_links,
+        "card_workflow_badge_links": await board_workflow_badges(uow, board_id),
         **await navigation_context(uow, current_user),
     }
     return templates.TemplateResponse(

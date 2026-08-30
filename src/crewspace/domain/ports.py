@@ -24,6 +24,8 @@ from .entities import (
     CardActivityView,
     CardRunLink,
     CardRunStatusView,
+    ColumnMoveRunStatusView,
+    ColumnWorkflowRule,
     CardView,
     Channel,
     ChannelMembership,
@@ -189,6 +191,40 @@ class BoardRepository(Protocol):
 
     async def list_board_run_statuses(self, board_id: str) -> "list[CardRunStatusView]":
         """Batch live projection for all linked cards on one board."""
+        ...
+
+    async def set_column_workflow(self, rule: "ColumnWorkflowRule") -> None:
+        """Upsert a board-column → workflow mapping. Caller must be authorized."""
+        ...
+
+    async def list_column_workflows(self, board_id: str) -> "list[ColumnWorkflowRule]":
+        """All column→workflow rules for one board."""
+        ...
+
+    async def get_column_workflow(self, column_id: str) -> "ColumnWorkflowRule | None":
+        """The (enabled-or-not) rule bound to a column, if any."""
+        ...
+
+    async def claim_column_move_trigger(
+        self, *, trigger_id: str, card_id: str, column_id: str,
+        workflow_id: str, board_id: str, event_key: str,
+    ) -> bool:
+        """Atomically claim an idempotency key before dispatching a run.
+
+        Returns True only when the move-event idempotency key is NEW
+        (INSERT ... ON CONFLICT DO NOTHING claimed one row). A duplicate/retried
+        move claims nothing and returns False so the caller skips the enqueue.
+        """
+        ...
+
+    async def bind_column_move_trigger(self, trigger_id: str, run_id: str) -> None:
+        """Attach the created workflow run id to a claimed trigger key."""
+        ...
+
+    async def list_board_column_move_statuses(
+        self, board_id: str
+    ) -> "list[ColumnMoveRunStatusView]":
+        """Live workflow-run status projection for triggered cards on a board."""
         ...
 
     async def find_card_by_title(self, board_id: str, title: str) -> CardView | None:

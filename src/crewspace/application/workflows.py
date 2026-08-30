@@ -16,7 +16,7 @@ from ..domain.identifiers import BUILTIN_ASSISTANT_ID
 from ..domain.ports import UnitOfWork
 logger = logging.getLogger(__name__)
 
-TRIGGER_TYPES = {"message_posted", "reaction_added", "diff_posted", "webhook", "schedule"}
+TRIGGER_TYPES = {"message_posted", "reaction_added", "diff_posted", "webhook", "schedule", "column_move"}
 ACTION_TYPES = {
     "send_message", "send_dm", "call_webhook", "call_mcp_tool", "request_approval",
     "add_reaction", "set_channel_topic", "delay",

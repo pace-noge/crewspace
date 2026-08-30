@@ -18,7 +18,7 @@ from typing import Any
 from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, PLANNER_AGENT_ID
 from ..domain.entities import Board
 from ..domain.ports import UnitOfWork
-from ..domain.entities import CardRunLink
+from ..domain.entities import CardRunLink, ColumnWorkflowRule
 from .access import can_access_board, can_manage_team
 from ..dto.board import (
     BoardCommandDTO,
@@ -28,6 +28,7 @@ from ..dto.board import (
     CardDetailDTO,
     ColumnCommandDTO,
     ColumnDTO,
+    ColumnTriggerDTO,
     CommentDTO,
 )
 from ..dto.mappers import (
@@ -36,6 +37,7 @@ from ..dto.mappers import (
     to_card_detail,
     to_card_run_status,
     to_column,
+    to_column_trigger,
     to_comment,
     to_message,
 )
@@ -343,11 +345,30 @@ class BoardService:
     async def move_card(
         self, card_id: str, column_id: str, uow: UnitOfWork, actor_id: str | None = None
     ) -> tuple[str | None, CardDTO | None]:
-        """Move a card to a new column. Returns (old_column_id, updated_card)."""
+        """Move a card to a new column. Returns (old_column_id, updated_card).
+
+        After a valid, real move into a *different* column, any enabled
+        column→workflow rule bound to the target column is triggered (fail-closed:
+        the caller must already have authorized the board; the rule must exist and
+        be enabled; the referenced workflow must actually exist). Trigger keys are
+        idempotent so retried/duplicate moves never double-enqueue.
+        """
         old = await uow.boards.get_card(card_id)
         old_column_id = old.column_id if old else None
         card = await uow.boards.move_card(card_id, column_id, actor_id)
-        return old_column_id, to_card(card) if card else None
+        if card is None:
+            return old_column_id, None
+        if old is not None and old_column_id != column_id:
+            from .column_triggers import trigger_column_workflow
+
+            await trigger_column_workflow(
+                card=card,
+                target_column_id=column_id,
+                uow=uow,
+                actor_id=actor_id,
+                event_key=f"{old.column_id}:{old.updated_at or 'initial'}",
+            )
+        return old_column_id, to_card(card)
 
     async def comment_card(
         self, card_id: str, author_id: str, body: str, uow: UnitOfWork
@@ -423,3 +444,83 @@ class BoardService:
         for s in await uow.boards.list_board_run_statuses(board_id):
             by_card.setdefault(s.card_id, []).append(to_card_run_status(s))
         return by_card
+
+    async def set_column_trigger(
+        self,
+        board_id: str,
+        column_id: str,
+        workflow_id: str | None,
+        enabled: bool,
+        user: dict,
+        uow: UnitOfWork,
+    ) -> ColumnTriggerDTO:
+        """Configure (upsert) or clear a board-column → workflow rule.
+
+        Authorization is enforced here, never delegated to the repository: the
+        caller must be able to access the board and to manage the board's team.
+        A workflow_id of None clears the rule. Referenced workflows must exist.
+        """
+        if not await can_access_board(user, board_id, uow):
+            raise PermissionError("Not authorized for this board")
+        board = await uow.boards.get_board(board_id)
+        if board is None:
+            raise KeyError("Board not found")
+        actual_board_id = await uow.boards.get_board_id_for_column(column_id)
+        if actual_board_id != board_id:
+            raise ValueError("Column does not belong to this board")
+        workspace = await uow.workspaces.get_workspace(board.workspace_id)
+        if workspace is None or not await can_manage_team(user, workspace.team_id, uow):
+            raise PermissionError("Not authorized to manage this board's team")
+        if workflow_id is not None:
+            workflow = await uow.workflows.get(workflow_id)
+            if workflow is None or not workflow.enabled:
+                raise ValueError("Workflow not found or disabled")
+            workflow_channel = await uow.channels.get_channel(workflow.channel_id)
+            if (
+                workflow_channel is None
+                or workflow_channel.workspace_id != board.workspace_id
+            ):
+                raise ValueError("Workflow does not belong to this board's workspace")
+        if workflow_id is None:
+            # Clear: delete any existing rule for this column by disabling it.
+            existing = await uow.boards.get_column_workflow(column_id)
+            if existing is not None:
+                await uow.boards.set_column_workflow(
+                    ColumnWorkflowRule(
+                        id=existing.id,
+                        board_id=board_id,
+                        column_id=column_id,
+                        workflow_id=existing.workflow_id,
+                        enabled=False,
+                        changed_by=user["id"],
+                    )
+                )
+                return to_column_trigger(
+                    await uow.boards.get_column_workflow(column_id)
+                )
+            return ColumnTriggerDTO(column_id=column_id, workflow_id=None, enabled=False)
+        existing = await uow.boards.get_column_workflow(column_id)
+        await uow.boards.set_column_workflow(
+            ColumnWorkflowRule(
+                id=existing.id if existing else f"cwr_{uuid.uuid4().hex[:12]}",
+                board_id=board_id,
+                column_id=column_id,
+                workflow_id=workflow_id,
+                enabled=enabled,
+                changed_by=user["id"],
+            )
+        )
+        rule = await uow.boards.get_column_workflow(column_id)
+        assert rule is not None
+        return to_column_trigger(rule)
+
+    async def list_column_trigger_config(
+        self, board_id: str, user: dict, uow: UnitOfWork
+    ) -> list[ColumnTriggerDTO]:
+        """Per-column → workflow config for one board (authorization-scoped)."""
+        if not await can_access_board(user, board_id, uow):
+            return []
+        return [
+            to_column_trigger(r)
+            for r in await uow.boards.list_column_workflows(board_id)
+        ]

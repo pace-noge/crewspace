@@ -21,6 +21,7 @@ from .board import (
     CardDTO,
     CardRunStatusDTO,
     ColumnDTO,
+    ColumnTriggerDTO,
     CommentDTO,
 )
 from .messages import MessageDTO
@@ -124,4 +125,13 @@ def to_board(b: BoardView) -> BoardDTO:
         name=b.name,
         archived_at=b.archived_at,
         columns=[to_column(c) for c in b.columns],
+    )
+
+
+def to_column_trigger(rule) -> ColumnTriggerDTO:
+    """Pure mapping from a ColumnWorkflowRule entity to its wire contract."""
+    return ColumnTriggerDTO(
+        column_id=rule.column_id,
+        workflow_id=rule.workflow_id,
+        enabled=rule.enabled,
     )

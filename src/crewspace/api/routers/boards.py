@@ -13,6 +13,7 @@ from ..connection import manager
 from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import navigation_context, templates
 from ...application.services import BoardService, ChatService
+from ...application.column_triggers import board_workflow_badges
 from ...application.access import require_board_access, can_access_board, can_access_workspace, can_manage_archived_board
 from fastapi.responses import RedirectResponse
 
@@ -99,6 +100,13 @@ async def board_settings_page(
         raise HTTPException(status_code=404, detail="board not found")
     columns = await uow.boards.list_columns_active(board_id)
     archived_columns = await uow.boards.list_columns_archived(board_id)
+    # Column→workflow trigger config (authorization-scoped) + the workflows the
+    # member can pick from (scoped to channels they can see).
+    column_triggers = await svc.list_column_trigger_config(board_id, current_user, uow)
+    member_channels = await uow.channels.list_channels_for_member(current_user["id"])
+    available_workflows = await uow.workflows.list_for_channels(
+        [c.id for c in member_channels]
+    )
     return templates.TemplateResponse(
         request=request,
         name="board_settings.html",
@@ -106,10 +114,51 @@ async def board_settings_page(
             "board": board,
             "columns": columns,
             "archived_columns": archived_columns,
+            "column_triggers": column_triggers,
+            "available_workflows": available_workflows,
             "current_user": current_user,
             "agents": await uow.auth.list_members(kind="agent"),
             **await navigation_context(uow, current_user),
         },
+    )
+
+
+@router.post("/{board_id}/settings/columns/{column_id}/trigger", response_class=HTMLResponse)
+async def board_column_trigger_save(
+    request: Request,
+    board_id: str,
+    column_id: str,
+    svc: BoardServiceDep,
+    uow: UowDep,
+    current_user: CurrentUserOptionalDep,
+    workflow_id: str | None = Form(None),
+    enabled: str | None = Form(None),
+) -> Response:
+    """Configure (upsert) or clear a column→workflow rule from board settings."""
+    redirect = require_member_redirect(current_user)
+    if redirect is not None:
+        return redirect
+    assert current_user is not None
+    await require_board_access(current_user, board_id, uow)
+    board = await uow.boards.get_board(board_id)
+    if board is None:
+        raise HTTPException(status_code=404, detail="board not found")
+    try:
+        await svc.set_column_trigger(
+            board_id=board_id,
+            column_id=column_id,
+            workflow_id=workflow_id or None,
+            enabled=(enabled is not None),
+            user=current_user,
+            uow=uow,
+        )
+        await uow.commit()
+    except (PermissionError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=403 if isinstance(exc, PermissionError) else 400, detail=str(exc))
+    return RedirectResponse(
+        url=f"/boards/{board_id}/settings",
+        status_code=303,
+        headers={"HX-Redirect": f"/boards/{board_id}/settings"},
     )
 
 
@@ -133,6 +182,7 @@ async def board_page(
         card_id: [badge for status in statuses for badge in card_run_badges(status)]
         for card_id, statuses in card_run_statuses.items()
     }
+    card_workflow_badge_links = await board_workflow_badges(uow, board_id)
     return templates.TemplateResponse(
         request=request,
         name="board.html",
@@ -142,6 +192,7 @@ async def board_page(
             "agents": agents,
             "card_run_statuses": card_run_statuses,
             "card_run_badge_links": card_run_badge_links,
+            "card_workflow_badge_links": card_workflow_badge_links,
             **await navigation_context(uow, current_user),
         },
     )

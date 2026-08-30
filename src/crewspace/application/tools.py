@@ -308,6 +308,16 @@ def build_registry(publisher: BoardDeltaPublisher | None = None) -> ToolRegistry
         card = await uow.boards.move_card(card_id, column_id, actor_id or PLANNER_AGENT_ID)
         if card is None:
             raise KeyError(f"card not found: {card_id}")
+        if before.column_id != column_id:
+            from .column_triggers import trigger_column_workflow
+
+            await trigger_column_workflow(
+                card=card,
+                target_column_id=column_id,
+                uow=uow,
+                actor_id=actor_id or PLANNER_AGENT_ID,
+                event_key=f"{before.column_id}:{before.updated_at or 'initial'}",
+            )
         await _publish(
             uow,
             board_id,

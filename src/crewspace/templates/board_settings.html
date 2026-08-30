@@ -27,18 +27,37 @@
     </form>
     <ul style="list-style:none; margin:0; padding:0; display:grid; gap:10px;">
       {% for col in columns %}
-      <li style="display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:6px; padding:8px 10px;">
-        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/rename" style="display:flex; gap:6px; flex:1;">
-          <input name="name" type="text" value="{{ col.name }}" maxlength="60" style="flex:1; padding:6px; border:1px solid var(--border); border-radius:5px; background:var(--bg);" />
-          <button type="submit">Rename</button>
+      {% set trigger = column_triggers | selectattr("column_id", "equalto", col.id) | first if column_triggers else none %}
+      <li style="display:flex; flex-direction:column; gap:8px; border:1px solid var(--border); border-radius:6px; padding:8px 10px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/rename" style="display:flex; gap:6px; flex:1;">
+            <input name="name" type="text" value="{{ col.name }}" maxlength="60" style="flex:1; padding:6px; border:1px solid var(--border); border-radius:5px; background:var(--bg);" />
+            <button type="submit">Rename</button>
+          </form>
+          <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/reorder">
+            <input type="hidden" name="before_column_id" value="" />
+            <button type="submit" title="Move to end">↓</button>
+          </form>
+          <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/archive">
+            <button type="submit" title="Archive column">🗑</button>
+          </form>
+        </div>
+        <form method="post" action="/boards/{{ board.id }}/settings/columns/{{ col.id }}/trigger" style="display:flex; align-items:center; gap:8px; border-top:1px dashed var(--border); padding-top:8px;">
+          <span style="font-size:12px; color:var(--muted);">Workflow on move-in:</span>
+          <select name="workflow_id" style="flex:1; padding:5px; border:1px solid var(--border); border-radius:5px; background:var(--bg);">
+            <option value="">— none —</option>
+            {% for wf in available_workflows %}
+            <option value="{{ wf.id }}" {% if trigger and trigger.workflow_id == wf.id %}selected{% endif %}>{{ wf.name }} ({{ wf.trigger_type }})</option>
+            {% endfor %}
+          </select>
+          <label style="font-size:12px;"><input type="checkbox" name="enabled" value="1" {% if trigger and trigger.enabled %}checked{% endif %} /> enabled</label>
+          <button type="submit" class="primary" style="padding:5px 10px;">Save</button>
         </form>
-        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/reorder">
-          <input type="hidden" name="before_column_id" value="" />
-          <button type="submit" title="Move to end">↓</button>
-        </form>
-        <form method="post" action="/boards/{{ board.id }}/columns/{{ col.id }}/archive">
-          <button type="submit" title="Archive column">🗑</button>
-        </form>
+        {% if trigger and trigger.workflow_id %}
+        <div style="font-size:12px; color:var(--muted);">
+          Trigger workflow: <a href="/workflows/{{ trigger.workflow_id }}">view workflow</a>
+        </div>
+        {% endif %}
       </li>
       {% endfor %}
     </ul>

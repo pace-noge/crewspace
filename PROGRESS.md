@@ -16,11 +16,38 @@ Worktree at handoff: clean
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
 - Follow-up documentation and UI-discoverability fixes are on `master` after the
   milestone tag (latest pushed HEAD `9418e3a`).
-- M7 — Board as the Agent Operating Surface — is active (2/7 slices).
+- M7 — Board as the Agent Operating Surface — is active (5/7 slices).
   `PLAN.md` has the tracker; `PLAN_M7_BOARD.md` is the canonical detailed plan
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
+
+## M7.5 — Move-to-column workflow triggers — verified
+
+Feature: board settings map each active column to an enabled workflow. A real
+move into that column starts one `column_move` workflow run through the same
+application seam for HTTP and agent-tool mutations; the card shows the live run
+status and deep-links to workflow detail. Missing, disabled, stale, cross-board,
+or cross-workspace rules fail closed.
+
+Code touches: `ColumnWorkflowRule`/`ColumnMoveRunStatusView`, pure
+`ColumnTriggerDTO`, repository rule/claim/bind/status projections, migration
+`20260830_02`, shared `application/column_triggers.py`, BoardService and tool move
+integration, board settings route/template, and canonical/live card badge render
+contexts. The MVCC event key dedupes an immediate retry while allowing a genuine
+move-out then move-back to enqueue a new run.
+
+Verification: `tests/test_board_column_triggers.py` — 13 passed; board/M7 bounded
+group — 70 passed; workflow bounded group — 46 passed. Fresh, legacy, and
+populated downgrade migration paths pass; populated downgrade disables/remaps
+`column_move` workflows before restoring the legacy CHECK. `makemigrations
+--check` reports head `20260830_02` in sync; compileall, `git diff --check`, and
+added-line security scan are clean. A broad run reached 92% before the documented
+teardown timeout; its three cached failures all passed in isolation. Independent
+review inspected the final diff and reran 13 focused tests but parked before a
+verdict; the documented executable fail-closed fallback confirmed both production
+move paths use the shared seam and concluded `BLOCKERS: None`, `NON-BLOCKERS:
+None`.
 
 ## M7.1 — Card detail view and edit — [verified] committed + pushed
 

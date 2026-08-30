@@ -151,6 +151,14 @@ class ColumnDTO(BaseModel):
     cards: list[CardDTO] = []
 
 
+class ColumnTriggerDTO(BaseModel):
+    """Pure wire contract for a per-column → workflow rule (config surface)."""
+
+    column_id: str
+    workflow_id: str | None = None
+    enabled: bool = False
+
+
 class BoardDTO(BaseModel):
     id: str
     workspace_id: str

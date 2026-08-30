@@ -5,7 +5,7 @@ DTO projections; ORM instances never cross the repository boundary.
 """
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -295,6 +295,53 @@ class CardRunLinkModel(Base):
     linked_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class ColumnWorkflowRuleModel(Base):
+    """Configurable board-column → workflow mapping (one rule per column)."""
+
+    __tablename__ = "column_workflow_rule"
+    __table_args__ = (
+        UniqueConstraint("column_id", name="uq_column_workflow_rule_column"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    board_id: Mapped[str] = mapped_column(ForeignKey("board.id"), nullable=False)
+    column_id: Mapped[str] = mapped_column(
+        ForeignKey("board_column.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow.id", ondelete="CASCADE"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    changed_by: Mapped[str] = mapped_column(ForeignKey("member.id"), nullable=False)
+
+
+class ColumnMoveTriggerModel(Base):
+    """Idempotency log: prevents a card→column→workflow move from double-enqueueing."""
+
+    __tablename__ = "column_move_trigger"
+    __table_args__ = (
+        UniqueConstraint(
+            "card_id", "column_id", "workflow_id", "event_key",
+            name="uq_column_move_trigger",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    card_id: Mapped[str] = mapped_column(ForeignKey("card.id", ondelete="CASCADE"), nullable=False)
+    column_id: Mapped[str] = mapped_column(
+        ForeignKey("board_column.id", ondelete="CASCADE"), nullable=False
+    )
+    workflow_id: Mapped[str] = mapped_column(
+        ForeignKey("workflow.id", ondelete="CASCADE"), nullable=False
+    )
+    board_id: Mapped[str] = mapped_column(ForeignKey("board.id"), nullable=False)
+    event_key: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("workflow_run.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class SessionModel(Base):
     __tablename__ = "session"
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -353,7 +400,7 @@ class WorkflowModel(Base):
     __tablename__ = "workflow"
     __table_args__ = (
         CheckConstraint(
-            "trigger_type IN ('message_posted','reaction_added','diff_posted','webhook','schedule')",
+            "trigger_type IN ('message_posted','reaction_added','diff_posted','webhook','schedule','column_move')",
             name="ck_workflow_trigger_type",
         ),
         UniqueConstraint("channel_id", "name", name="uq_workflow_channel_name"),

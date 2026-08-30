@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from ..application.tools import BoardDeltaPublisher
+from ..application.column_triggers import board_workflow_badges
 from ..domain.ports import UnitOfWork
 from ..dto.board import BoardDeltaDTO
 from ..dto.mappers import to_board
@@ -46,7 +47,8 @@ def build_board_delta_publisher() -> BoardDeltaPublisher:
                 view = await uow.boards.get_board(board_id)
                 board = to_board(view) if view else None
                 html = templates.get_template("card.html").render(
-                    card=payload, board_id=board_id, board=board
+                    card=payload, board_id=board_id, board=board,
+                    card_workflow_badge_links=await board_workflow_badges(uow, board_id),
                 )
                 delta = delta.model_copy(update={"card_html": html})
             elif delta.kind == "comment_added":

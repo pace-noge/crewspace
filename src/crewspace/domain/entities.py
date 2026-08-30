@@ -341,6 +341,29 @@ class CardRunLink:
 
 
 @dataclass
+class ColumnWorkflowRule:
+    """One configurable board-column → workflow mapping."""
+
+    id: str
+    board_id: str
+    column_id: str
+    workflow_id: str
+    enabled: bool
+    changed_by: str
+
+
+@dataclass
+class ColumnMoveRunStatusView:
+    """Live workflow-run projection for a card moved into a trigger column."""
+
+    card_id: str
+    workflow_id: str
+    workflow_name: str
+    run_id: str
+    run_status: str
+
+
+@dataclass
 class CardRunStatusView:
     """Live projection of one linked run over its card (joined read model)."""
 

@@ -9,8 +9,9 @@ from ..connection import manager
 from ..routers.boards import board_room
 from ...domain.identifiers import DEFAULT_CHANNEL_ID
 from ..rendering import templates
-from ...dto.board import BoardDeltaDTO
+from ...dto.board import BoardDeltaDTO, card_run_badges
 from ...application.access import require_board_access
+from ...application.column_triggers import board_workflow_badges
 
 router = APIRouter(prefix="/cards", tags=["card"])
 
@@ -54,8 +55,16 @@ async def move_card(
     live_board = await svc.get_board(board_id, uow)
     if live_board is None:
         raise HTTPException(status_code=404, detail="board not found")
+    card_run_statuses = await svc.board_run_statuses(board_id, current_user, uow)
+    card_run_badge_links = {
+        card_key: [badge for status in statuses for badge in card_run_badges(status)]
+        for card_key, statuses in card_run_statuses.items()
+    }
+    card_workflow_badge_links = await board_workflow_badges(uow, board_id)
     card_html = templates.get_template("card.html").render(
-        card=card, board_id=board_id, board=live_board
+        card=card, board_id=board_id, board=live_board,
+        card_run_badge_links=card_run_badge_links,
+        card_workflow_badge_links=card_workflow_badge_links,
     )
     await manager.broadcast(
         board_room(board_id),
@@ -72,7 +81,15 @@ async def move_card(
             ).model_dump(mode="json"),
         },
     )
-    return templates.TemplateResponse(request=request, name="board_fragment.html", context={"board": board})
+    return templates.TemplateResponse(
+        request=request,
+        name="board_fragment.html",
+        context={
+            "board": board,
+            "card_run_badge_links": card_run_badge_links,
+            "card_workflow_badge_links": card_workflow_badge_links,
+        },
+    )
 
 
 @router.post("/{card_id}/comments", response_class=HTMLResponse)

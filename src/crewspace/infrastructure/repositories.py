@@ -25,6 +25,8 @@ from ..domain.entities import (
     CardActivityView,
     CardRunLink,
     CardRunStatusView,
+    ColumnMoveRunStatusView,
+    ColumnWorkflowRule,
     CardView,
     Channel,
     ChannelMembership,
@@ -2249,6 +2251,107 @@ class SqlAlchemyBoardRepository:
                 linked_at=_parse(r["linked_at"]) if r["linked_at"] else None,
             )
             for r in rows
+        ]
+
+    async def set_column_workflow(self, rule: ColumnWorkflowRule) -> None:
+        await self._conn.execute(
+            """
+            INSERT INTO column_workflow_rule
+                (id, board_id, column_id, workflow_id, enabled, changed_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(column_id) DO UPDATE SET
+                workflow_id=excluded.workflow_id,
+                enabled=excluded.enabled,
+                changed_by=excluded.changed_by
+            """,
+            (
+                rule.id, rule.board_id, rule.column_id, rule.workflow_id,
+                int(rule.enabled), rule.changed_by,
+            ),
+        )
+
+    async def list_column_workflows(self, board_id: str) -> list[ColumnWorkflowRule]:
+        cur = await self._conn.execute(
+            """
+            SELECT id, board_id, column_id, workflow_id, enabled, changed_by
+            FROM column_workflow_rule
+            WHERE board_id = ?
+            ORDER BY column_id
+            """,
+            (board_id,),
+        )
+        return [
+            ColumnWorkflowRule(
+                id=r["id"], board_id=r["board_id"], column_id=r["column_id"],
+                workflow_id=r["workflow_id"], enabled=bool(r["enabled"]),
+                changed_by=r["changed_by"],
+            )
+            for r in await cur.fetchall()
+        ]
+
+    async def get_column_workflow(self, column_id: str) -> ColumnWorkflowRule | None:
+        cur = await self._conn.execute(
+            """
+            SELECT id, board_id, column_id, workflow_id, enabled, changed_by
+            FROM column_workflow_rule WHERE column_id = ?
+            """,
+            (column_id,),
+        )
+        r = await cur.fetchone()
+        if r is None:
+            return None
+        return ColumnWorkflowRule(
+            id=r["id"], board_id=r["board_id"], column_id=r["column_id"],
+            workflow_id=r["workflow_id"], enabled=bool(r["enabled"]),
+            changed_by=r["changed_by"],
+        )
+
+    async def claim_column_move_trigger(
+        self, *, trigger_id: str, card_id: str, column_id: str,
+        workflow_id: str, board_id: str, event_key: str,
+    ) -> bool:
+        result = await self._conn.execute(
+            """
+            INSERT INTO column_move_trigger
+                (id, card_id, column_id, workflow_id, board_id, event_key, run_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+            ON CONFLICT(card_id, column_id, workflow_id, event_key) DO NOTHING
+            """,
+            (
+                trigger_id, card_id, column_id, workflow_id, board_id, event_key,
+                dt.datetime.now(dt.timezone.utc).isoformat(),
+            ),
+        )
+        return result.rowcount == 1
+
+    async def bind_column_move_trigger(self, trigger_id: str, run_id: str) -> None:
+        await self._conn.execute(
+            "UPDATE column_move_trigger SET run_id = ? WHERE id = ? AND run_id IS NULL",
+            (run_id, trigger_id),
+        )
+
+    async def list_board_column_move_statuses(
+        self, board_id: str
+    ) -> list[ColumnMoveRunStatusView]:
+        cur = await self._conn.execute(
+            """
+            SELECT t.card_id, t.workflow_id, w.name AS workflow_name,
+                   r.id AS run_id, r.status AS run_status
+            FROM column_move_trigger t
+            JOIN workflow w ON w.id = t.workflow_id
+            JOIN workflow_run r ON r.id = t.run_id
+            WHERE t.board_id = ?
+            ORDER BY t.created_at DESC
+            """,
+            (board_id,),
+        )
+        return [
+            ColumnMoveRunStatusView(
+                card_id=row["card_id"], workflow_id=row["workflow_id"],
+                workflow_name=row["workflow_name"], run_id=row["run_id"],
+                run_status=row["run_status"],
+            )
+            for row in await cur.fetchall()
         ]
 
     async def find_card_by_title(self, board_id: str, title: str) -> CardView | None:

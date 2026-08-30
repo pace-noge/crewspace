@@ -146,7 +146,7 @@ Acceptance:
   - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
-M7.5 — Move-to-column workflow triggers                   [L]  PLANNED
+M7.5 — Move-to-column workflow triggers                   [L]  VERIFIED
 --------------------------------------------------------------------------------
 Feature:
   Moving a card to a configured column starts a workflow or pipeline stage
@@ -154,6 +154,13 @@ Feature:
   configurable per board; a move to a trigger column enqueues the run and the
   card reflects it. This turns the board into a visual workflow orchestrator
   reusing the existing workflow executor and M6.6 delivery pipeline.
+
+Status: RED→GREEN implementation complete; 13 focused tests, 70 board/M7
+regressions, and 46 workflow regressions green. Fresh/legacy/populated-downgrade
+migration guards pass at head `20260830_02`; compile/diff/security gates clean.
+The independent reviewer inspected the current diff and reran the focused suite
+but parked before emitting a verdict; the documented executable fail-closed
+fallback found `BLOCKERS: None` and `NON-BLOCKERS: None`.
 
 Code (concrete):
   - application/workflows.py: a `column_move` trigger source (like the existing
@@ -174,12 +181,12 @@ Code (concrete):
   - A misconfigured/nonexistent workflow never silently advances a card.
 
 Acceptance:
-  - [ ] Moving a card into a trigger column enqueues the configured workflow/pipeline.
-  - [ ] Column→workflow mapping is configurable per board via the UI.
-  - [ ] Triggers are idempotent (no double enqueue) and fail closed on misconfiguration.
-  - [ ] Card reflects the resulting run/pipeline state.
-  - [ ] Migration-compat guard clean; makemigrations --check passes.
-  - [ ] Feature + code documented in the M7 progress log with tests + commit evidence.
+  - [x] Moving a card into a trigger column enqueues the configured workflow/pipeline.
+  - [x] Column→workflow mapping is configurable per board via the UI.
+  - [x] Triggers are idempotent (no double enqueue) and fail closed on misconfiguration.
+  - [x] Card reflects the resulting run/pipeline state.
+  - [x] Migration-compat guard clean; makemigrations --check passes.
+  - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
 M7.6 — Board planning views: filters, group-by, timeline    [L]  PLANNED
