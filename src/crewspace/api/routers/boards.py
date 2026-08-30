@@ -1,20 +1,53 @@
 """API: board router — board page + card creation (HTMX fragments)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 
 from ...domain.identifiers import DEFAULT_CHANNEL_ID, DEFAULT_BOARD_ID
 from ...domain.ports import UnitOfWork
 from ...dto.markdown import render_message_markdown
+from ...dto.board import BoardDeltaDTO
+from ..board_live import board_room
 from ..connection import manager
 from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowDep, require_member_redirect
 from ..rendering import navigation_context, templates
 from ...application.services import BoardService, ChatService
-from ...application.access import require_board_access, can_access_workspace, can_manage_archived_board
+from ...application.access import require_board_access, can_access_board, can_access_workspace, can_manage_archived_board
 from fastapi.responses import RedirectResponse
 
 router = APIRouter(prefix="/boards", tags=["board"])
+
+
+@router.websocket("/{board_id}/ws")
+async def board_ws(websocket: WebSocket, board_id: str) -> None:
+    """Authorized, receive-only subscription for board delta frames."""
+    from ...security import is_same_origin, unsign_session
+    from ..deps import SESSION_COOKIE
+
+    if not is_same_origin(websocket.headers.get("origin"), str(websocket.url)):
+        await websocket.close(code=4003)
+        return
+    db = websocket.app.state.db
+    token = websocket.cookies.get(SESSION_COOKIE)
+    sid = unsign_session(token, websocket.app.state.settings.secret) if token else None
+    async with db.uow() as uow:
+        member = await uow.auth.get_session_member(sid) if sid else None
+        if member is None or not await can_access_board(member, board_id, uow):
+            await websocket.close(code=4003)
+            return
+
+    room = board_room(board_id)
+    await manager.connect(room, websocket)
+    try:
+        while True:
+            # Keep the socket alive and ignore client frames: mutations flow
+            # through authenticated HTTP endpoints, never through this socket.
+            await websocket.receive_json()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.disconnect(room, websocket)
 
 
 # Static GET routes MUST be registered before the dynamic GET /{board_id}
@@ -159,6 +192,24 @@ async def create_card(
         uow,
     )
     await manager.broadcast(DEFAULT_CHANNEL_ID, ann.model_dump(mode="json"))
+    # Live board viewers: publish the minimal delta (they update in place).
+    card_html = templates.get_template("card.html").render(
+        card=card, board_id=board_id, board=board
+    )
+    await manager.broadcast(
+        board_room(board_id),
+        {
+            "type": "board_delta",
+            "board_id": board_id,
+            "delta": BoardDeltaDTO(
+                kind="card_created",
+                card_id=card.id,
+                title=card.title,
+                to_column_id=column_id,
+                card_html=card_html,
+            ).model_dump(mode="json"),
+        },
+    )
     return templates.TemplateResponse(request=request, name="board_fragment.html", context={"board": board})
 
 
@@ -227,6 +278,26 @@ async def update_card_detail(
     detail = await svc.get_card_detail(card_id, uow)
     assert detail is not None
     members = await uow.auth.list_members()
+    # Live board viewers: broadcast a card_updated delta so other clients
+    # re-render this card in place (they keep their own scroll/state).
+    updated_board = await svc.get_board(board_id, uow)
+    if updated_board is not None:
+        card_html = templates.get_template("card.html").render(
+            card=detail.card, board_id=board_id, board=updated_board
+        )
+        await manager.broadcast(
+            board_room(board_id),
+            {
+                "type": "board_delta",
+                "board_id": board_id,
+                "delta": BoardDeltaDTO(
+                    kind="card_updated",
+                    card_id=card_id,
+                    title=detail.card.title,
+                    card_html=card_html,
+                ).model_dump(mode="json"),
+            },
+        )
     return templates.TemplateResponse(
         request=request,
         name="card_detail.html",

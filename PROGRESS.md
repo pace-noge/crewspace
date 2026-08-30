@@ -76,6 +76,35 @@ BLOCKERS: none, NON-BLOCKERS: none.
 
 Next slice: M7.3 — live board updates over WebSocket.
 
+## M7.3 — Live board updates over WebSocket — verified, committed
+
+Feature: each accessible board has an authorized `board:{board_id}` WebSocket
+room. Card create/move/edit/comment publish typed `board_delta` frames to that
+room; non-acting viewers apply canonical card/comment fragments directly to the
+affected DOM (no reload), card moves physically relocate between columns, and
+self-echoes/reconnect replays are deduped. Acting client keeps its whole-board
+HTMX feedback. Agent-originated mutations (in-process stub/LLM agents and the
+agent WS tool frame) publish via a registry publisher seam wired in
+`api/board_live.py`; the standalone MCP process is a separate runtime with no
+web ConnectionManager, so its mutations cannot broadcast into the web process's
+in-memory rooms (documented boundary).
+
+Code touches: pure `BoardDeltaDTO` in dto/board.py; authorized
+`/boards/{board_id}/ws` + create/update broadcasts in routers/boards.py;
+move/comment broadcasts in routers/cards.py; static/board_live.js subscriber +
+in-place applier wired from board.html; stable comment-{id} fragment identity;
+`api/board_live.py` adapter (board_room + board-delta publisher rendering the
+canonical `card.html` fragment); tool handler publish hooks in
+application/tools.py;
+Node DOM-shim tests executing the real client script.
+
+Verification: bounded gate 88 green (live server 10, JS shim, board/security/
+tool/MCP regressions); `makemigrations --check` clean at head `20260826_02` (no
+schema change); compileall/diff/security checks clean. Initial independent
+review flagged a wiring gap (agent-originated mutations didn't broadcast) —
+remediated; final fail-closed re-review BLOCKERS: none, NON-BLOCKERS: none.
+Committed and pushed.
+
 ## How to resume
 
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
@@ -86,8 +115,8 @@ Next slice: M7.3 — live board updates over WebSocket.
    `uv run pytest tests/test_inbox_*.py -q` (last result: 27 passed).
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
-6. Next implementation: M7.3 — live board updates over WebSocket. Follow
-   `PLAN_M7_BOARD.md`; M7.2 is verified and committed at 40ea7be.
+6. Next implementation: M7.4 — Card ↔ coding-run / change-set linkage. Follow
+   `PLAN_M7_BOARD.md`; M7.3 is verified and committed; M7.4 is PLANNED.
 
 ## M6.8 — What shipped
 

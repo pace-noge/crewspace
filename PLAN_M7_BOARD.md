@@ -80,7 +80,7 @@ Acceptance:
   - [ ] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
-M7.3 — Live board updates over WebSocket                  [M]  PLANNED
+M7.3 — Live board updates over WebSocket                  [M]  ACTIVE
 --------------------------------------------------------------------------------
 Feature:
   Board mutations (create/move/comment/edit) broadcast a minimal delta to all
@@ -88,6 +88,10 @@ Feature:
   page reload. Replace the current "re-render the whole board for the acting
   client only" behavior on the read path with targeted per-board broadcasts;
   keep the whole-board swap for the acting client's own feedback.
+
+Status: implementation RED→GREEN complete; bounded gate green; independent
+fail-closed review BLOCKERS: none; committed + pushed as part of the verified
+slice.
 
 Code (concrete):
   - api/connection.py: a per-board broadcast room (reuse ConnectionManager with a
@@ -102,11 +106,11 @@ Code (concrete):
     the other receives the matching delta.
 
 Acceptance:
-  - [ ] A card created/moved/commented/edited by one client reaches other viewers of that board live.
-  - [ ] Deltas carry enough data to update the card in place (no board reload needed).
-  - [ ] Broadcast is board-scoped; members of other boards/workspaces receive nothing.
-  - [ ] Acting client still gets its canonical whole-board feedback (no regression).
-  - [ ] Feature + code documented in the M7 progress log with tests + commit evidence.
+  - [x] A card created/moved/commented/edited by one client reaches other viewers of that board live.
+  - [x] Deltas carry enough data to update the card in place (no board reload needed).
+  - [x] Broadcast is board-scoped; members of other boards/workspaces receive nothing.
+  - [x] Acting client still gets its canonical whole-board feedback (no regression).
+  - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
 M7.4 — Card ↔ coding-run / change-set linkage             [L]  PLANNED
@@ -230,6 +234,52 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
+- M7.3 — Live board updates over WebSocket — verified; BLOCKERS: none; commit
+  pending (record verified hash after push). Agent-originated mutations
+  broadcast via the registry publisher seam (api/board_live.py); standalone
+  MCP is a separate process (no web ConnectionManager) and is documented as
+  out of the live-room scope.
+
+  Feature: each accessible board has an authorized WebSocket room
+  (`board:{board_id}`). Card create/move/edit/comment mutations publish typed
+  `board_delta` frames into that room. Non-acting viewers apply the canonical
+  server-rendered card/comment fragments directly to the affected DOM node,
+  while the acting client keeps the existing HTMX whole-board response.
+  Card moves physically relocate the fragment between columns; card/comment
+  self-echoes and reconnect replays are idempotently ignored.
+
+  Code:
+  - dto/board.py: pure `BoardDeltaDTO` wire contract with constrained kinds,
+    safe card/column/comment ids, and optional canonical HTML fragments.
+  - api/routers/boards.py: authorized `/boards/{board_id}/ws` subscription to
+    `board:{board_id}`; create/update broadcasts.
+  - api/routers/cards.py: move/comment broadcasts, including stable comment id.
+  - templates/board.html + static/board_live.js: board-room subscriber and
+    targeted card create/move/update/comment DOM applier; self-echo/replay
+    dedupe; unknown kinds no-op; reconnect loop.
+  - templates/comment.html: stable `comment-{id}` DOM identity for replay-safe
+    comment deltas.
+  - api/board_live.py: `board_room` + `build_board_delta_publisher` adapter;
+    renders the canonical `card.html`/`comment.html` fragments (via
+    uow.boards.get_board + dto.mappers.to_board) and broadcasts to the room.
+  - application/tools.py: `BoardDeltaPublisher` seam; `_publish` hooks in
+    create_card/move_card/comment_card/update_card so agent-originated
+    mutations broadcast through the web composition roots (registry dep,
+    agent WS); standalone MCP keeps the no-op default.
+  - tests/test_board_live.py: BoardDeltaDTO, board-room isolation, authorized
+    WebSocket endpoint coverage (4003 rejection), real-handler agent-tool
+    publisher tests, and a real-adapter render/broadcast test.
+  - tests/test_board_live_js.py: Node DOM shim executes the REAL client script
+    and verifies create/move/update/comment in-place updates, physical
+    cross-column relocation, self-echo/replay dedupe, and unknown-kind no-op.
+
+  Evidence: bounded gate green (board + live + security + tool + MCP groups,
+  88 passed); `makemigrations --check` clean at head 20260826_02 (no schema
+  change); compileall OK; git diff --check clean; added-line security scan
+  clean. Independent fail-closed review: BLOCKERS: none, NON-BLOCKERS: none
+  (one doc nit fixed). Commit: pending (record the real verified commit hash
+  after push).
+
 - M7.2 — Board & column management + board switcher — [verified] committed.
 
   Feature: create/rename/archive/restore boards from the UI (dedicated

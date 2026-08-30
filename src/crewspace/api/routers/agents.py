@@ -22,6 +22,7 @@ from ..connection import agent_manager
 from ...application.change_sets import ChangeSetService
 from ...application.coding_runs import dispatch_coding_run, mark_run_failed
 from ...application.tools import build_registry
+from ..board_live import build_board_delta_publisher
 from ...config import get_settings
 from ...security import verify_connect_claim
 
@@ -47,7 +48,7 @@ async def agent_ws(websocket: WebSocket):
         return
 
     await agent_manager.connect(agent_id, websocket)
-    registry = build_registry()
+    registry = build_registry(publisher=build_board_delta_publisher())
     try:
         while True:
             frame = await websocket.receive_json()

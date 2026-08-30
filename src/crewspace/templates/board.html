@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block title %}{{ board.name }} — Crewspace{% endblock %}
+{% block head %}<meta name="board-id" content="{{ board.id }}" />{% endblock %}
 {% block nav_board %}active{% endblock %}
 {% block topbar %}{{ board.name }}{% endblock %}
 
@@ -18,6 +19,7 @@
 {% endblock %}
 
 {% block scripts %}
+  <script src="/static/board_live.js"></script>
   <script>
     // Drag-and-drop: move a card to another column by dropping on a column body.
     // The move endpoint re-renders the WHOLE board; we swap #board-wrap so both

@@ -20,6 +20,7 @@ from ..application.workspace_service import WorkspaceService
 from ..config import Settings, get_settings
 from ..domain.ports import UnitOfWork
 from ..infrastructure.mcp_client import build_external_tool_executor
+from .board_live import build_board_delta_publisher
 from ..security import unsign_session
 
 SESSION_COOKIE = "crewspace_session"
@@ -30,8 +31,9 @@ def get_settings_dep() -> Settings:
 
 
 def get_registry_dep() -> ToolRegistry:
-    # Built once per process; tools are stateless.
-    return build_registry()
+    # Built once per process; tools are stateless. The board-delta publisher
+    # wires live updates for agent-originated mutations.
+    return build_registry(publisher=build_board_delta_publisher())
 
 
 async def get_uow(request: Request) -> AsyncIterator[UnitOfWork]:

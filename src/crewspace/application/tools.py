@@ -23,7 +23,19 @@ from typing import Any
 from ..domain.identifiers import DEFAULT_BOARD_ID, PLANNER_AGENT_ID
 from ..domain.entities import AgentToolCall
 from ..domain.ports import ToolRunner, UnitOfWork
+from ..dto.board import BoardDeltaDTO
 from .access import list_accessible_boards
+
+
+# Optional board_delta publisher injected by the API composition root. The
+# signature is: async (uow, board_id, BoardDeltaDTO, payload) -> None where uow
+# is the active UnitOfWork (so the adapter can re-read the board for canonical
+# rendering) and payload is the mutated read-model entity (CardView |
+# CommentView). Standalone MCP server omits it (no web process /
+# ConnectionManager to broadcast to).
+BoardDeltaPublisher = Callable[
+    [UnitOfWork, str, BoardDeltaDTO, Any], Awaitable[None]
+]
 
 
 @dataclass
@@ -167,8 +179,9 @@ class _BoundRunner:
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, publisher: BoardDeltaPublisher | None = None) -> None:
         self._tools: dict[str, Tool] = {}
+        self.publisher = publisher
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.name] = tool
@@ -195,9 +208,20 @@ class ToolRegistry:
         return _BoundRunner(self, uow, principal_id, agent_id)
 
 
-def build_registry() -> ToolRegistry:
+def build_registry(publisher: BoardDeltaPublisher | None = None) -> ToolRegistry:
     """Wire the canonical tool set. Add new capabilities here only."""
-    reg = ToolRegistry()
+    reg = ToolRegistry(publisher)
+
+    async def _publish(
+        uow: UnitOfWork, board_id: str, delta: BoardDeltaDTO, payload: Any,
+    ) -> None:
+        # Board_delta live broadcast for agent-originated mutations. The
+        # publisher callable is injected by the API composition root (it has
+        # access to the ConnectionManager + board room + templates); without
+        # it (e.g. standalone MCP server) this is a no-op.
+        if reg.publisher is None:
+            return
+        await reg.publisher(uow, board_id, delta, payload)
 
     async def require_board_scope(
         uow: UnitOfWork, principal_id: str | None, board_id: str
@@ -257,6 +281,17 @@ def build_registry() -> ToolRegistry:
         card = await uow.boards.add_card(
             column_id, title, description, actor_id=actor_id or PLANNER_AGENT_ID
         )
+        await _publish(
+            uow,
+            board_id,
+            BoardDeltaDTO(
+                kind="card_created",
+                card_id=card.id,
+                to_column_id=card.column_id,
+                title=card.title,
+            ),
+            card,
+        )
         return {"id": card.id, "title": card.title, "column_id": card.column_id}
 
     async def move_card(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, card_id: str, column_id: str) -> dict:
@@ -267,9 +302,24 @@ def build_registry() -> ToolRegistry:
         if await uow.boards.is_column_archived(column_id):
             raise KeyError(f"target column is archived: {column_id}")
         await require_board_scope(uow, principal_id, board_id)
+        before = await uow.boards.get_card(card_id)
+        if before is None:
+            raise KeyError(f"card not found: {card_id}")
         card = await uow.boards.move_card(card_id, column_id, actor_id or PLANNER_AGENT_ID)
         if card is None:
             raise KeyError(f"card not found: {card_id}")
+        await _publish(
+            uow,
+            board_id,
+            BoardDeltaDTO(
+                kind="card_moved",
+                card_id=card.id,
+                from_column_id=before.column_id,
+                to_column_id=card.column_id,
+                title=card.title,
+            ),
+            card,
+        )
         return {"id": card.id, "title": card.title, "column_id": card.column_id}
 
     async def comment_card(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, card_id: str, body: str, author_id: str | None = None) -> dict:
@@ -278,6 +328,12 @@ def build_registry() -> ToolRegistry:
             raise KeyError(f"card not found: {card_id}")
         await require_board_scope(uow, principal_id, board_id)
         c = await uow.boards.add_comment(card_id, actor_id or author_id or PLANNER_AGENT_ID, body)
+        await _publish(
+            uow,
+            board_id,
+            BoardDeltaDTO(kind="comment_added", card_id=card_id, comment_id=c.id),
+            c,
+        )
         return {"id": c.id, "card_id": c.card_id, "body": c.body}
 
     async def find_card(uow: UnitOfWork, principal_id: str | None, actor_id: str | None, title: str, board_id: str | None = None) -> dict | None:
@@ -320,6 +376,12 @@ def build_registry() -> ToolRegistry:
         )
         if card is None:
             return None
+        await _publish(
+            uow,
+            board_id,
+            BoardDeltaDTO(kind="card_updated", card_id=card.id, title=card.title),
+            card,
+        )
         return {
             "id": card.id, "title": card.title, "column_id": card.column_id,
             "description": card.description, "assignee_id": card.assignee_id,

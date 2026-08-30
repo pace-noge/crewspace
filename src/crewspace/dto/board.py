@@ -10,12 +10,31 @@ are also attribute-accessible from Jinja templates (for HTMX fragments).
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 SafeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 BoardName = Annotated[str, StringConstraints(min_length=1, max_length=120)]
+
+
+class BoardDeltaDTO(BaseModel):
+    """Pure wire contract for one minimal board mutation.
+
+    ``card_html`` / ``comment_html`` are canonical server-rendered fragments so
+    non-acting clients can update one card/comment in place without reloading
+    or re-rendering the whole board.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: Literal["card_created", "card_moved", "card_updated", "comment_added"]
+    card_id: SafeId
+    comment_id: SafeId | None = None
+    title: str | None = None
+    from_column_id: SafeId | None = None
+    to_column_id: SafeId | None = None
+    card_html: str | None = None
+    comment_html: str | None = None
 
 
 class BoardCommandDTO(BaseModel):
