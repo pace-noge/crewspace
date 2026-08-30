@@ -103,7 +103,7 @@ tool/MCP regressions); `makemigrations --check` clean at head `20260826_02` (no
 schema change); compileall/diff/security checks clean. Initial independent
 review flagged a wiring gap (agent-originated mutations didn't broadcast) —
 remediated; final fail-closed re-review BLOCKERS: none, NON-BLOCKERS: none.
-Committed and pushed.
+Committed and pushed as f0a81b7.
 
 ## How to resume
 
@@ -116,7 +116,7 @@ Committed and pushed.
 5. Verify schema compatibility if touching models/application boundaries:
    `uv run crewspace-manage makemigrations --check`.
 6. Next implementation: M7.4 — Card ↔ coding-run / change-set linkage. Follow
-   `PLAN_M7_BOARD.md`; M7.3 is verified and committed; M7.4 is PLANNED.
+   `PLAN_M7_BOARD.md`; M7.3 is verified and committed at f0a81b7; M7.4 is PLANNED.
 
 ## M6.8 — What shipped
 

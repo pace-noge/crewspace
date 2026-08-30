@@ -90,8 +90,7 @@ Feature:
   keep the whole-board swap for the acting client's own feedback.
 
 Status: implementation RED→GREEN complete; bounded gate green; independent
-fail-closed review BLOCKERS: none; committed + pushed as part of the verified
-slice.
+fail-closed review BLOCKERS: none; committed + pushed as f0a81b7.
 
 Code (concrete):
   - api/connection.py: a per-board broadcast room (reuse ConnectionManager with a
@@ -234,11 +233,10 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
-- M7.3 — Live board updates over WebSocket — verified; BLOCKERS: none; commit
-  pending (record verified hash after push). Agent-originated mutations
-  broadcast via the registry publisher seam (api/board_live.py); standalone
-  MCP is a separate process (no web ConnectionManager) and is documented as
-  out of the live-room scope.
+- M7.3 — Live board updates over WebSocket — verified; BLOCKERS: none.
+  Agent-originated mutations broadcast via the registry publisher seam
+  (api/board_live.py); standalone MCP is a separate process (no web
+  ConnectionManager) and is documented as out of the live-room scope.
 
   Feature: each accessible board has an authorized WebSocket room
   (`board:{board_id}`). Card create/move/edit/comment mutations publish typed
@@ -277,8 +275,7 @@ M7 Progress log (append-only, newest first):
   88 passed); `makemigrations --check` clean at head 20260826_02 (no schema
   change); compileall OK; git diff --check clean; added-line security scan
   clean. Independent fail-closed review: BLOCKERS: none, NON-BLOCKERS: none
-  (one doc nit fixed). Commit: pending (record the real verified commit hash
-  after push).
+  (one doc nit fixed). Committed + pushed as f0a81b7.
 
 - M7.2 — Board & column management + board switcher — [verified] committed.
 
