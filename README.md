@@ -9,8 +9,10 @@ Remote agents connect as separate processes over an Ed25519-authenticated
 WebSocket and act under their own verified identities.
 
 Built with FastAPI, SQLAlchemy (async) + Alembic, Jinja2/HTMX, Python 3.14, and
-`uv`. The bundled Planner works without an API key; external signed agents and
-LLM-backed agents can be connected through the documented agent protocol.
+`uv`. The bundled `Crewspace` assistant is an **LLM-backed** builtin agent (`backend=llm`)
+that needs `CREWSPACE_LLM_API_KEY` / `CREWSPACE_LLM_BASE_URL` to answer; the seeded stub
+`Planner` (and any `stub` agent) respond without an API key. External signed agents
+connect through the documented agent protocol.
 
 > Upgrade note: this release completes the namespace migration to `crewspace`,
 > including Python imports, console commands, MCP identifiers, the `CREWSPACE_`
@@ -60,13 +62,17 @@ Then open:
 
 ## Talk to the agent (in chat)
 ```
-@planner help
-@planner new card "Ship login" in Todo
-@planner move "Ship login" to Doing
-@planner move "Ship login" to Done
+@crewspace help
+@crewspace new card "Ship login" in Todo
+@crewspace move "Ship login" to Doing
+@crewspace move "Ship login" to Done
 ```
-The agent creates the card on the board and replies in chat. New cards also get
-an automatic note from the agent. Open the board to watch it happen.
+The `Crewspace` assistant creates the card on the board and replies in chat. New
+cards also get an automatic note from the agent. Open the board to watch it happen.
+(The builtin `crewspace` agent is **LLM-backed**: it needs `CREWSPACE_LLM_API_KEY` /
+`CREWSPACE_LLM_BASE_URL` configured to answer — without them its calls fail with an
+LLM error. The seeded `Planner` stub answers canned keyless — mention `@planner` to
+try that.)
 
 ## Test it
 ```bash
@@ -148,8 +154,12 @@ gains intelligence with **zero route changes**. That's the point of the seam.
 - SQLAlchemy async engine: SQLite via aiosqlite (default) and PostgreSQL via
   asyncpg share the same repository code; Alembic owns schema migrations.
 - HTMX + server-rendered fragments = no JS build step. Swap for a React SPA later.
-- The agent is a regex stub. Real version: implement `AgentProvider` with an LLM
-  call and tool use (it can already create/move cards and comment).
+- Agents are registered members resolved by mention. A `stub` agent (`Planner`,
+  e.g.) answers with canned text and needs no key; the builtin `crewspace` agent is
+  `backend=llm`, so it needs `CREWSPACE_LLM_*` and gains tool use
+  (create/move/comment, summarize threads). Real LLM behavior is selected through the
+  agent registry / `MultiAgentProvider`, so the whole app gains intelligence with no
+  route changes.
 
 ## Where to take it
 1. Real agent: `AgentProvider` + an LLM; give it tools (create/move card, search chat).

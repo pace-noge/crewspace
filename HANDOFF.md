@@ -53,7 +53,7 @@ touching routes/services/agents. The user explicitly wanted DTOs for DB-swap.
     uv run pytest -q            # -> 6 passed
     uv run uvicorn crewspace.main:app --reload --port 8000
     # chat: http://127.0.0.1:8000/   board: http://127.0.0.1:8000/board/board_main
-    # talk to agent in chat: @planner new card "X" in Todo|Doing|Done
+    # talk to the default agent in chat: @crewspace new card "X" in Todo|Doing|Done
 
 ## Key design decisions (so you don't re-litigate)
 - DB-swap seam: `infrastructure/db.py` is the ONLY sqlite-aware module. Swap =

@@ -24,9 +24,14 @@ sure a connected agent is the real, registered one.
   `post_message` (§6). The app runs the tool and returns a `tool_result` frame.
 - **React to new cards.** Every connected agent is pushed a `card_created` frame
   whenever any card is created, and may act on it (§5).
-- **Choose its own brain.** A "remote" agent runs *any* LLM in its own process
-  (its API key never touches the app). An in-app fallback agent can be `stub`
-  (canned) or `llm` (server's `CREWSPACE_LLM_*` env creds) — set per agent at registration (§2, §7b).
+- **Choose its own brain.** A *remote* agent runs *any* LLM in its own process
+  (its API key never touches the app). Builtin agents (registered with
+  `uses_app_llm`) are the only ones with an in-app fallback and they are never
+  WebSocket-connected — they run in the main process using the server's
+  `CREWSPACE_LLM_*` env creds and answer as `stub` (canned) otherwise (§2, §7b).
+  A *remote* agent has **no** in-app fallback: when its socket is down it is simply
+  offline and the app returns "Agent X is offline." — it is never silently served by
+  the stub/builtin path.
 
 **Cannot do**
 - **Impersonate anyone.** Any `author_id` it sends in a tool call is ignored; every
@@ -67,18 +72,24 @@ just WebSocket + JSON + Ed25519.)
 
 ## 2. Get an agent identity (registration)
 
-An agent identity is created **once**, by a human admin, in the web UI:
+An agent identity is created **once**, in the web UI:
 
-1. Log in as an admin (default: **Bilal / admin123**).
-2. Open **Register agent** (admin-only link in the sidebar).
-3. Enter a name (e.g. `Coder`) and submit. You can also pick a **backend**:
-   - `stub` — the in-app fallback uses canned replies (used when this agent is not
-     connected over WebSocket).
-   - `llm` — the in-app fallback uses an LLM. It reads the server's `CREWSPACE_LLM_API_KEY` /
-     `CREWSPACE_LLM_BASE_URL` env vars (kept **out of the database** — never stored as plaintext,
-     so a DB/backup leak can't expose a key). A *connected* (remote) agent runs its own
-     LLM in its own process and never shares its key with the app at all (see §7b).
-4. The server generates an **Ed25519 keypair**:
+1. Log in. **Any logged-in user** may register a **remote (WebSocket) agent**. Only a
+   **superadmin** may additionally register a **builtin app-LLM agent** (the
+   `uses_app_llm` checkbox is superadmin-only in the form).
+2. Open **Register agent** (sidebar link, visible to logged-in users).
+3. Enter a name (e.g. `Coder`) and submit. A superadmin may also tick
+   **"uses app LLM"** to make it builtin:
+   - **Remote agent (default).** The app generates an **Ed25519 keypair**; the
+     **public key** is stored and the **private key** is shown once for the agent
+     process to connect with. There is **no** in-app fallback — if the socket is
+     down the agent is offline (see §0). The agent runs its own LLM in its own
+     process and never shares its key with the app (see §7b).
+   - **Builtin app-LLM agent (superadmin only, `uses_app_llm`).** No keypair is
+     generated; it runs *inside* the main app using the server's `CREWSPACE_LLM_API_KEY` /
+     `CREWSPACE_LLM_BASE_URL` env vars (kept **out of the database**, so a DB/backup leak
+     can't expose a key) and is never WebSocket-connected.
+4. For a **remote** agent the server generates an **Ed25519 keypair**:
    - the **public key** is stored in the `member.pubkey` column (server-side, used
      to verify the agent's signatures);
    - the **private key** is shown to you **exactly once** on the result page.
@@ -149,8 +160,9 @@ If the claim is missing, malformed, expired, or the signature doesn't verify, th
 server closes the socket with **close code 4001**.
 
 ### Per-action signing
-Every frame you send **up** to the server (`hello`, `agent_activity`, `agent_progress`, `reply`, `tool`) MUST include a `sig`
-field:
+Every frame you send **up** to the server (`hello`, `agent_activity`, `agent_progress`, `reply`, `tool`,
+`coding_change_set`, `coding_run_failed`, `coding_workspace_action_result`,
+`coding_workspace_action_failed`) MUST include a `sig` field:
 ```json
 { "type": "reply", "message_id": "m1", "text": "hi", "sig": "<base64url(ed25519_sig)>" }
 ```
@@ -159,6 +171,15 @@ field:
 - The server recomputes `canonical_json(frame minus sig)` and verifies against
   your `pubkey`. An unsigned or bad-signature frame is rejected with:
   `{"type":"error","error":"bad signature"}` (and the frame is ignored).
+- After a successful `hello` (protocol v1), every subsequent action frame
+  (`agent_activity`, `agent_progress`, `reply`, `tool`, and all `coding_*` frames)
+  must also carry the `session_id` from `hello_ack` and a **strictly increasing**
+  integer `seq` (start at 1, +1 per frame). The signature MUST cover `session_id`
+  and `seq`. The `hello` frame itself carries neither and is signed without them.
+  Replayed, reordered, or cross-reconnect frames (wrong `session_id` or `seq` not
+  greater than the last accepted value) are rejected with
+  `{"type":"error","error":"invalid or replayed sequence"}`. On reconnect you receive a
+  new `session_id`, so old `seq` values are not reusable.
 
 ---
 
@@ -173,6 +194,38 @@ field:
   signed `hello` frame below. Existing agents that do not send one receive an
   explicit legacy profile (`progress` + `tools`, concurrency 1); this preserves
   compatibility without implying support for cancellation or future features.
+
+### 4b. Capability negotiation, sessions, and the legacy profile
+
+Immediately after connect, send a signed `hello` frame (§5). The server replies
+with `hello_ack` containing a `session_id` (a fresh opaque token) and your accepted
+`protocol_version`, `capabilities`, and `max_concurrency`. **All** later action frames
+must include that `session_id` plus a strictly increasing `seq` (see §3). If you never
+send `hello`, the socket stays on the **legacy profile**: `protocol_version` 0,
+`capabilities` `["progress","tools"]`, `max_concurrency` 1 — you may still send
+`reply`/`agent_progress`/`tool` frames, but `agent_activity`, cancellation, coding
+workspace, artifacts, patches, resume, and heartbeat are unavailable and any such
+frame is rejected with `{"type":"error","error":"unsupported capability: …"}`.
+
+Capability → main-app behavior:
+
+| capability         | what it unlocks in the main app |
+|--------------------|----------------------------------|
+| `progress`         | `agent_progress` frames are accepted and shown as live output. |
+| `cancellation`     | the app may dispatch `coding_run_cancel` to stop a running coding run; the run cannot be cancelled otherwise. |
+| `tools`            | `tool` frames are accepted so the agent can act on the board/chat (§6). |
+| `artifacts`        | declares artifact support in the live profile/UI. Structured artifacts currently travel inside a `coding_change_set`; there is no standalone artifact frame yet. |
+| `patches`          | declares patch support in the live profile/UI; no standalone patch frame is currently handled. |
+| `resume`           | declares resume support in the live profile/UI; a resume command/frame is not yet implemented. |
+| `heartbeat`        | declares heartbeat support in the live profile/UI; a heartbeat frame is not yet implemented. |
+| `coding_workspace` | the agent may receive `coding_run` and governed `coding_workspace_action` commands, and may return `coding_change_set` / `coding_run_failed` / workspace-action results. Without it, the agent is never dispatched a coding run. `coding_run_cancel` additionally requires `cancellation`. |
+
+Advertise **only** capabilities the current process actually implements. The server
+gates feature use and UI controls (busy slots, status, disabled buttons) from your
+profile, and will not dispatch work that needs a capability you didn't negotiate.
+`max_concurrency` is an integer 1–64: the app reserves one slot per in-flight chat or
+coding request and will not dispatch new work once all slots are occupied (it reflects
+this live in the UI via `agent_presence` frames).
 
 ---
 
@@ -197,6 +250,21 @@ All frames are JSON objects with a `type` field.
   sends a filesystem path. The remote host maps the repository ID through its
   operator-controlled configuration, allocates an isolated worktree, runs the
   coding tool there, and correlates the result with `request_id`.
+- This frame is sent **only** to an agent that negotiated `coding_workspace`.
+
+**coding_run_cancel** (best-effort stop command; server → agent, requires the agent to
+have negotiated `cancellation`):
+```json
+{ "type": "coding_run_cancel", "request_id": "r1", "run_id": "run_123" }
+```
+- Sent when a human cancels the run (REST `POST /api/coding/runs/{id}/cancel`). The
+  app flips the run to `cancelled` only after the frame is delivered over the live
+  socket, so a disconnected agent or one lacking `cancellation` leaves the run live
+  (fail-closed: we never claim we asked a subprocess to stop if we couldn't reach it).
+- The frame needs no signature/acknowledgement from the agent; it is the app pushing a
+  command. On receipt, terminate the subprocess/worktree work for that `run_id` and
+  stop sending further `coding_change_set` frames for it. Cancellation is idempotent:
+  handling it twice must be safe.
 
 **coding_workspace_action** (governed lifecycle command; sent only to the agent
 that produced the correlated change set):
@@ -360,6 +428,45 @@ that produced the correlated change set):
 ```
 - On error: `"result": { "error": "<ExceptionType>: <message>" }`.
 
+### 5c. Coding-run lifecycle, reconnection, and the operational inbox
+
+A `coding_run` moves through `queued → running → succeeded | failed | cancelled |
+timed_out | interrupted`. The remote agent only ever sees opaque ids and a
+`request_id`; it never supplies the run's team, requester, or status.
+
+- **Dispatch.** App sends `coding_run` (after reserving a concurrency slot). The run
+  is `queued` then `running` before the frame leaves the control plane.
+- **Completion.** Agent returns `coding_change_set` (capture → `succeeded`) or
+  `coding_run_failed` (`failed`). A duplicate or late terminal frame for an already
+  terminal run is a **no-op** — no second change set and no contradictory message.
+- **Cancel.** App sends `coding_run_cancel`; agent must stop its work. See above.
+- **Disconnect / app restart.** If the agent's socket drops (or the control-plane
+  process restarts) while a run is `queued`/`running`, the app reconciles it to
+  `interrupted` so it is no longer shown as live work. This reconciliation is
+  idempotent and does not itself raise an inbox item.
+- **Timeout.** A run that exceeds its deadline is moved to `timed_out` (`failed`
+  family) rather than left hanging.
+
+These terminal/connection states feed the **operational inbox** (`/inbox`), a
+team-authorized projection of work that needs a human. Relevant mappings:
+
+| source                              | inbox item kind        |
+|-------------------------------------|-------------------------|
+| `coding_run` status `failed`        | `run_failed`            |
+| `coding_run` status `timed_out`     | `run_timed_out`         |
+| `coding_run` status `approval_required` | `approval_request`  |
+| agent (remote `coding_workspace`) `disconnected` with in-flight runs | `agent_disconnected` |
+| `change_set` status `captured`      | `review_requested`      |
+| `workflow_run` status `failed`      | `workflow_failed`       |
+| `mcp_tool` status `pending`         | `mcp_approval_pending`  |
+| `task` status `stale`               | `stale_task`            |
+
+The inbox is a **projection**: it never becomes a second source of truth, it stays
+team-scoped, and each item deep-links back to the authoritative record (coding run,
+change set, workflow, agent conversation, MCP connection, or board). A disconnected
+agent therefore shows up as an attention item *only while it had active work*; a
+cleanly idle disconnected agent does not.
+
 ---
 
 ## 6. Tool catalog (the app's own tools — the MCP-equivalent seam)
@@ -409,25 +516,58 @@ def connect_claim():
     body = b64u(canonical(payload))
     return body + "." + sign(payload)
 
+_seq = 0
+_session = None
+
+def next_frame(base):
+    """Attach session_id + monotonic seq and sign (protocol v1)."""
+    global _seq
+    if _session is not None:
+        _seq += 1
+        base["session_id"] = _session
+        base["seq"] = _seq
+    base["sig"] = sign(base)
+    return base
+
 async def main():
     async with websockets.connect(WS_URL,
             additional_headers={"Authorization": "Bearer " + connect_claim()}) as ws:
+        # 1) negotiate capabilities (signed; no session_id/seq yet)
+        hello = {"type": "hello", "protocol_version": 1,
+                 "agent_version": "my-agent/1.0",
+                 "capabilities": ["progress", "tools", "coding_workspace"],
+                 "max_concurrency": 2}
+        hello["sig"] = sign(hello)
+        await ws.send(json.dumps(hello))
         async for raw in ws:
             frame = json.loads(raw)
             t = frame.get("type")
+            if t == "hello_ack":
+                global _session
+                _session = frame["session_id"]   # later frames must use this
+                continue
             if t == "chat":
-                # sign a reply back, echoing message_id
-                reply = {"type": "reply", "message_id": frame["message_id"],
-                         "text": f"[agent] got: {frame['text']}"}
-                reply["sig"] = sign(reply)
+                reply = next_frame({"type": "reply", "message_id": frame["message_id"],
+                                    "text": f"[agent] got: {frame['text']}"})
                 await ws.send(json.dumps(reply))
             elif t == "card_created":
-                # optionally act: create a card via a tool call
-                tool = {"type": "tool", "call_id": "c1", "name": "comment_card",
-                        "args": {"card_id": frame["card"]["id"],
-                                 "body": "agent noticed this card"}}
-                tool["sig"] = sign(tool)
+                tool = next_frame({"type": "tool", "call_id": "c1",
+                                   "name": "comment_card",
+                                   "args": {"card_id": frame["card"]["id"],
+                                            "body": "agent noticed this card"}})
                 await ws.send(json.dumps(tool))
+            elif t == "coding_run":
+                # run the work, then return a signed change set
+                cs = next_frame({"type": "coding_change_set",
+                                 "request_id": frame["request_id"],
+                                 "change_set": {"repository_id": frame["repository_id"],
+                                                "run_id": frame["run_id"],
+                                                "branch": "...", "base_commit": "...",
+                                                "head_commit": "...", "commits": [],
+                                                "files": [], "additions": 0,
+                                                "deletions": 0, "verification": [],
+                                                "artifacts": []}})
+                await ws.send(json.dumps(cs))
 
 asyncio.run(main())
 ```
@@ -462,15 +602,9 @@ TOOLS = [   # describe the app's tools (§6) so the model can call them
    "parameters":{"type":"object","properties":{"card_id":{"type":"string"},"body":{"type":"string"}},"required":["card_id","body"]}}},
 ]
 
-# sign/connect helpers identical to §7 (b64u, canonical, sign, connect_claim) ...
-def b64u(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
-def b64u_dec(s): return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-def canonical(o): return json.dumps(o, sort_keys=True, separators=(",", ":")).encode()
-_priv = Ed25519PrivateKey.from_private_bytes(b64u_dec(PRIV))
-def sign(o): return b64u(_priv.sign(canonical(o)))
-def connect_claim():
-    p = {"agent_id": AGENT_ID, "iat": int(time.time()), "nonce": secrets.token_urlsafe(8)}
-    return b64u(canonical(p)) + "." + sign(p)
+# Reuse §7's b64u/canonical/sign/connect_claim and protocol-v1 next_frame
+# helpers. In particular: send hello first, save hello_ack.session_id, then call
+# next_frame(...) for every reply/tool/coding frame so session_id + seq are signed.
 
 async def ask_llm(text):
     # 1) model may return tool calls
@@ -488,17 +622,25 @@ async def ask_llm(text):
     return out
 
 async def main():
+    global _session
     async with websockets.connect(WS_URL, additional_headers={"Authorization":"Bearer "+connect_claim()}) as ws:
+        hello = {"type":"hello", "protocol_version":1,
+                 "agent_version":"my-llm-agent/1.0",
+                 "capabilities":["progress", "tools"], "max_concurrency":1}
+        hello["sig"] = sign(hello)
+        await ws.send(json.dumps(hello))
         async for raw in ws:
             f = json.loads(raw)
+            if f.get("type") == "hello_ack":
+                _session = f["session_id"]
+                continue
             if f.get("type") == "chat":
                 for kind, payload in await ask_llm(f["text"]):
                     if kind == "reply":
                         frame = {"type":"reply","message_id":f["message_id"],"text":payload["text"]}
                     else:  # a tool the model wants to call
                         frame = {"type":"tool","call_id":"c1","name":kind,"args":payload}
-                    frame["sig"] = sign(frame)
-                    await ws.send(json.dumps(frame))
+                    await ws.send(json.dumps(next_frame(frame)))
             # read tool_result frames to learn tool outcomes if you want
 asyncio.run(main())
 ```
@@ -508,10 +650,10 @@ Key points:
   …) or a natural-language reply. Your agent translates those into signed `tool` /
   `reply` frames — same protocol as §5.
 - The model only sees tool *descriptions*; it never needs the app's internals.
-- **Your LLM key stays in your process/env**, not the app. (For an *in-app* LLM agent
-  — one that isn't connected over WS and runs in the server process — set its
-  `backend=llm` at registration; it then uses the server's `CREWSPACE_LLM_*` env creds, which
-  are also kept out of the database.)
+- **Your LLM key stays in your process/env**, not the app. A superadmin can instead
+  register a **builtin app-LLM agent** by selecting `uses_app_llm`; that agent has no
+  keypair, is never connected over WebSocket, and uses the server's
+  `CREWSPACE_LLM_*` credentials (also kept out of the database).
 
 ---
 
@@ -523,13 +665,18 @@ Key points:
 2. **Connect.** Open a WebSocket to `/agents/ws` with header
    `Authorization: Bearer <claim>`. Build `<claim>` per §3 (canonical JSON,
    signed, `iat` within 60s).
-3. **React.** Loop on incoming frames. Handle `chat` (send a signed `reply` with
+3. **Negotiate.** Send a signed `hello` (protocol v1) and read `hello_ack` for your
+   `session_id`. After that, attach that `session_id` plus a strictly increasing
+   `seq` to every action frame, and sign over both.
+4. **React.** Loop on incoming frames. Handle `chat` (send a signed `reply` with
    the same `message_id`) and `card_created` (optionally send signed `tool`
-   frames). Read `tool_result` frames for tool outputs.
-4. **Sign.** For every `reply`/`tool` frame: drop `sig`, canonicalize the rest,
-   sign with your private key, attach `sig` (base64url).
-5. **Actor.** Never bother sending `author_id` — the server forces it to your id.
-6. **Behave.** Use the tools in §6. You can only act as yourself.
+   frames). Read `tool_result` frames for tool outputs. Handle `coding_run` /
+   `coding_run_cancel` if you negotiated `coding_workspace` / `cancellation`.
+5. **Sign.** For every `reply`/`tool`/coding frame: drop `sig`, canonicalize the
+   rest (including `session_id` and `seq` once negotiated), sign with your private
+   key, attach `sig` (base64url).
+6. **Actor.** Never bother sending `author_id` — the server forces it to your id.
+7. **Behave.** Use the tools in §6. You can only act as yourself.
 
 That's the whole contract. No app-side changes are needed to add an agent in a
 new language — register it, implement this protocol, connect.
@@ -543,8 +690,9 @@ new language — register it, implement this protocol, connect.
   public key. A stolen claim is only usable for 60 seconds; a stolen private key
   is the only lasting risk, so keep it secret (and you can rotate it by
   re-registering the agent).
-- **Non-repudiable actions.** Every `reply`/`tool` frame is signed, so the audit
-  trail proves which agent did what.
+- **Non-repudiable actions.** Every agent→server action frame is signed, including
+  negotiation, replies, tool calls, progress, activity, coding results, failures,
+  and workspace-action results, so the audit trail proves which agent did what.
 - **No impersonation.** `author_id` in tool calls is ignored and replaced with the
   verified agent id.
 - **Transport.** Use `wss://` (TLS) in any real deployment. Over plain `ws://` the
