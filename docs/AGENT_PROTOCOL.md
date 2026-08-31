@@ -339,6 +339,10 @@ that produced the correlated change set):
   not dispatch new chat work when all slots are occupied.
 - Server acknowledgement: `{"type":"agent_activity_ack","active_runs":1,
   "max_concurrency":2}`.
+- The reference coding agent (`examples/claude_code_agent.py`) publishes a signed
+  `agent_activity` frame when it starts/ends autonomous work it picked up outside a
+  Crewspace-reserved request (currently behind `AGENT_AUTONOMOUS=1`, reacting to
+  `card_created`), so the app reflects its real external slot usage.
 
 **agent_progress** (incremental output for an active `chat`; must be signed):
 ```json
@@ -444,6 +448,14 @@ timed_out | interrupted`. The remote agent only ever sees opaque ids and a
   process restarts) while a run is `queued`/`running`, the app reconciles it to
   `interrupted` so it is no longer shown as live work. This reconciliation is
   idempotent and does not itself raise an inbox item.
+- **Agent-side reconnect (reference agent).** The reference coding agent
+  (`examples/claude_code_agent.py`) treats a dropped socket as temporary: it
+  reconnects with a **fresh, one-use connect claim** (§3) and re-negotiates a new
+  `hello`/`session_id`, rather than exiting. It tracks completed `message_id`s and
+  `request_id`s across reconnects so a re-negotiated session never re-sends a
+  finished `reply` or `coding_change_set` (no duplicate chat replies or change sets).
+  A reconnect also resets the per-session `seq`, so old `seq` values are never
+  reused.
 - **Timeout.** A run that exceeds its deadline is moved to `timed_out` (`failed`
   family) rather than left hanging.
 

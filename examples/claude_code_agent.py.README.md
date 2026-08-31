@@ -1,14 +1,22 @@
 # Claude-Code remote agent
 
-A minimal **remote agent** for Crewspace that turns an `@mention` into a
-`claude` subprocess run and reports the output back to the chat thread.
+A **remote agent** for Crewspace that runs a `claude` subprocess for `@mention`s
+and reports the output back to the chat thread, and that also executes governed
+coding runs end to end.
 
-It is the thinnest possible "give an agent a command and let it run" bridge:
-the app pushes a `chat` frame (the prompt) → this process runs `claude` with
-that prompt → each output line is sent as a signed `agent_progress` frame → when
-Claude exits, the agent sends one signed `reply` frame with the captured output.
-Progress appears live in the channel and is replaced by the persisted final
-reply in the human message's thread.
+It is a thin "give an agent a command and let it run" bridge: the app pushes a
+`chat` frame (the prompt) → this process runs `claude` with that prompt → each
+output line is sent as a signed `agent_progress` frame → when Claude exits, the
+agent sends one signed `reply` frame with the captured output. Progress appears
+live in the channel and is replaced by the persisted final reply in the human
+message's thread. It additionally executes `coding_run` / `coding_workspace_action`
+commands with a real Git worktree allocator, honours `coding_run_cancel`, and — when
+`AGENT_AUTONOMOUS=1` — reacts to new cards and reports that autonomous external work
+via signed `agent_activity` frames.
+
+The agent is **self-healing**: if the socket drops it reconnects with a fresh,
+one-use connect claim and a new session rather than exiting, and it never re-sends a
+finished reply or change set after a reconnect.
 
 ## Why WebSocket is enough for long jobs
 
@@ -39,6 +47,9 @@ export CLAUDE_BIN="claude"
 export CLAUDE_ARGS="--print --verbose"                  # forwarded to `claude`
 export AGENT_CODING_REPOSITORIES='{"crewspace":"/srv/git/crewspace"}'
 export AGENT_CODING_WORKTREE_ROOT="$HOME/.local/share/crewspace-agent/worktrees"
+export AGENT_AUTONOMOUS=0        # 1 = react to new cards + publish agent_activity
+export AGENT_RECONNECT_DELAY=1.0  # seconds between reconnect attempts (default 1.0)
+export AGENT_MAX_CONCURRENCY=1    # negotiated max_concurrency (1–64)
 ```
 
 The repository mapping is configured only on this execution host. Crewspace sends

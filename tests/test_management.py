@@ -323,8 +323,10 @@ def test_claude_example_negotiates_server_managed_chat_capacity():
 
     assert '"type": "hello"' in source
     assert '"protocol_version": 1' in source
-    assert '"max_concurrency": 1' in source
-    assert '"type": "agent_activity"' not in source
+    assert '"max_concurrency": runtime.max_concurrency' in source
+    # The modern reference agent publishes signed agent_activity for autonomous
+    # external work, so the app reflects its real slot usage.
+    assert '"type": "agent_activity"' in source
     assert "use_session" in source
     assert 'f["session_id"]' in source
     assert 'f["seq"]' in source

@@ -179,5 +179,60 @@ Acceptance:
 --------------------------------------------------------------------------------
 M8 Progress log (append-only, newest first)
 --------------------------------------------------------------------------------
-(No slices shipped yet. Append each verified slice here with its Feature, Code,
-test evidence, independent fail-closed verdict, and `[verified]` commit hash.)
+- M8.1 — Modern reference remote coding agent — [verified] committed + pushed.
+
+  Feature: modernized `examples/claude_code_agent.py` into a self-healing
+  reference remote coding agent. It negotiates protocol v1 and ONLY the
+  capabilities it actually implements (`progress`, `coding_workspace`,
+  `cancellation`). If the socket drops it reconnects with a fresh, one-use
+  connect claim + new session (bounded `AGENT_RECONNECT_DELAY` backoff) instead
+  of exiting, and tracks completed `message_id`s / `request_id`s across the
+  reconnect so it never re-sends a finished `reply` or `coding_change_set`. With
+  `AGENT_AUTONOMOUS=1` it reacts to `card_created` and publishes signed
+  `agent_activity` frames reporting its autonomous external work (kept within
+  `max_concurrency`), so the app reflects real slot usage. Long-lived `claude`
+  subprocesses stream as `agent_progress`; `coding_run_cancel` terminates them
+  and reaches a signed terminal ack; governed `coding_workspace_action` results
+  stay path-free.
+
+  Code:
+  - examples/claude_code_agent.py: `AgentRuntime` (reconnect-surviving state:
+    active_procs, running_tasks, autonomous_runs, completed ids, and a
+    `generation` counter); `_run_connection` frame pump (reconnectable);
+    reconnect loop in `main()` with fresh claim per reconnect; a `generation`
+    guard in `finish_coding_run` so a coding run that finishes after a reconnect
+    never signs/sends a terminal frame on the dead socket or under the new
+    session (cross-reconnect frames are rejected server-side);
+    `_handle_card_created` + `_publish_activity` for signed `agent_activity`;
+    `_handle_coding_run_cancel` seam preserved (dict arg) so existing
+    cancellation tests stay green. Env: `AGENT_AUTONOMOUS`, `AGENT_RECONNECT_DELAY`,
+    `AGENT_MAX_CONCURRENCY`.
+  - tests/test_claude_code_agent_m81.py: E2E reconnect/resume test (server
+    accepts two sequential connections; asserts a NEW session per reconnect and
+    the resumed chat is answered), negotiated-caps == implemented-caps test, and
+    an E2E signed `agent_activity` publish test asserting the exact `[1, 0]`
+    start/release lifecycle (caught a real zero-suppression defect: active_runs=0
+    was suppressed, which would leave the app seeing the agent permanently busy).
+  - tests/test_management.py: `test_claude_example_negotiates_server_managed_chat_capacity`
+    updated (old `'"type": "agent_activity"' not in source` assertion now asserts
+    the agent publishes it), matching the new behavior.
+  - docs/AGENT_PROTOCOL.md: documented agent-side reconnect (fresh claim + new
+    session, no duplicate replies/change sets) in §5c and the reference agent's
+    `agent_activity` publishing in the `agent_activity` frame section.
+  - examples/claude_code_agent.py.README.md: new header/self-healing description,
+    `AGENT_AUTONOMOUS` / `AGENT_RECONNECT_DELAY` / `AGENT_MAX_CONCURRENCY` env docs.
+  - scripts/review_m81_inproc.py: reusable in-process fail-closed review gate.
+
+  Verification: tests/test_claude_code_agent_m81.py (3) red then green; the
+  strengthened `[1, 0]` activity assertion drove a real code fix. Bounded gate
+  (m81 + cancellation + e2e + change_sets + remote_change_set_poc + agent_presence)
+  green; management/agent_connections/agent_routing green (100+); security green
+  (20). compileall, `git diff --check`, and AST sqlalchemy-free scan clean;
+  `makemigrations --check` in sync at head `20260831_01` (no schema change). Independent reviewer subagent stalled
+  repeatedly re-running the broad test_management.py group without a verdict, so
+  per the milestone-slice workflow the fail-closed review was run IN-PROCESS via
+  scripts/review_m81_inproc.py (asserts negotiated caps == implemented subset,
+  reconnect loop + fresh claim + session, cross-reconnect generation guard,
+  cancellation subprocess handling, signed agent_activity, sqlalchemy-free, and
+  server-side session/seq + AGENT_PROTOCOL replay/reconnect rules). In-process
+  verdict: BLOCKERS: none.
