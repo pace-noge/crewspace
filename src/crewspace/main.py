@@ -26,10 +26,22 @@ from .application.inbox_store import inbox_store
 from .application.inbox_events import inbox_events
 from .api.connection import agent_manager, manager, thread_manager
 from .dto.mappers import to_message
+from .logging_config import configure_logging, format_access_line
 from .security import is_same_origin
 from .infrastructure.db import logger as db_logger
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+import logging
+import time as _time
+from uuid import uuid4
+
+_access_logger = logging.getLogger("crewspace.access")
+
+
+def _request_id(request: Request) -> str:
+    """Return the client-provided request id if present, else a fresh one."""
+    return request.headers.get("x-request-id") or uuid4().hex[:12]
 
 
 
@@ -48,6 +60,7 @@ def _make_agent_disconnect_reconciler(db):
 async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
+    configure_logging(settings)
     # Allow tests to inject a pre-configured Database (e.g., against a temp file).
     if not hasattr(app.state, "db"):
         db = await Database.create(settings)
@@ -114,6 +127,38 @@ def create_app() -> FastAPI:
             ):
                 return JSONResponse({"detail": "Cross-origin request rejected"}, status_code=403)
         return await call_next(request)
+
+    @app.middleware("http")
+    async def access_log(request: Request, call_next):
+        """Log method/path/status/duration + a correlation request id (M9.1)."""
+        request_id = _request_id(request)
+        started = _time.monotonic()
+        try:
+            response = await call_next(request)
+        except Exception:
+            # An unhandled exception surfaces as a 500 to the client; log the
+            # access line with that status so every request is covered (M9.1).
+            _access_logger.warning(
+                format_access_line(
+                    method=request.method,
+                    path=request.url.path,
+                    status=500,
+                    duration_ms=(_time.monotonic() - started) * 1000,
+                    request_id=request_id,
+                )
+            )
+            raise
+        duration_ms = (_time.monotonic() - started) * 1000
+        _access_logger.info(
+            format_access_line(
+                method=request.method,
+                path=request.url.path,
+                status=response.status_code,
+                duration_ms=duration_ms,
+                request_id=request_id,
+            )
+        )
+        return response
 
     # Vendor HTMX locally so the UI works without external CDN access
     # (corporate networks / offline UAT often block unpkg.com).

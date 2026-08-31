@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     # so this is deliberately generous; a WebSocket stays open regardless.
     agent_reply_timeout: float = 1800.0
 
+    # Structured logging knobs (M9.1). log_format is "text" (key=value) or
+    # "json"; log_json is a shorthand that forces JSON regardless of format.
+    log_level: str = "INFO"
+    log_format: str = "text"
+    log_json: bool = False
+
     @model_validator(mode="after")
     def reject_network_exposure_with_development_credentials(self) -> "Settings":
         if self.database_url is None:
