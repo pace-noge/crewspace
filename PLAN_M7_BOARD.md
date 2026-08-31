@@ -273,7 +273,7 @@ M7 Progress log (append-only, newest first):
     drift — POC adds an application module only).
   - compileall, git diff --check, AST purity (board_poc sqlalchemy-free) clean.
   - Independent fail-closed review: BLOCKERS: none, NON-BLOCKERS: none.
-  - Commit: <filled-after-commit>. This closes milestone M7 (7/7).
+  - Commit: c7309e8. This closes milestone M7 (7/7).
 
 - M7.6 — Board planning views: filters, group-by, swimlanes, timeline, saved
   views — verified; BLOCKERS: none.
