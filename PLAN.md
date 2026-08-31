@@ -367,6 +367,42 @@ Tracking rules:
 | M7.6 | Filters, swimlanes, timeline, saved views | DONE | 5/5 | M7.1, M7.2 |
 | M7.7 | Board operating-surface integration POC | DONE | 3/3 | M7.1–M7.6 |
 
+------------------------------------------------------------------------------
+M8 — Remote Agent Reference Implementations               [L–XL]  PLANNED
+------------------------------------------------------------------------------
+Goal:
+  Bring the reference remote agents (`examples/`) up to the level of the control
+  plane the app already ships. Today the main app is far ahead of the reference
+  agents: it implements approvals, typed events, the delivery pipeline,
+  scorecards, durable runs, and a board operating surface, but the example
+  agents are thin protocol clients that negotiate capabilities they cannot back
+  and do not exercise the modern M6/M7 machinery. M8 elevates the reference
+  remote coding agent and adds durable, approval-aware, and pipeline-participant
+  reference paths so the control plane is actually driven by real agents.
+
+Canonical detailed plan: `PLAN_M8_REMOTE_AGENT.md`.
+
+Tracking rules:
+  - M8 slices are verified against the SAME verified-slice discipline as M6/M7:
+    RED → GREEN, bounded test gate, migration-compat guard (pure DTO where
+    applicable), compileall, `git diff --check`, added-line security scan, and an
+    independent fail-closed review before a `[verified]` commit + push.
+  - EVERY slice documents both `Feature` (user-visible agent behavior) and `Code`
+    (concrete files, frame types, protocol hooks, tests). Append objective
+    test + commit evidence to the M8 progress log in `PLAN_M8_REMOTE_AGENT.md`.
+  - The reference agents must keep running keyless/serverless-with-an-LLM: the
+    app must never see the remote agent's LLM key, and the examples stay
+    clone-and-run against an OpenAI-compatible endpoint.
+  - Cross-restart durability on the execution host is in-scope (this lifts the
+    documented M6.3 deferral) — not in-memory-only allocator state.
+
+| Slice | Deliverable | Status | Progress | Depends on |
+|------:|-------------|--------|----------|------------|
+| M8.1 | Modern reference remote coding agent (full negotiated caps) | PLANNED | 0/7 | M6.1–M6.4 |
+| M8.2 | Durable remote workspace lifecycle on the execution host | PLANNED | 0/7 | M6.2, M8.1 |
+| M8.3 | Approval-aware reference agent path (M6.5 gate exercised remotely) | PLANNED | 0/6 | M6.5, M8.1 |
+| M8.4 | Pipeline-participant reference example (planner→coder→reviewer) | PLANNED | 0/6 | M6.6, M8.1 |
+
 M6 Progress log (append-only, newest first):
   - 2026-08-24 — M6.2 durable change-set governance GREEN: logical repositories
     are authorized many-to-many per team; coding runs bind team, repository,
