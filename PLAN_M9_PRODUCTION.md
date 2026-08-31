@@ -21,7 +21,7 @@ review before a `[verified]` commit + push.
 |------:|-------------|--------|----------|
 | M9.1 | Structured production logging | DONE | 7/7 |
 | M9.2 | Runtime config hardening + validation | DONE | 7/7 |
-| M9.3 | Health / readiness endpoints + DB/migration check | PLANNED | 0/5 |
+| M9.3 | Health / readiness endpoints + DB/migration check | DONE | 7/7 |
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | PLANNED | 0/5 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
 | M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
@@ -184,6 +184,30 @@ Acceptance:
 ---
 
 ## M9 Progress log (append-only, newest first)
+
+- M9.3 — Health / readiness endpoints — [verified] committed + pushed.
+
+  Feature: unauthenticated `GET /health` liveness without a DB touch and
+  fail-closed `GET /ready` readiness requiring initialized app state, a working
+  `SELECT 1`, a non-empty deployed Alembic head, and an exact singleton
+  `alembic_version` match.
+
+  Code:
+  - `src/crewspace/api/routers/health.py`: controlled 503 responses for an
+    uninitialized/unavailable database, unavailable migration metadata,
+    migration-query failure, empty deployed head, multiple database revisions,
+    and schema mismatch; raw exception details remain server-log only.
+  - `src/crewspace/main.py`: mounts the health router.
+  - `tests/test_health.py`: 11 acceptance and migration-compatibility tests.
+
+  Verification: health + logging + config + security regressions green
+  (45 passed); compileall; git diff/security scan; migration compatibility clean
+  at `20260831_01`. Independent reviews found and drove fixes for raw exception
+  leakage, multiple-revision fail-open, and empty-head fail-open; final focused
+  re-review BLOCKERS none.
+
+  Verified implementation commit: `2ef0f43`.
+  Progress: 7/7 complete.
 
 - M9.1 — Structured production logging — [verified] committed + pushed.
 

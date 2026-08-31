@@ -3,10 +3,10 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `f304223` (M9.2)
-Handoff state: M9.2 runtime config hardening committed (verified,
-independent review BLOCKERS: none) and pushed.
-M9 in progress (M9.1–M9.2 DONE, M9.3–M9.7 PLANNED).
+Latest verified product commit before this handoff: `2ef0f43` (M9.3)
+Handoff state: M9.3 health/readiness probes committed (verified, independent
+review BLOCKERS: none after fail-closed fixes) and pushed.
+M9 in progress (M9.1–M9.3 DONE, M9.4–M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -23,8 +23,27 @@ M9 in progress (M9.1–M9.2 DONE, M9.3–M9.7 PLANNED).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
-- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.2 DONE 7/7,
-  M9.3–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.3 DONE 7/7,
+  M9.4–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+
+## M9.3 — Health and readiness probes — verified
+
+Feature: public `GET /health` liveness with no database dependency and
+fail-closed `GET /ready` readiness requiring an initialized/reachable database,
+a valid deployed Alembic head, and an exact singleton database revision match.
+
+Code: `src/crewspace/api/routers/health.py`, router mounting in
+`src/crewspace/main.py`, and 11 acceptance/migration-compatibility tests in
+`tests/test_health.py`.
+
+Verification: health + logging + config + security regressions green (45
+passed); compileall; git diff/security scan; migration compatibility clean at
+`20260831_01`. Independent reviewers found three fail-closed defects during the
+slice: raw migration-query exception leakage, multiple-revision fail-open, and
+empty deployed-head fail-open. Each received a RED regression test and fix;
+final focused re-review BLOCKERS none.
+
+Verified implementation commit: `2ef0f43`.
 
 ## M9.2 — Runtime config hardening + validation — verified
 
