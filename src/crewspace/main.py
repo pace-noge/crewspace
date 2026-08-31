@@ -18,7 +18,7 @@ from .infrastructure.db import Database
 from .infrastructure.mcp_client import ExternalMcpToolExecutor, build_external_tool_executor
 from .infrastructure.workflow_webhooks import build_workflow_webhook_executor
 from .api.routers import (agents, auth, boards, cards, change_sets, chat, coding_runs,
-                            cronjobs, inbox, pages, presence, teams, tools, workflows)
+                            cronjobs, health, inbox, pages, presence, teams, tools, workflows)
 from .application.scheduling import SchedulerLoop
 from .application.workflows import WorkflowSchedulerLoop
 from .application.coding_runs import reconcile_interrupted_runs
@@ -163,6 +163,7 @@ def create_app() -> FastAPI:
     # Vendor HTMX locally so the UI works without external CDN access
     # (corporate networks / offline UAT often block unpkg.com).
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    app.include_router(health.router)
     app.include_router(agents.router)
     app.include_router(auth.router)
     app.include_router(chat.router)
