@@ -3,8 +3,9 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `72e9889` (M8.1 review-fix)
-Handoff state: M8.1 review-fix committed and pushed. M8.2–M8.4 still PLANNED.
+Latest verified product commit before this handoff: `9bd9b32` (M8.2)
+Handoff state: M8.2 durable remote workspace lifecycle committed (verified,
+re-reviewed BLOCKERS: none) and pushed. M8.3–M8.4 still PLANNED.
 
 ## Current milestone state
 
@@ -19,8 +20,42 @@ Handoff state: M8.1 review-fix committed and pushed. M8.2–M8.4 still PLANNED.
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
-- M8 — Remote Agent Reference Implementations — is in progress (M8.1 DONE 7/7;
-  M8.2–M8.4 PLANNED). `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
+- M8 — Remote Agent Reference Implementations — is in progress (M8.1 DONE 7/7,
+  M8.2 DONE 7/7; M8.3–M8.4 PLANNED). `PLAN_M8_REMOTE_AGENT.md` is the canonical
+  detailed plan.
+
+## M8.2 — Durable remote workspace lifecycle on the execution host — verified
+
+Feature: `examples/remote_coding_workspace.py` persists allocator ownership,
+retained markers, and removal tombstones to an optional durable JSON state file
+(atomically rewritten on every lifecycle transition) and reconstructs them on a
+fresh allocator, so a process restart no longer loses cleanup safeguards (lifts
+the documented M6.3 deferral). Reconstruction is fail-closed: a persisted
+retained marker or tombstone is authoritative and never forgotten; a workspace
+whose path is gone or outside the configured worktree root is tombstoned, never
+resurrected as allocatable. Lifecycle actions stay idempotent post-restart with
+unchanged safety invariants; no local paths leak into result frames.
+
+Code: `GitWorktreeAllocator` gains optional `durable_state_path` (default None =
+identical in-memory behavior); `_persist_durable_state` (locked, unique-temp-file
+atomic rewrite; best-effort so a persistence failure never corrupts the in-memory
+contract); `_load_durable_state` run at construction re-derives per-allocation
+identity and tombstones gone/foreign paths; `allocate`/`retain`/`_finish_branch_cleanup`
+persist after each mutation. `tests/test_remote_workspace_durable.py` (9 tests):
+restart recovery of allocation/retained/removed state, retained-never-deleted
+after restart (fail-closed), idempotent cleanup after restart, no-path-leakage
+guard, backward-compat without a durable path, forged-state rejection, concurrent
+allocations persist a complete valid state file, and an encoded migration-compat
+guard (AST sqlalchemy-free + real `makemigrations --check`).
+
+Verification: durable + change-set regression group green (42 passed); security
+20/20; compileall, `git diff --check`, encoded migration-compat check clean (head
+`20260831_01`, models in sync). Independent fail-closed review: first pass
+returned 2 blockers (forged state could resurrect ownership outside the worktree
+root; unserialized concurrent persistence) — both remediated with RED→GREEN
+regressions and re-reviewed `BLOCKERS: none`.
+
+Verified implementation commit: `9bd9b32`.
 
 ## M8.1 — Modern reference remote coding agent — verified
 

@@ -179,6 +179,48 @@ Acceptance:
 --------------------------------------------------------------------------------
 M8 Progress log (append-only, newest first)
 --------------------------------------------------------------------------------
+- M8.2 — Durable remote workspace lifecycle on the execution host — [verified]
+  committed + pushed.
+
+  Feature: `examples/remote_coding_workspace.py` now persists allocator
+  ownership, retained markers, and removal tombstones to an optional durable
+  JSON state file (atomically rewritten on every lifecycle transition) and
+  reconstructs them on a fresh allocator, so a process restart no longer loses
+  cleanup safeguards (lifts the documented M6.3 deferral). Reconstruction is
+  fail-closed: a persisted retained marker or tombstone is authoritative and is
+  never forgotten; a workspace whose path no longer exists — or whose path is
+  outside the configured worktree root — is tombstoned, never resurrected as
+  allocatable. lifecycle actions stay idempotent post-restart and revalidate
+  the full safety invariants; no local path leaks into result frames.
+
+  Code:
+  - examples/remote_coding_workspace.py: `GitWorktreeAllocator` gains an
+    optional `durable_state_path` kwarg (default None → identical in-memory
+    behavior). `_persist_durable_state` writes a locked, uniquely-named temp
+    file then atomically renames it over the state path (best-effort; a
+    persistence failure never corrupts the in-memory contract). `_load_durable_state`
+    runs at construction: reads/validates the document, re-derives identity for
+    each recorded allocation, and tombstones any whose path is gone/outside the
+    configured `_worktree_root`. `allocate`/`retain`/`_finish_branch_cleanup`
+    persist after each mutation (and a cleanup finish also clears any retained
+    marker for that workspace).
+  - tests/test_remote_workspace_durable.py (new, 9 tests): restart recovery of
+    allocation/retained/removed state; retained-never-deleted-after-restart
+    (fail-closed); idempotent cleanup after restart; no-path-leakage guard;
+    backward-compat without a durable path; forged-state rejection (a path
+    outside the worktree root cannot be resurrected as owned); concurrent
+    allocations persist a complete, valid state file; and an encoded
+    migration-compat guard (AST sqlalchemy-free + real `makemigrations --check`
+    via subprocess).
+
+  Gate: durable group + change-set regression group green (42 passed); security
+  group green (20 passed); compileall, `git diff --check`, and the encoded
+  migration-compat check all clean (head `20260831_01`, models in sync).
+  Independent fail-closed review: first pass returned 2 blockers (forged path
+  could resurrect ownership outside the worktree root; persistence snapshot not
+  serialized against concurrent lifecycle transitions) — both remediated with
+  RED→GREEN regressions, re-reviewed PASS with `BLOCKERS: none`.
+  Verified commit hash recorded in PROGRESS.md.
 - M8.1 — Modern reference remote coding agent — [verified] committed + pushed.
 
   Feature: modernized `examples/claude_code_agent.py` into a self-healing
