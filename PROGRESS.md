@@ -3,10 +3,11 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `2ef0f43` (M9.3)
-Handoff state: M9.3 health/readiness probes committed (verified, independent
-review BLOCKERS: none after fail-closed fixes) and pushed.
-M9 in progress (M9.1–M9.3 DONE, M9.4–M9.7 PLANNED).
+Latest implementation commit before this handoff: `6a698c3` (M9.4, 6/7)
+Handoff state: M9.4 OCI/Compose artifacts committed and independently reviewed
+(BLOCKERS: none); final real container build/startup verification is blocked by
+the absence of an OCI engine on this host.
+M9 in progress (M9.1–M9.3 DONE, M9.4 VERIFY-BLOCKED 6/7, M9.5–M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -24,7 +25,30 @@ M9 in progress (M9.1–M9.3 DONE, M9.4–M9.7 PLANNED).
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
 - M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.3 DONE 7/7,
-  M9.4–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+  M9.4 VERIFY-BLOCKED 6/7, M9.5–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
+  canonical detailed plan.
+
+## M9.4 — Portable OCI deployment artifacts — verify-blocked 6/7
+
+Feature: multi-stage Python 3.14 image, UID/GID 10001 non-root runtime,
+Docker/Podman-compatible Compose deployment, persistent SQLite, optional
+PostgreSQL profile, required application secrets, JSON logging defaults, and
+`/ready` healthchecks.
+
+Code: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, Docker/Podman guidance
+in `README.md`, and 7 acceptance tests in `tests/test_containerization.py`.
+
+Verification: RED 7 failures → GREEN 7 passed; bounded container + health +
+config + security gate 45 passed; compileall, migration drift, diff, and added-line
+security checks clean. A production-style local Uvicorn process returned 200 from
+both probes at revision `20260831_01`. Independent review BLOCKERS none.
+
+Blocker: Docker, Podman, Buildah, Nerdctl, and Compose providers are absent;
+passwordless package installation is unavailable. A real image build and Compose
+startup have not been claimed. Install Podman + a Compose provider, then run the
+final build/startup/readiness gate before marking M9.4 DONE 7/7.
+
+Implementation commit: `6a698c3`.
 
 ## M9.3 — Health and readiness probes — verified
 

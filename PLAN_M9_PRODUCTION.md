@@ -22,7 +22,7 @@ review before a `[verified]` commit + push.
 | M9.1 | Structured production logging | DONE | 7/7 |
 | M9.2 | Runtime config hardening + validation | DONE | 7/7 |
 | M9.3 | Health / readiness endpoints + DB/migration check | DONE | 7/7 |
-| M9.4 | Containerization (Dockerfile + docker-compose, non-root) | PLANNED | 0/5 |
+| M9.4 | Containerization (Dockerfile + docker-compose, non-root) | VERIFY-BLOCKED | 6/7 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
 | M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
 | M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
@@ -184,6 +184,38 @@ Acceptance:
 ---
 
 ## M9 Progress log (append-only, newest first)
+
+- M9.4 — Portable OCI deployment artifacts — implementation committed; final
+  container-engine verification blocked.
+
+  Feature: multi-stage Python 3.14-slim image with a UID/GID 10001 non-root
+  runtime; Docker/Podman-compatible Compose topology with persistent SQLite,
+  `/ready` healthcheck, required application secrets, JSON logging defaults,
+  and an optional profile-gated PostgreSQL service.
+
+  Code:
+  - `Dockerfile`: frozen `uv.lock` dependency install, runtime venv/source and
+    Alembic assets, non-root user, port 8000, and exec-form Uvicorn command.
+  - `docker-compose.yml`: app and optional PostgreSQL services, named volumes,
+    production configuration, and healthchecks.
+  - `.dockerignore`: excludes VCS, secrets, local environments, caches, and data.
+  - `README.md`: Docker and Podman Compose startup instructions for SQLite and
+    PostgreSQL.
+  - `tests/test_containerization.py`: 7 engine-neutral acceptance tests.
+
+  Verification: RED 7/7 missing-artifact failures → GREEN 7/7; bounded container,
+  health, config, and security gate 45 passed; compileall, migration drift, diff,
+  and adjudicated added-line security checks clean; direct production-style
+  Uvicorn startup returned 200 from `/health` and `/ready` at Alembic revision
+  `20260831_01`. Independent review: BLOCKERS none.
+
+  Limitation: this host has no Docker, Podman, Buildah, Nerdctl, or Compose
+  provider, and installing Podman requires interactive sudo. Therefore no real
+  OCI image build or Compose startup was claimed. Final item 7 remains blocked
+  until `podman build` plus `podman compose up` and `/ready` verification run.
+
+  Implementation commit: `6a698c3`.
+  Progress: 6/7 complete; VERIFY-BLOCKED.
 
 - M9.3 — Health / readiness endpoints — [verified] committed + pushed.
 
