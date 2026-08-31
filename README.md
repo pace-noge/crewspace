@@ -151,6 +151,35 @@ normalized, then Alembic stamps the baseline revision. The repository contracts
 are backend-neutral; `tests/test_database_backends.py` contains an opt-in
 PostgreSQL contract enabled by `CREWSPACE_TEST_POSTGRES_URL`.
 
+### Backup and restore
+
+For SQLite, `backup` uses SQLite's online backup API and atomically publishes an
+integrity-checked snapshot. The app may remain online during backup:
+
+```bash
+uv run crewspace-manage backup --out backups/crewspace.db
+# Omitting --out creates backups/crewspace-<UTC timestamp>.db.
+
+# Compose deployment:
+docker compose exec app crewspace-manage backup --out /app/data/crewspace-backup.db
+```
+
+Restore is an offline operation: stop Crewspace first so no process retains the
+old database or WAL state. The command validates the snapshot before atomically
+replacing the configured database and removes stale WAL/SHM sidecars:
+
+```bash
+uv run crewspace-manage restore backups/crewspace.db
+
+# Compose deployment (the app container must be stopped):
+docker compose run --rm app crewspace-manage restore /app/data/crewspace-backup.db
+```
+
+Missing or corrupt snapshots fail without changing the live database. For
+PostgreSQL, use `pg_dump "$CREWSPACE_DATABASE_URL"` for backup and `psql
+"$CREWSPACE_DATABASE_URL"` for restore; the Crewspace commands reject PostgreSQL
+URLs with that guidance rather than applying SQLite file operations.
+
 ## Architecture
 ```
 src/crewspace/

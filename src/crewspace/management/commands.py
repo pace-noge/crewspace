@@ -21,6 +21,8 @@ from ..config import Settings
 from ..infrastructure.models import Base
 from ..infrastructure.repositories import SqlAlchemyAuthRepository
 from ..security import hash_password
+from .backup import register_backup, run_backup
+from .restore import register_restore, run_restore
 
 
 # Diff categories that represent a real, actionable migration on SQLite. Other
@@ -246,4 +248,6 @@ COMMANDS = {
 # Synchronous commands are run without opening a DB connection via run_async.
 SYNC_COMMANDS = {
     "makemigrations": (_register_makemigrations, _run_makemigrations),
+    "backup": (register_backup, run_backup),
+    "restore": (register_restore, run_restore),
 }
