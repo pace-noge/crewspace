@@ -400,7 +400,7 @@ Tracking rules:
 |------:|-------------|--------|----------|------------|
 | M8.1 | Modern reference remote coding agent (full negotiated caps) | DONE | 7/7 | M6.1–M6.4 |
 | M8.2 | Durable remote workspace lifecycle on the execution host | DONE | 7/7 | M6.2, M8.1 |
-| M8.3 | Approval-aware reference agent path (M6.5 gate exercised remotely) | PLANNED | 0/6 | M6.5, M8.1 |
+| M8.3 | Approval-aware reference agent path (M6.5 gate exercised remotely) | DONE | 7/7 | M6.5, M8.1 |
 | M8.4 | Pipeline-participant reference example (planner→coder→reviewer) | PLANNED | 0/6 | M6.6, M8.1 |
 
 M6 Progress log (append-only, newest first):

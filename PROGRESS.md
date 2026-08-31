@@ -3,9 +3,9 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `9bd9b32` (M8.2)
-Handoff state: M8.2 durable remote workspace lifecycle committed (verified,
-re-reviewed BLOCKERS: none) and pushed. M8.3–M8.4 still PLANNED.
+Latest verified product commit before this handoff: `aee4e73` (M8.3)
+Handoff state: M8.3 approval-aware reference agent path committed (verified,
+independent review BLOCKERS: none) and pushed. M8.4 still PLANNED.
 
 ## Current milestone state
 
@@ -21,8 +21,36 @@ re-reviewed BLOCKERS: none) and pushed. M8.3–M8.4 still PLANNED.
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — is in progress (M8.1 DONE 7/7,
-  M8.2 DONE 7/7; M8.3–M8.4 PLANNED). `PLAN_M8_REMOTE_AGENT.md` is the canonical
+  M8.2 DONE 7/7, M8.3 DONE 7/7; M8.4 PLANNED). `PLAN_M8_REMOTE_AGENT.md` is the canonical
   detailed plan.
+
+## M8.3 — Approval-aware reference agent path — verified
+
+Feature: a reference remote coding agent exercises the M6.5 run-scoped
+approval policy end to end. The `ApprovalGate` reuses the app's own
+`evaluate_action` seam (the same canonical checkpoint wired in
+`mcp_tools.py`): at any consequential action class the agent emits the
+canonical `approval` (requested) envelope and pauses before any side effect;
+it resumes only on an explicit class-bound `granted` decision (single-fire),
+blocks fail-closed on `denied`/`expired`/`requested`. Replay of a non-granted
+decision cannot execute; a grant for one class never unlocks a different class.
+Every checkpoint surfaces in the activity stream (`to_activity_item`) and audit
+export (`export_events_json/csv`). The gate is transport-agnostic: a caller
+supplies how a decision is awaited (via `grant(...)`), so it can be bridged
+to any decision channel later without changing policy semantics.
+
+Code: `ApprovalGate`, `ApprovalPaused`, `ApprovalGrant` in
+`examples/approval_aware_agent.py`; 9 tests in
+`tests/test_approval_aware_agent.py` covering pause, class-bound grant,
+denied/expired/requested blocking, scope-escalation guard, replay, and
+end-to-end real-repo POC with audit export surfacing.
+
+Verification: approval + run_policy + M6.4 event regressions green (53
+passed); security 20/20; compileall, git diff --check, migration-compat
+clean (head `20260831_01`). Independent review BLOCKERS none. In-process
+review also confirmed BLOCKERS none.
+
+Verified implementation commit: `aee4e73`.
 
 ## M8.2 — Durable remote workspace lifecycle on the execution host — verified
 

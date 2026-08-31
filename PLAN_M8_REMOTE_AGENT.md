@@ -179,6 +179,46 @@ Acceptance:
 --------------------------------------------------------------------------------
 M8 Progress log (append-only, newest first)
 --------------------------------------------------------------------------------
+- M8.3 — Approval-aware reference agent path — [verified] committed + pushed.
+
+  Feature: a reference remote coding agent exercises the M6.5 run-scoped
+  approval policy end to end. The `ApprovalGate` reuses the app's own
+  `evaluate_action` seam (the same canonical checkpoint wired in
+  `mcp_tools.py`): at any consequential action class the agent emits the
+  canonical `approval` (requested) envelope and pauses before any side effect;
+  it resumes only on an explicit class-bound `granted` decision, and blocks
+  fail-closed on `denied`/`expired`/`requested`. A granted approval is
+  single-fire: the action executes once, and the next attempt pauses again
+  awaiting a fresh decision. Replay of a non-granted decision cannot execute;
+  a grant for one class never unlocks a different class. Every checkpoint
+  surfaces in the activity stream (`to_activity_item`) and audit export
+  (`export_events_json/csv`). The gate is transport-agnostic: a caller
+  supplies how a decision is awaited (via `grant(...)`), so it can be bridged
+  to any decision channel later without changing policy semantics.
+
+  Code:
+  - examples/approval_aware_agent.py: `ApprovalGate`, `ApprovalPaused`,
+    `ApprovalGrant`. `perform(action_class, execute)` delegates to
+    `evaluate_action`; `grant(ApprovalGrant)` records a terminal per-(run,
+    class) decision; denied/expired/requested are terminal; granted is
+    single-fire (consumed by the next successful `perform`).
+  - tests/test_approval_aware_agent.py (9 tests): pause + requested event,
+    class-bound grant proceeds once, duplicate grant no-op, denied/expired/
+    requested block, grant for one class does not unlock another, replay of
+    denied cannot execute, end-to-end real-repo POC (allocates a real
+    worktree, pauses before a `git_push`-class action, resumes on grant,
+    cleans up via the durable allocator, every checkpoint surfaces in
+    activity + audit export).
+
+  Verification: approval + run_policy + M6.4 event regressions green (53
+  passed); security 20/20; compileall, git diff --check, migration-compat
+  clean (head `20260831_01`, in sync). Independent fail-closed review:
+  BLOCKERS none (all six requirements satisfied, all 21 tests passed, no new
+  wire frame added to AGENT_PROTOCOL.md). In-process review also confirmed
+  BLOCKERS none.
+
+  Verified implementation commit: `aee4e73`.
+
 - M8.2 — Durable remote workspace lifecycle on the execution host — [verified]
   committed + pushed.
 
