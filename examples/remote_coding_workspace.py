@@ -42,13 +42,21 @@ class CodingWorkspaceDTO(BaseModel):
 
 
 class GitWorktreeAllocator:
-    """Allocate isolated worktrees from execution-host repository config."""
+    """Allocate isolated worktrees from execution-host repository config.
+
+    Ownership, retained markers, and removal tombstones are persisted to an
+    optionally-configured durable state file so a process restart reconstructs
+    them instead of losing cleanup safeguards (M8.2 — lifts the M6.3 deferral).
+    Without a ``durable_state_path`` the allocator behaves exactly as before
+    (in-memory only), preserving backward compatibility.
+    """
 
     def __init__(
         self,
         *,
         repositories: dict[str, Path],
         worktree_root: Path,
+        durable_state_path: Path | None = None,
     ) -> None:
         self._repositories: dict[str, Path] = {}
         self._repository_identities: dict[
@@ -70,6 +78,12 @@ class GitWorktreeAllocator:
         self._pending_branch_cleanup: dict[
             Path, tuple[bool, str, tuple[int, int, int]]
         ] = {}
+        self._durable_state_path = (
+            durable_state_path.expanduser().resolve()
+            if durable_state_path is not None
+            else None
+        )
+        self._durable_state_lock = threading.Lock()
         for repository_id, path in repositories.items():
             if _SAFE_ID.fullmatch(repository_id) is None:
                 raise ValueError("Repository id contains unsafe characters")
@@ -92,6 +106,144 @@ class GitWorktreeAllocator:
             for repository in self._repositories.values()
         ):
             raise ValueError("Coding worktree root must be outside source repositories")
+        if self._durable_state_path is not None:
+            self._load_durable_state()
+
+    # ------------------------------------------------------------------
+    # Durable state persistence (M8.2)
+    # ------------------------------------------------------------------
+    def _persist_durable_state(self) -> None:
+        """Write allocator ownership/retained/tombstone state atomically.
+
+        Serialized under a lock so concurrent lifecycle transitions cannot race
+        on snapshot construction or file rename. Best-effort: persistence
+        failures must not corrupt the in-memory contract or crash a lifecycle
+        action.
+        """
+        if self._durable_state_path is None:
+            return
+        with self._durable_state_lock:
+            payload = {
+                "version": 1,
+                "repositories": {
+                    rid: str(repo) for rid, repo in self._repositories.items()
+                },
+                "allocated": [
+                    {
+                        "repository_id": allocated[0].repository_id,
+                        "run_id": allocated[0].run_id,
+                        "path": str(allocated[0].path),
+                        "branch": allocated[0].branch,
+                        "base_commit": allocated[0].base_commit,
+                    }
+                    for allocated in self._allocated_workspaces.values()
+                ],
+                "retained": [str(p) for p in self._retained_workspaces],
+                "removed": [
+                    {"repository_id": k[0], "run_id": k[1], "path": str(k[2]), "branch": k[3]}
+                    for k in self._removed_workspaces
+                ],
+            }
+            try:
+                self._durable_state_path.parent.mkdir(parents=True, exist_ok=True)
+                import json
+                import secrets as _secrets
+
+                tmp = self._durable_state_path.with_suffix(f".tmp.{_secrets.token_hex(4)}")
+                tmp.write_text(
+                    json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+                )
+                tmp.replace(self._durable_state_path)
+            except OSError as exc:  # best-effort; never break the lifecycle contract
+                print(f"[workspace] failed to persist durable state: {exc}", flush=True)
+
+    def _load_durable_state(self) -> None:
+        """Reconstruct ownership/retained/removed state after a restart.
+
+        Fail-closed: a retained marker or tombstone persisted on disk is
+        authoritative and is never lost. A workspace whose path no longer exists
+        is treated as removed (tombstoned) rather than resurrected, so it can
+        never be cleaned or deleted again.
+        """
+        import json
+
+        if not self._durable_state_path.exists():
+            return
+        try:
+            payload = json.loads(self._durable_state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(
+                f"[workspace] ignoring unreadable durable state: {exc}", flush=True
+            )
+            return
+        if payload.get("version") != 1:
+            return
+
+        # Tombstones first (authoritative, never resurrected).
+        for item in payload.get("removed", []):
+            self._removed_workspaces.add(
+                (
+                    item["repository_id"],
+                    item["run_id"],
+                    Path(item["path"]),
+                    item["branch"],
+                )
+            )
+
+        retained = {Path(p) for p in payload.get("retained", [])}
+        self._retained_workspaces.update(retained)
+
+        # Allocated workspaces: reconstruct the DTO + re-derive identity from the
+        # live filesystem. Any workspace whose path is gone must be tombstoned
+        # (never resurrected as allocatable); if it was retained, mark retained.
+        for item in payload.get("allocated", []):
+            repo_id = item["repository_id"]
+            path = Path(item["path"])
+            repo = self._repositories.get(repo_id)
+            # Path must belong to _worktree_root (prevent forged state from
+            # resurrecting ownership over an unrelated location) and the
+            # repository must still be authorized and present.
+            if (
+                repo is None
+                or not path.is_dir()
+                or not (path.is_relative_to(self._worktree_root))
+            ):
+                self._removed_workspaces.add(
+                    (repo_id, item["run_id"], path, item["branch"])
+                )
+                continue
+            ws = CodingWorkspaceDTO(
+                repository_id=repo_id,
+                run_id=item["run_id"],
+                path=path,
+                branch=item["branch"],
+                base_commit=item["base_commit"],
+            )
+            try:
+                identity = (
+                    self._workspace_identity(path),
+                    self._branch_ref_identity(repo, ws.branch),
+                    self._git(repo, "rev-parse", ws.branch),
+                    self._branch_reflog_identity(repo, ws.branch),
+                )
+            except ValueError:
+                self._removed_workspaces.add(
+                    (repo_id, item["run_id"], path, item["branch"])
+                )
+                continue
+            # The stored tuple layout is (DTO, ws_ident, branch_ref, base_commit,
+            # reflog_ident). Reconstructed branch_ref is unused for validation
+            # (re-derived each call), so the exact slot value is not load-bearing.
+            self._allocated_workspaces[path] = (
+                ws,
+                identity[0],
+                identity[1],
+                ws.base_commit,
+                identity[3],
+            )
+            self._capture_locks[path] = threading.Lock()
+            if path in retained:
+                self._retained_workspaces.add(path)
 
     def allocate(self, *, repository_id: str, run_id: str) -> CodingWorkspaceDTO:
         repository = self._repositories.get(repository_id)
@@ -152,6 +304,7 @@ class GitWorktreeAllocator:
                     self._branch_reflog_identity(repository, branch),
                 )
                 self._capture_locks[path] = threading.Lock()
+                self._persist_durable_state()
                 return workspace
             finally:
                 lock.rmdir()
@@ -275,6 +428,7 @@ class GitWorktreeAllocator:
             if path in self._retained_workspaces:
                 return "already_retained"
             self._retained_workspaces.add(path)
+            self._persist_durable_state()
             return "retained"
 
     def cleanup(self, workspace: CodingWorkspaceDTO, *, discard: bool = False) -> str:
@@ -360,8 +514,10 @@ class GitWorktreeAllocator:
         self._git(repository, "branch", "-D" if discard else "-d", workspace.branch)
         self._pending_branch_cleanup.pop(path, None)
         self._allocated_workspaces.pop(path, None)
+        self._retained_workspaces.discard(path)
         self._removed_workspaces.add(key)
         self._capture_locks.pop(path, None)
+        self._persist_durable_state()
 
     @staticmethod
     def _branch_ref_path(repository: Path, branch: str) -> Path:
