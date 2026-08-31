@@ -7,11 +7,18 @@ infrastructure layer at it; nothing else changes.
 """
 from __future__ import annotations
 
-from pydantic import model_validator
+import logging
+
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEVELOPMENT_SECRET = "dev-insecure-change-me"
 _DEVELOPMENT_PASSWORD = "admin123"
+
+_logger = logging.getLogger("crewspace.config")
+
+# Only these SQLAlchemy URL prefixes are permitted in production.
+_ALLOWED_DB_BACKENDS = ("sqlite+", "postgresql+")
 
 
 class Settings(BaseSettings):
@@ -50,8 +57,29 @@ class Settings(BaseSettings):
     log_format: str = "text"
     log_json: bool = False
 
+    @field_validator("port")
+    @classmethod
+    def port_in_range(cls, v: int) -> int:
+        if not 1 <= v <= 65535:
+            raise ValueError(f"port must be between 1 and 65535, got {v}")
+        return v
+
+    @field_validator("agent_reply_timeout")
+    @classmethod
+    def reply_timeout_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"agent_reply_timeout must be > 0, got {v}")
+        return v
+
+    @field_validator("host")
+    @classmethod
+    def host_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("host must not be empty")
+        return v
+
     @model_validator(mode="after")
-    def reject_network_exposure_with_development_credentials(self) -> "Settings":
+    def validate_config(self) -> "Settings":
         if self.database_url is None:
             self.database_url = f"sqlite+aiosqlite:///{self.db_path}"
         if self.host not in {"127.0.0.1", "localhost", "::1"} and (
@@ -60,6 +88,19 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Set CREWSPACE_SECRET and CREWSPACE_SEED_ADMIN_PASSWORD before binding beyond loopback"
+            )
+        # Validate that the database URL uses a supported backend (M9.2).
+        if self.database_url and not any(self.database_url.startswith(p) for p in _ALLOWED_DB_BACKENDS):
+            raise ValueError(
+                f"database_url must use a supported backend (sqlite or postgresql); "
+                f"got {self.database_url.split('://')[0]!r}"
+            )
+        # Warn if agent is set to llm but no credentials are provided (M9.2).
+        if self.agent == "llm" and not self.llm_api_key:
+            _logger.warning(
+                "agent=%r but CREWSPACE_LLM_API_KEY is not set — LLM agent will fail "
+                "without an API key or equivalent provider credential",
+                self.agent,
             )
         return self
 
