@@ -3,7 +3,7 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `51c6f9f` (M7.5)
+Latest verified product commit before this handoff: `bc0e131` (M7.6)
 Handoff state: this PROGRESS.md commit and `origin/master` are synchronized.
 Worktree at handoff: clean
 
@@ -14,12 +14,39 @@ Worktree at handoff: clean
 - M6.8 — Operational inbox — is DONE 7/7.
 - M6.8 implementation/release tag: `milestone-m6.8` → `6b734bc`
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
-- Latest verified M7 product slice is M7.6 at the commit recorded below.
-- M7 — Board as the Agent Operating Surface — is active (6/7 slices).
+- Latest verified M7 product slice is M7.7 at the commit recorded below.
+- M7 — Board as the Agent Operating Surface — is COMPLETE (7/7 slices).
   `PLAN.md` has the tracker; `PLAN_M7_BOARD.md` is the canonical detailed plan
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
+
+## M7.7 — Board operating-surface integration POC — verified
+
+Feature: `application/board_poc.py` `run_board_poc()` walks the whole M7 stack
+end to end on an isolated seeded DB: creates a POC board in ws_default and a
+card with editable metadata (priority/labels/assignee), grants a POC repo and
+dispatches a coding run to agent_planner (stubbed transport) then links the card
+to it, creates a column_move workflow in chan_general, sets a column trigger on
+the board's In Progress column, moves the card in to enqueue a workflow run,
+adds a comment, captures the live board-room deltas that reach a second viewer
+(card_created/card_moved/comment_added via `build_board_delta_publisher`), and
+confirms attention items surface in the team-scoped inbox with zero cross-tenant
+leakage (`load_inbox_for_team` with a foreign principal returns []). Closes M7.
+
+Code touches: `application/board_poc.py` (`BoardPocReport` + `run_board_poc()`;
+walks real application seams — BoardService, dispatch_coding_run, WorkflowService,
+set_column_trigger, move_card, comment_card, board delta publisher, inbox loader;
+sqlalchemy-free) and `tests/test_board_poc.py` (acceptance walk + determinism/
+isolation across two fresh temp DBs; service-generated board/card/column/workflow-run
+ids intentionally not compared for equality).
+
+Verification: `tests/test_board_poc.py` — 2 passed. Regressions: 70 board/M7 +
+46 workflow + 5 inbox/POC (3 inbox_poc + 2 board_poc) + 20 security, all green.
+`makemigrations --check` clean at head `20260831_01` (no schema drift — POC adds
+an application module only); compileall, `git diff --check`, and AST sqlalchemy-free
+scan clean. Independent fail-closed review: BLOCKERS: none, NON-BLOCKERS: none.
+Commit: <filled-after-commit> (pushed).
 
 ## M7.6 — Board planning views: filters, group-by, swimlanes, timeline, saved views — verified
 

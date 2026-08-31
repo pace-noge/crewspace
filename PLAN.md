@@ -365,7 +365,7 @@ Tracking rules:
 | M7.4 | Card ↔ coding-run/change-set linkage | DONE | 5/5 | M7.1, M6.2–M6.5 |
 | M7.5 | Move-to-column workflow triggers | DONE | 5/5 | M7.2, M7.4, M6.6 |
 | M7.6 | Filters, swimlanes, timeline, saved views | DONE | 5/5 | M7.1, M7.2 |
-| M7.7 | Board operating-surface integration POC | PLANNED | 0/3 | M7.1–M7.6 |
+| M7.7 | Board operating-surface integration POC | DONE | 3/3 | M7.1–M7.6 |
 
 M6 Progress log (append-only, newest first):
   - 2026-08-24 — M6.2 durable change-set governance GREEN: logical repositories
