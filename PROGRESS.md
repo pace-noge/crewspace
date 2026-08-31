@@ -46,7 +46,7 @@ surfaces) — 12 focused passed; board/M7 bounded group — 70 passed; workflow 
 group — 46 passed. `makemigrations --check` clean at head `20260831_01`; legacy
 `20260830_02` downgrade/upgrade + populated downgrade round-trips green; compileall,
 `git diff --check`, and AST sqlalchemy-free scan clean. Independent fail-closed
-review: BLOCKERS: none, NON-BLOCKERS: none. Commit: (filled after commit).
+review: BLOCKERS: none, NON-BLOCKERS: none. Commit: bc0e131.
 
 ## M7.5 — Move-to-column workflow triggers — verified
 

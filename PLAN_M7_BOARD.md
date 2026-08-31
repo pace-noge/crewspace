@@ -289,7 +289,7 @@ M7 Progress log (append-only, newest first):
   populated-downgrade round-trip green; compileall OK; git diff --check clean;
   AST import scan confirms `board_views.py` is sqlalchemy-free. Independent
   fail-closed review: BLOCKERS: none, NON-BLOCKERS: none. Committed as
-  (see PROGRESS.md).
+  bc0e131.
 - M7.4 — Card ↔ coding-run / change-set linkage — verified; BLOCKERS: none.
 
   Feature: cards can be durably linked to one or more coding runs. The board
