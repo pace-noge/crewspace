@@ -1,6 +1,8 @@
 """API: page router — top-level HTML pages + health."""
 from __future__ import annotations
 
+from typing import Literal, cast
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
@@ -8,8 +10,9 @@ from ..deps import BoardServiceDep, CurrentUserDep, CurrentUserOptionalDep, UowD
 from ...domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID
 from ..rendering import navigation_context, templates
 from ...application.access import can_access_board, can_manage_archived_board
+from ...application.board_views import BoardSavedViewService, build_board_planning_view
 from ...application.column_triggers import board_workflow_badges
-from ...dto.board import card_run_badges
+from ...dto.board import BoardFilterDTO, BoardGroupDTO, card_run_badges
 
 router = APIRouter(tags=["pages"])
 
@@ -119,7 +122,21 @@ async def board_list(request: Request, uow: UowDep, current_user: CurrentUserOpt
 
 
 @router.get("/board/{board_id}", response_class=HTMLResponse)
-async def board_page(request: Request, board_id: str, svc: BoardServiceDep, uow: UowDep, current_user: CurrentUserOptionalDep) -> Response:
+async def board_page(
+    request: Request,
+    board_id: str,
+    svc: BoardServiceDep,
+    uow: UowDep,
+    current_user: CurrentUserOptionalDep,
+    view: str = "board",
+    group_by: str | None = None,
+    label: str | None = None,
+    priority: str | None = None,
+    due: str | None = None,
+    status: str | None = None,
+    assignee_id: str | None = None,
+    agent_id: str | None = None,
+) -> Response:
     redirect = require_member_redirect(current_user)
     if redirect is not None:
         return redirect
@@ -143,13 +160,62 @@ async def board_page(request: Request, board_id: str, svc: BoardServiceDep, uow:
         card_id: [badge for status in statuses for badge in card_run_badges(status)]
         for card_id, statuses in card_run_statuses.items()
     }
+    # M7.6 — planning projections (filters / grouping / swimlane / timeline).
+    # Mirrors the /boards/{board_id} route so both pages render board.html the
+    # same way; unknown values fail closed to the plain Kanban board.
+    if view not in ("board", "swimlane", "timeline"):
+        view = "board"
+    allowed_groups = ("assignee", "agent", "label", "priority", "due", "status")
+    if group_by not in allowed_groups:
+        group_by = None
+    if view == "swimlane" and group_by is None:
+        group_by = "assignee"
+    filters = BoardFilterDTO(
+        assignee_id=assignee_id or None,
+        agent_id=agent_id or None,
+        label=label or None,
+        priority=cast(
+            Literal["low", "medium", "high", "urgent"],
+            priority or None,
+        )
+        if priority in ("low", "medium", "high", "urgent")
+        else None,
+        due=cast(
+            Literal["overdue", "today", "upcoming", "unscheduled"],
+            due or None,
+        )
+        if due in ("overdue", "today", "upcoming", "unscheduled")
+        else None,
+        status=status or None,
+    )
+    group = (
+        BoardGroupDTO(
+            by=cast(
+                Literal["assignee", "agent", "label", "priority", "due", "status"],
+                group_by,
+            )
+        )
+        if group_by in allowed_groups
+        else None
+    )
+    planning = build_board_planning_view(
+        board, filters=filters, group=group, view=view
+    )
     context = {
         "board": board,
         "current_user": current_user,
         "agents": agents,
+        "members": await uow.auth.list_members(),
         "card_run_statuses": card_run_statuses,
         "card_run_badge_links": card_run_badge_links,
         "card_workflow_badge_links": await board_workflow_badges(uow, board_id),
+        "active_view": view,
+        "group_by": group_by,
+        "active_filters": filters,
+        "planning": planning,
+        "saved_views": await BoardSavedViewService().list_for_board(
+            board_id, current_user, uow
+        ),
         **await navigation_context(uow, current_user),
     }
     return templates.TemplateResponse(

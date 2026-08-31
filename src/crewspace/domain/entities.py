@@ -415,6 +415,7 @@ class CardView:
     labels: list[str] = field(default_factory=list)
     assignee_name: str | None = None
     assignee_avatar: str | None = None
+    assignee_kind: MemberKind | None = None
     created_by: str | None = None
     updated_by: str | None = None
     updated_at: str | None = None
@@ -456,6 +457,20 @@ class BoardView:
     team_name: str | None = None
     archived_at: str | None = None
     columns: list[ColumnView] = field(default_factory=list)
+
+
+@dataclass
+class SavedBoardView:
+    """A private, per-user planning projection persisted for one board."""
+
+    id: str
+    board_id: str
+    owner_id: str
+    name: str
+    view: str
+    filters: dict | None
+    group: dict | None
+    created_at: datetime
 
 
 @dataclass

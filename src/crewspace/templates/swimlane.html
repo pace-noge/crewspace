@@ -1,0 +1,22 @@
+{# M7.6 — swimlane planning surface: one lane per group (assignee/agent/label). #}
+<div style="display:flex; flex-direction:column; gap:14px; padding:16px;">
+  {% for lane in planning.groups %}
+    <div class="swimlane" style="border:1px solid var(--border,#d1d5db); border-radius:8px;">
+      <div class="swimlane-header" style="padding:8px 12px; font-weight:600; border-bottom:1px solid var(--border,#d1d5db);">
+        {{ lane.label }}
+      </div>
+      <div class="swimlane-cards" style="display:flex; gap:10px; padding:10px; overflow-x:auto;">
+        {% for card in lane.cards %}
+          <a href="/boards/{{ board.id }}/cards/{{ card.id }}" class="card" id="card-{{ card.id }}"
+             style="min-width:180px; padding:8px; border:1px solid var(--border,#d1d5db); border-radius:6px; text-decoration:none; color:inherit; display:block;">
+            {{ card.title }}
+            {% if card.priority %}<div style="font-size:0.8em;">{{ card.priority }}</div>{% endif %}
+            {% if card.due_date %}<div style="font-size:0.8em;">due {{ card.due_date }}</div>{% endif %}
+          </a>
+        {% else %}
+          <span style="color:var(--muted,#6b7280);">no cards</span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>

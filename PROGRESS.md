@@ -1,9 +1,9 @@
 # Crewspace — Session Progress (fresh-session handoff)
 
-Last updated: 2026-08-30 (WIB)
+Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `51c6f9f`
+Latest verified product commit before this handoff: `51c6f9f` (M7.5)
 Handoff state: this PROGRESS.md commit and `origin/master` are synchronized.
 Worktree at handoff: clean
 
@@ -14,12 +14,39 @@ Worktree at handoff: clean
 - M6.8 — Operational inbox — is DONE 7/7.
 - M6.8 implementation/release tag: `milestone-m6.8` → `6b734bc`
   (`6b734bcd8af58c54ebc7434fbb18dcd8872a7a61`).
-- Latest verified M7 product slice is M7.5 at `51c6f9f`.
-- M7 — Board as the Agent Operating Surface — is active (5/7 slices).
+- Latest verified M7 product slice is M7.6 at the commit recorded below.
+- M7 — Board as the Agent Operating Surface — is active (6/7 slices).
   `PLAN.md` has the tracker; `PLAN_M7_BOARD.md` is the canonical detailed plan
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
+
+## M7.6 — Board planning views: filters, group-by, swimlanes, timeline, saved views — verified
+
+Feature: board-level planning surfaces. Cards can be filtered and grouped by
+assignee, agent, label, priority, due, or status; a swimlane view groups by
+assignee or agent; a timeline view groups cards by due date and marks overdue
+buckets. Saved views persist per user with strict owner scoping plus board-access
+checks, and both board pages (`/board/{board_id}` and `/boards/{board_id}`) render
+the same toolbar and planning fragments. Unknown view/group values fail closed to
+the plain Kanban board.
+
+Code touches: pure `application/board_views.py` view model (`build_board_planning_view`
++ owner-scoped `BoardSavedViewService`); `BoardFilterDTO`/`BoardGroupDTO`/
+`SavedBoardViewDTO` + `CardDTO.assignee_kind`; `SavedBoardView` entity +
+`board_saved_view` table + idempotent migration `20260831_01`; repository/port
+saved-view methods + assignee_kind join; saved-view create/open/delete routes +
+planning query params on both board routers and templates (`board.html` toolbar,
+`board_views.html`, `swimlane.html`, `timeline.html`).
+
+Verification: `tests/test_board_planning_views.py` (4), `test_board_saved_views.py`
+(owner scoping, same-board member isolation, blank-name atomicity, migration
+fresh/legacy/populated round-trip), `test_board_planning_routes.py` (4 routed
+surfaces) — 12 focused passed; board/M7 bounded group — 70 passed; workflow bounded
+group — 46 passed. `makemigrations --check` clean at head `20260831_01`; legacy
+`20260830_02` downgrade/upgrade + populated downgrade round-trips green; compileall,
+`git diff --check`, and AST sqlalchemy-free scan clean. Independent fail-closed
+review: BLOCKERS: none, NON-BLOCKERS: none. Commit: (filled after commit).
 
 ## M7.5 — Move-to-column workflow triggers — verified
 
@@ -135,24 +162,21 @@ Committed and pushed as f0a81b7.
 
 1. `cd /home/bilal/Projects/Learning/python/crewspace`
 2. `git status --short && git log -10 --oneline --decorate`
-3. Confirm `master` and `origin/master` point at the same commit and the worktree
-   is clean. Product commit `51c6f9f` contains verified M7.5; the handoff-only
-   docs commit immediately after it is expected once this file is saved.
-4. Re-run the focused completed-milestone gate if needed:
-   `uv run pytest tests/test_board_column_triggers.py -q` (last result: 13 passed).
+3. Confirm `master` and `origin/master` point at the same verified M7.6 product
+   commit and the worktree is clean.
+4. Re-run the focused M7.6 gate if needed:
+   `uv run pytest tests/test_board_planning_views.py tests/test_board_saved_views.py tests/test_board_planning_routes.py -q`
+   (last result: 12 passed).
 5. Verify schema compatibility if touching models/application boundaries:
    upgrade a fresh temporary DB to head, then run
    `uv run crewspace-manage makemigrations --check`; current head is
-   `20260830_02`. Do not export `CREWSPACE_DATABASE_URL` globally.
-6. Next implementation: M7.6 — board planning views (filters, group-by,
-   swimlanes, timeline, and authorization-scoped saved views). Follow the M7.6
-   section in `PLAN_M7_BOARD.md` using the verified RED→GREEN/review/commit/push
-   workflow. Preserve shipped M7.1–M7.5 behavior.
-7. M7.5 verification context: 13 focused tests, 70 board/M7 regressions, and 46
-   workflow regressions passed. A broad run parked at 92% in the documented
-   teardown/cross-test behavior; its three cached failures passed independently.
-   Independent reviewer inspection and focused tests completed but its response
-   parked; the documented executable fallback concluded `BLOCKERS: None` and
+   `20260831_01`. Do not export `CREWSPACE_DATABASE_URL` globally.
+6. Next implementation: M7.7 — board operating-surface integration POC. Follow
+   the M7.7 section in `PLAN_M7_BOARD.md` using the verified RED→GREEN/review/
+   commit/push workflow. Preserve shipped M7.1–M7.6 behavior.
+7. M7.6 verification context: 12 focused tests, 70 board/M7 regressions, and 46
+   workflow regressions passed; migration fresh/legacy/populated paths green;
+   independent fail-closed review concluded `BLOCKERS: None` and
    `NON-BLOCKERS: None`.
 
 ## M7.4 — Card ↔ coding-run / change-set linkage — verified

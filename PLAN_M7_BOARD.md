@@ -189,7 +189,7 @@ Acceptance:
   - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
-M7.6 — Board planning views: filters, group-by, timeline    [L]  PLANNED
+M7.6 — Board planning views: filters, group-by, timeline    [L]  DONE (verified)
 --------------------------------------------------------------------------------
 Feature:
   Board-level planning surfaces: filter/group cards by assignee, agent, label,
@@ -208,11 +208,11 @@ Code (concrete):
   - Tests: pure view-model tests (no app fixture) + a routed fragment test.
 
 Acceptance:
-  - [ ] Cards can be filtered/groupped by assignee, agent, label, priority, due, status.
-  - [ ] Swimlane-by-assignee/agent view renders correctly.
-  - [ ] Timeline view groups cards by due date and marks overdue.
-  - [ ] Saved per-user views persist; authorization scoped.
-  - [ ] Feature + code documented in the M7 progress log with tests + commit evidence.
+  - [x] Cards can be filtered/grouped by assignee, agent, label, priority, due, status.
+  - [x] Swimlane-by-assignee/agent view renders correctly.
+  - [x] Timeline view groups cards by due date and marks overdue.
+  - [x] Saved per-user views persist; authorization scoped.
+  - [x] Feature + code documented in the M7 progress log with tests + commit evidence.
 
 --------------------------------------------------------------------------------
 M7.7 — Board operating-surface integration POC             [M]  PLANNED
@@ -240,6 +240,56 @@ Acceptance:
 --------------------------------------------------------------------------------
 M7 Progress log (append-only, newest first):
 --------------------------------------------------------------------------------
+- M7.6 — Board planning views: filters, group-by, swimlanes, timeline, saved
+  views — verified; BLOCKERS: none.
+
+  Feature: board-level planning surfaces. Cards can be filtered and grouped by
+  assignee, agent, label, priority, due, or status; a swimlane view groups by
+  assignee or agent (agents-only lanes plus an unassigned lane); a timeline view
+  groups cards by due date and marks overdue buckets. Saved views persist per
+  user with strict owner scoping plus board-access checks, and both the
+  `/board/{board_id}` and `/boards/{board_id}` pages render the same toolbar and
+  planning fragments. Unknown view/group values fail closed to the plain Kanban
+  board.
+
+  Code:
+  - application/board_views.py (pure view model, sqlalchemy-free):
+    `build_board_planning_view` over CardDTO projections — composable
+    `BoardFilterDTO` filters (assignee/agent/label/priority/due/status),
+    deterministic grouping (assignee/agent/label/priority/due/status),
+    timeline buckets with overdue marking, and card metrics (total/completed/
+    overdue). Status filtering keys on the canonical column id (URL-safe), with
+    display-name labels on the groups; `_is_done` recognizes done columns by id
+    or name. Also `BoardSavedViewService` (owner-scoped save/list/get/delete with
+    board-access + owner checks, fail-closed, pre-insert DTO validation).
+  - dto/board.py: `CardDTO += assignee_kind`; pure `BoardFilterDTO`,
+    `BoardGroupDTO`, `SavedBoardViewDTO` (frozen, `extra="forbid"`).
+  - domain/entities.py + infrastructure/models.py: `SavedBoardView` +
+    `board_saved_view` table; CardView += assignee_kind.
+  - dto/mappers.py + repositories.py: CardView/CardDTO carry assignee_kind from
+    the member join; rendered saved-view repository methods; migration
+    `20260831_01_board_saved_views.py` (idempotent table create + drop).
+  - api/routers/boards.py + api/routers/pages.py: both board pages accept
+    view/group_by/filter query params and build the planning context; saved-view
+    create/open/delete routes (POST save, GET open, POST /delete form) with
+    board access + owner
+    enforcement and URL-encoded redirect round-trip.
+  - templates/: board.html toolbar (view switcher, assignee/agent/label/
+    priority/due/status filters, group-by, save-view form + saved-view menu),
+    board_views.html dispatcher, swimlane.html, timeline.html fragments.
+  - tests: test_board_planning_views.py (4 pure view-model tests, no app
+    fixture), test_board_saved_views.py (owner-scoped persistence, same-board
+    member isolation, blank-name atomicity, migration fresh/legacy/populated
+    round-trip), test_board_planning_routes.py (routed timeline/swimlane/
+    filter/group surfaces, saved-view create/list; red first then green).
+
+  Evidence: 12 focused M7.6 tests green; board/M7 bounded group 70 green;
+  workflow bounded group 46 green; fresh-head migration drift check clean at
+  `20260831_01`; legacy `20260830_02` downgrade/upgrade round-trip green;
+  populated-downgrade round-trip green; compileall OK; git diff --check clean;
+  AST import scan confirms `board_views.py` is sqlalchemy-free. Independent
+  fail-closed review: BLOCKERS: none, NON-BLOCKERS: none. Committed as
+  (see PROGRESS.md).
 - M7.4 — Card ↔ coding-run / change-set linkage — verified; BLOCKERS: none.
 
   Feature: cards can be durably linked to one or more coding runs. The board

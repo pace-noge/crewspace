@@ -9,13 +9,46 @@ are also attribute-accessible from Jinja templates (for HTMX fragments).
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 SafeId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")]
 BoardName = Annotated[str, StringConstraints(min_length=1, max_length=120)]
+
+
+class BoardFilterDTO(BaseModel):
+    """Composable, pure filters for board planning projections."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    assignee_id: SafeId | None = None
+    agent_id: SafeId | None = None
+    label: Annotated[str, StringConstraints(min_length=1, max_length=64)] | None = None
+    priority: Literal["low", "medium", "high", "urgent"] | None = None
+    due: Literal["overdue", "today", "upcoming", "unscheduled"] | None = None
+    status: SafeId | None = None
+
+
+class BoardGroupDTO(BaseModel):
+    """One deterministic grouping dimension for a planning view."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    by: Literal["assignee", "agent", "label", "priority", "due", "status"]
+
+
+class SavedBoardViewDTO(BaseModel):
+    """A persisted, owner-scoped board planning view."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    id: SafeId
+    board_id: SafeId
+    owner_id: SafeId
+    name: BoardName
+    view: Literal["board", "swimlane", "timeline"] = "board"
+    filters: BoardFilterDTO | None = None
+    group: BoardGroupDTO | None = None
+    created_at: datetime
 
 
 class BoardDeltaDTO(BaseModel):
@@ -125,6 +158,7 @@ class CardDTO(BaseModel):
     assignee_id: str | None = None
     assignee_name: str | None = None
     assignee_avatar: str | None = None
+    assignee_kind: Literal["human", "agent"] | None = None
     due_date: str | None = None
     priority: str | None = None
     labels: list[str] = []

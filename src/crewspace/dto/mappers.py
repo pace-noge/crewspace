@@ -78,6 +78,7 @@ def to_card(c: CardView) -> CardDTO:
         assignee_id=c.assignee_id,
         assignee_name=c.assignee_name,
         assignee_avatar=c.assignee_avatar,
+        assignee_kind=c.assignee_kind,
         due_date=c.due_date,
         priority=c.priority,
         labels=list(c.labels),

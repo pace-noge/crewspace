@@ -295,6 +295,26 @@ class CardRunLinkModel(Base):
     linked_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class SavedBoardViewModel(Base):
+    """A private, per-user persisted planning projection for one board.
+
+    ``filters``/``group`` are JSON-encoded snapshots of BoardFilterDTO /
+    BoardGroupDTO. Ownership is strict: only ``owner_id`` may read, list, or
+    delete a row (enforced in the service, never the repository).
+    """
+
+    __tablename__ = "board_saved_view"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    board_id: Mapped[str] = mapped_column(ForeignKey("board.id", ondelete="CASCADE"), nullable=False)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("member.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    view: Mapped[str] = mapped_column(String, nullable=False, server_default="board")
+    filters: Mapped[str | None] = mapped_column(Text)  # JSON string
+    grouping: Mapped[str | None] = mapped_column(Text)  # JSON string
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class ColumnWorkflowRuleModel(Base):
     """Configurable board-column → workflow mapping (one rule per column)."""
 

@@ -28,6 +28,7 @@ from ..domain.entities import (
     ColumnMoveRunStatusView,
     ColumnWorkflowRule,
     CardView,
+    SavedBoardView,
     Channel,
     ChannelMembership,
     ChannelRole,
@@ -95,6 +96,20 @@ def _apply(field_value: object, current) -> str | None:
     if field_value == "":
         return None
     return str(field_value)
+
+
+def _row_to_saved_view(r: "MappingRow") -> SavedBoardView:
+    """Map one board_saved_view row to a SavedBoardView entity."""
+    return SavedBoardView(
+        id=r["id"],
+        board_id=r["board_id"],
+        owner_id=r["owner_id"],
+        name=r["name"],
+        view=r["view"],
+        filters=json.loads(r["filters"]) if r["filters"] else None,
+        group=json.loads(r["grouping"]) if r["grouping"] else None,
+        created_at=_parse(r["created_at"]),
+    )
 
 
 class SqlAlchemyChatRepository:
@@ -1919,6 +1934,7 @@ class SqlAlchemyBoardRepository:
             SELECT c.id, c.column_id, c.title, c.description, c.position, c.assignee_id,
                    c.due_date, c.priority, c.labels,
                    mem.name AS assignee_name, mem.avatar AS assignee_avatar,
+                   mem.kind AS assignee_kind,
                    c.created_by, c.updated_by, c.updated_at,
                    cb.name AS created_by_name, ub.name AS updated_by_name
             FROM card c
@@ -1945,6 +1961,7 @@ class SqlAlchemyBoardRepository:
                     labels=_parse_labels(r["labels"]),
                     assignee_name=r["assignee_name"],
                     assignee_avatar=r["assignee_avatar"],
+                    assignee_kind=MemberKind(r["assignee_kind"]) if r["assignee_kind"] else None,
                     created_by=r["created_by"],
                     updated_by=r["updated_by"],
                     updated_at=r["updated_at"],
@@ -2002,6 +2019,7 @@ class SqlAlchemyBoardRepository:
             SELECT c.id, c.column_id, c.title, c.description, c.position, c.assignee_id,
                    c.due_date, c.priority, c.labels,
                    mem.name AS assignee_name, mem.avatar AS assignee_avatar,
+                   mem.kind AS assignee_kind,
                    c.created_by, c.updated_by, c.updated_at,
                    cb.name AS created_by_name, ub.name AS updated_by_name
             FROM card c
@@ -2027,6 +2045,7 @@ class SqlAlchemyBoardRepository:
             labels=_parse_labels(row["labels"]),
             assignee_name=row["assignee_name"],
             assignee_avatar=row["assignee_avatar"],
+            assignee_kind=MemberKind(row["assignee_kind"]) if row["assignee_kind"] else None,
             created_by=row["created_by"],
             updated_by=row["updated_by"],
             updated_at=row["updated_at"],
@@ -2305,6 +2324,51 @@ class SqlAlchemyBoardRepository:
             workflow_id=r["workflow_id"], enabled=bool(r["enabled"]),
             changed_by=r["changed_by"],
         )
+
+    async def list_saved_views(self, board_id: str, owner_id: str) -> list[SavedBoardView]:
+        cur = await self._conn.execute(
+            """
+            SELECT id, board_id, owner_id, name, view, filters, grouping, created_at
+            FROM board_saved_view
+            WHERE board_id = ? AND owner_id = ?
+            ORDER BY created_at ASC, name ASC
+            """,
+            (board_id, owner_id,),
+        )
+        return [_row_to_saved_view(r) for r in await cur.fetchall()]
+
+    async def get_saved_view(self, view_id: str) -> SavedBoardView | None:
+        cur = await self._conn.execute(
+            """
+            SELECT id, board_id, owner_id, name, view, filters, grouping, created_at
+            FROM board_saved_view WHERE id = ?
+            """,
+            (view_id,),
+        )
+        r = await cur.fetchone()
+        return _row_to_saved_view(r) if r else None
+
+    async def add_saved_view(self, view: SavedBoardView) -> SavedBoardView:
+        await self._conn.execute(
+            """
+            INSERT INTO board_saved_view
+                (id, board_id, owner_id, name, view, filters, grouping, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                view.id, view.board_id, view.owner_id, view.name, view.view,
+                json.dumps(view.filters) if view.filters is not None else None,
+                json.dumps(view.group) if view.group is not None else None,
+                _iso(view.created_at),
+            ),
+        )
+        return view
+
+    async def delete_saved_view(self, view_id: str) -> bool:
+        result = await self._conn.execute(
+            "DELETE FROM board_saved_view WHERE id = ?", (view_id,)
+        )
+        return result.rowcount == 1
 
     async def claim_column_move_trigger(
         self, *, trigger_id: str, card_id: str, column_id: str,

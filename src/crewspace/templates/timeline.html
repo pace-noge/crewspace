@@ -1,0 +1,24 @@
+{# M7.6 — timeline planning surface: cards grouped by due date, overdue marked. #}
+<div style="display:flex; flex-direction:column; gap:14px; padding:16px;">
+  {% for bucket in planning.timeline %}
+    <div class="timeline-bucket {{ 'overdue' if bucket.overdue else '' }}"
+         style="border:1px solid {{ '#ef4444' if bucket.overdue else 'var(--border,#d1d5db)' }}; border-radius:8px;">
+      <div class="timeline-header"
+           style="padding:8px 12px; font-weight:600; border-bottom:1px solid var(--border,#d1d5db);
+                  {{ 'color:#b91c1c;' if bucket.overdue else '' }}">
+        {{ "overdue " if bucket.overdue else "" }}{{ bucket.key }}
+      </div>
+      <div class="timeline-cards" style="display:flex; gap:10px; padding:10px; overflow-x:auto;">
+        {% for card in bucket.cards %}
+          <a href="/boards/{{ board.id }}/cards/{{ card.id }}" class="card" id="card-{{ card.id }}"
+             style="min-width:180px; padding:8px; border:1px solid var(--border,#d1d5db); border-radius:6px; text-decoration:none; color:inherit; display:block;">
+            {{ card.title }}
+            {% if card.priority %}<div style="font-size:0.8em;">{{ card.priority }}</div>{% endif %}
+          </a>
+        {% else %}
+          <span style="color:var(--muted,#6b7280);">no cards</span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>

@@ -27,6 +27,7 @@ from .entities import (
     ColumnMoveRunStatusView,
     ColumnWorkflowRule,
     CardView,
+    SavedBoardView,
     Channel,
     ChannelMembership,
     ChannelRole,
@@ -191,6 +192,22 @@ class BoardRepository(Protocol):
 
     async def list_board_run_statuses(self, board_id: str) -> "list[CardRunStatusView]":
         """Batch live projection for all linked cards on one board."""
+        ...
+
+    async def list_saved_views(self, board_id: str, owner_id: str) -> "list[SavedBoardView]":
+        """All persisted planning views a user owns on one board (owner-scoped)."""
+        ...
+
+    async def get_saved_view(self, view_id: str) -> "SavedBoardView | None":
+        """One persisted view by id (identity only — authorization is the caller's)."""
+        ...
+
+    async def add_saved_view(self, view: "SavedBoardView") -> SavedBoardView:
+        """Persist a planning view (caller must own/authorize it)."""
+        ...
+
+    async def delete_saved_view(self, view_id: str) -> bool:
+        """Delete a persisted view by id; returns False if it did not exist."""
         ...
 
     async def set_column_workflow(self, rule: "ColumnWorkflowRule") -> None:

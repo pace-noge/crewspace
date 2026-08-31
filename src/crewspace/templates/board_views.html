@@ -1,0 +1,22 @@
+{# M7.6 — dispatcher for the planning surfaces (swimlane / timeline / grouped). #}
+{% if active_view == "timeline" %}
+  <div class="planning-view" data-view="timeline">
+    <h3 class="planning-section-title">Timeline</h3>
+    {% include "timeline.html" with context %}
+  </div>
+{% elif active_view == "swimlane" %}
+  <div class="planning-view" data-view="swimlane">
+    <h3 class="planning-section-title">Swimlanes</h3>
+    {% include "swimlane.html" with context %}
+  </div>
+{% else %}
+  <div class="planning-view" data-view="grouped">
+    <h3 class="planning-section-title">Grouped by {{ group_by }}</h3>
+    {% include "swimlane.html" with context %}
+  </div>
+{% endif %}
+<div class="planning-metrics" style="padding:10px 16px; display:flex; gap:16px; color:var(--muted,#6b7280);">
+  <span>{{ planning.metrics.total_cards }} cards</span>
+  <span>{{ planning.metrics.completed_cards }} done</span>
+  <span>{{ planning.metrics.overdue_cards }} overdue</span>
+</div>

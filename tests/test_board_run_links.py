@@ -182,7 +182,7 @@ def test_m74_migration_is_head_and_models_are_in_sync():
             env=env,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "20260830_02" in result.stdout
+        assert "20260831_01" in result.stdout
         assert "No changes detected" in result.stdout
 
 

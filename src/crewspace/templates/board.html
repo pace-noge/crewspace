@@ -5,16 +5,91 @@
 {% block topbar %}{{ board.name }}{% endblock %}
 
 {% block content %}
-  <div style="display:flex; justify-content:flex-end; padding:10px 16px 0;">
+  <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 16px 0;">
+    <div class="board-views-toolbar" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <a href="/boards/{{ board.id }}?view=board">Board</a>
+      <a href="/boards/{{ board.id }}?view=swimlane&group_by=agent">Swimlanes</a>
+      <a href="/boards/{{ board.id }}?view=timeline">Timeline</a>
+      <form method="get" action="/boards/{{ board.id }}" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+        <input type="hidden" name="view" value="{{ active_view }}" />
+        <select name="assignee_id">
+          <option value="">assignee</option>
+          {% for m in members %}
+            <option value="{{ m['id'] }}" {{ 'selected' if active_filters.assignee_id == m['id'] else '' }}>{{ m['name'] }}</option>
+          {% endfor %}
+        </select>
+        <select name="agent_id">
+          <option value="">agent</option>
+          {% for a in agents %}
+            <option value="{{ a['id'] }}" {{ 'selected' if active_filters.agent_id == a['id'] else '' }}>{{ a['name'] }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" name="label" placeholder="label" value="{{ active_filters.label or '' }}" />
+        <select name="priority">
+          <option value="">priority</option>
+          {% for p in ['low','medium','high','urgent'] %}
+            <option value="{{ p }}" {{ 'selected' if active_filters.priority == p else '' }}>{{ p }}</option>
+          {% endfor %}
+        </select>
+        <select name="due">
+          <option value="">due</option>
+          {% for d in ['overdue','today','upcoming','unscheduled'] %}
+            <option value="{{ d }}" {{ 'selected' if active_filters.due == d else '' }}>{{ d }}</option>
+          {% endfor %}
+        </select>
+        <select name="status">
+          <option value="">status</option>
+          {% for column in board.columns %}
+            <option value="{{ column.id }}" {{ 'selected' if active_filters.status == column.id else '' }}>{{ column.name }}</option>
+          {% endfor %}
+        </select>
+        <select name="group_by">
+          <option value="">group…</option>
+          {% for g in ['assignee','agent','label','priority','due','status'] %}
+            <option value="{{ g }}" {{ 'selected' if group_by == g else '' }}>{{ g }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Apply</button>
+        <a href="/boards/{{ board.id }}">clear</a>
+      </form>
+      <form method="post" action="/boards/{{ board.id }}/saved-views" style="display:flex; gap:6px; align-items:center;">
+        <input type="hidden" name="view" value="{{ active_view }}" />
+        <input type="hidden" name="group_by" value="{{ group_by or '' }}" />
+        <input type="hidden" name="assignee_id" value="{{ active_filters.assignee_id or '' }}" />
+        <input type="hidden" name="agent_id" value="{{ active_filters.agent_id or '' }}" />
+        <input type="hidden" name="label" value="{{ active_filters.label or '' }}" />
+        <input type="hidden" name="priority" value="{{ active_filters.priority or '' }}" />
+        <input type="hidden" name="due" value="{{ active_filters.due or '' }}" />
+        <input type="hidden" name="status" value="{{ active_filters.status or '' }}" />
+        <input type="text" name="name" placeholder="save view as…" required />
+        <button type="submit">Save view</button>
+      </form>
+      {% if saved_views %}
+        <span style="display:flex; gap:6px; align-items:center;">
+          {% for sv in saved_views %}
+            <a href="/boards/{{ board.id }}/saved-views/{{ sv.id }}">{{ sv.name }}</a>
+            <form method="post" action="/boards/{{ board.id }}/saved-views/{{ sv.id }}/delete" style="display:inline;">
+              <button type="submit" title="delete">×</button>
+            </form>
+          {% endfor %}
+        </span>
+      {% endif %}
+    </div>
     <a href="/boards/{{ board.id }}/settings" aria-label="Board settings">Board settings</a>
   </div>
   <div id="board-wrap">
-    <div class="board" style="display:flex; gap:12px; padding:16px; align-items:flex-start; overflow-x:auto;">
-      {% set board_id = board.id %}
-      {% for column in board.columns %}
-        {% include "column.html" with context %}
-      {% endfor %}
-    </div>
+    {% if active_view in ("swimlane", "timeline") and planning %}
+      {% include "board_views.html" with context %}
+    {% elif group_by and planning %}
+      {% include "board_views.html" with context %}
+    {% else %}
+      <div class="board" style="display:flex; gap:12px; padding:16px; align-items:flex-start; overflow-x:auto;">
+        {% set board_id = board.id %}
+        {% for column in board.columns %}
+          {% include "column.html" with context %}
+        {% endfor %}
+      </div>
+    {% endif %}
   </div>
 {% endblock %}
 

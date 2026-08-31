@@ -1,6 +1,9 @@
 """API: board router — board page + card creation (HTMX fragments)."""
 from __future__ import annotations
 
+from typing import Literal, cast
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 
@@ -14,6 +17,11 @@ from ..deps import BoardServiceDep, ChatServiceDep, CurrentUserDep, CurrentUserO
 from ..rendering import navigation_context, templates
 from ...application.services import BoardService, ChatService
 from ...application.column_triggers import board_workflow_badges
+from ...application.board_views import (
+    BoardSavedViewService,
+    build_board_planning_view,
+)
+from ...dto.board import BoardFilterDTO, BoardGroupDTO, SavedBoardViewDTO
 from ...application.access import require_board_access, can_access_board, can_access_workspace, can_manage_archived_board
 from fastapi.responses import RedirectResponse
 
@@ -164,7 +172,19 @@ async def board_column_trigger_save(
 
 @router.get("/{board_id}", response_class=HTMLResponse)
 async def board_page(
-    request: Request, board_id: str, svc: BoardServiceDep, uow: UowDep, current_user: CurrentUserOptionalDep
+    request: Request,
+    board_id: str,
+    svc: BoardServiceDep,
+    uow: UowDep,
+    current_user: CurrentUserOptionalDep,
+    view: str = "board",
+    group_by: str | None = None,
+    label: str | None = None,
+    priority: str | None = None,
+    due: str | None = None,
+    status: str | None = None,
+    assignee_id: str | None = None,
+    agent_id: str | None = None,
 ) -> Response:
     redirect = require_member_redirect(current_user)
     if redirect is not None:
@@ -183,6 +203,52 @@ async def board_page(
         for card_id, statuses in card_run_statuses.items()
     }
     card_workflow_badge_links = await board_workflow_badges(uow, board_id)
+
+    # M7.6 — planning projections (filters / grouping / swimlane / timeline).
+    # Unknown view values fail closed to the plain Kanban board.
+    if view not in ("board", "swimlane", "timeline"):
+        view = "board"
+    allowed_groups = ("assignee", "agent", "label", "priority", "due", "status")
+    if group_by not in allowed_groups:
+        group_by = None
+    # A swimlane view without an explicit grouping defaults to assignee lanes.
+    if view == "swimlane" and group_by is None:
+        group_by = "assignee"
+    filters = BoardFilterDTO(
+        assignee_id=assignee_id or None,
+        agent_id=agent_id or None,
+        label=label or None,
+        priority=cast(
+            Literal["low", "medium", "high", "urgent"],
+            priority or None,
+        )
+        if priority in ("low", "medium", "high", "urgent")
+        else None,
+        due=cast(
+            Literal["overdue", "today", "upcoming", "unscheduled"],
+            due or None,
+        )
+        if due in ("overdue", "today", "upcoming", "unscheduled")
+        else None,
+        status=status or None,
+    )
+    group = (
+        BoardGroupDTO(
+            by=cast(
+                Literal["assignee", "agent", "label", "priority", "due", "status"],
+                group_by,
+            )
+        )
+        if group_by in allowed_groups
+        else None
+    )
+    planning = build_board_planning_view(
+        board, filters=filters, group=group, view=view
+    )
+    saved_svc = BoardSavedViewService()
+    saved_views = await saved_svc.list_for_board(board_id, current_user, uow)
+    members = await uow.auth.list_members()
+
     return templates.TemplateResponse(
         request=request,
         name="board.html",
@@ -190,9 +256,15 @@ async def board_page(
             "board": board,
             "current_user": current_user,
             "agents": agents,
+            "members": members,
             "card_run_statuses": card_run_statuses,
             "card_run_badge_links": card_run_badge_links,
             "card_workflow_badge_links": card_workflow_badge_links,
+            "active_view": view,
+            "group_by": group_by,
+            "active_filters": filters,
+            "planning": planning,
+            "saved_views": saved_views,
             **await navigation_context(uow, current_user),
         },
     )
@@ -527,6 +599,106 @@ async def restore_column(
         raise HTTPException(status_code=404, detail="column not found")
     await svc.restore_column(column_id, uow)
     return RedirectResponse(f"/board/{board_id}", status_code=303)
+
+
+@router.post("/{board_id}/saved-views", response_class=HTMLResponse)
+async def save_board_view(
+    request: Request,
+    board_id: str,
+    uow: UowDep,
+    current_user: CurrentUserDep,
+    name: str = Form(...),
+    view: str = Form("board"),
+    group_by: str | None = Form(None),
+    label: str | None = Form(None),
+    priority: str | None = Form(None),
+    due: str | None = Form(None),
+    status: str | None = Form(None),
+    assignee_id: str | None = Form(None),
+    agent_id: str | None = Form(None),
+) -> Response:
+    await require_board_access(current_user, board_id, uow)
+    if view not in ("board", "swimlane", "timeline"):
+        raise HTTPException(status_code=422, detail="invalid view")
+    filters = BoardFilterDTO(
+        assignee_id=assignee_id or None,
+        agent_id=agent_id or None,
+        label=label or None,
+        priority=cast(
+            Literal["low", "medium", "high", "urgent"], priority
+        )
+        if priority in ("low", "medium", "high", "urgent")
+        else None,
+        due=cast(
+            Literal["overdue", "today", "upcoming", "unscheduled"], due
+        )
+        if due in ("overdue", "today", "upcoming", "unscheduled")
+        else None,
+        status=status or None,
+    )
+    group = (
+        BoardGroupDTO(
+            by=cast(
+                Literal["assignee", "agent", "label", "priority", "due", "status"],
+                group_by,
+            )
+        )
+        if group_by in ("assignee", "agent", "label", "priority", "due", "status")
+        else None
+    )
+    try:
+        await BoardSavedViewService().save(
+            board_id=board_id,
+            owner=current_user,
+            name=name.strip(),
+            view=view,
+            filters=filters,
+            group=group,
+            uow=uow,
+        )
+        await uow.commit()
+    except (PermissionError, ValueError) as exc:
+        raise HTTPException(
+            status_code=403 if isinstance(exc, PermissionError) else 422,
+            detail=str(exc),
+        ) from exc
+    return RedirectResponse(f"/boards/{board_id}", status_code=303)
+
+
+@router.get("/{board_id}/saved-views/{view_id}", response_class=HTMLResponse)
+async def open_saved_board_view(
+    board_id: str,
+    view_id: str,
+    uow: UowDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    saved = await BoardSavedViewService().get(view_id, current_user, uow)
+    if saved is None or saved.board_id != board_id:
+        raise HTTPException(status_code=404, detail="saved view not found")
+    params: list[tuple[str, str]] = [("view", saved.view)]
+    if saved.group:
+        params.append(("group_by", saved.group.by))
+    if saved.filters:
+        for key, value in saved.filters.model_dump(exclude_none=True).items():
+            params.append((key, str(value)))
+    return RedirectResponse(
+        f"/boards/{board_id}?{urlencode(params)}", status_code=303
+    )
+
+
+@router.post("/{board_id}/saved-views/{view_id}/delete", response_class=HTMLResponse)
+async def delete_saved_board_view(
+    board_id: str,
+    view_id: str,
+    uow: UowDep,
+    current_user: CurrentUserDep,
+) -> Response:
+    saved = await BoardSavedViewService().get(view_id, current_user, uow)
+    if saved is None or saved.board_id != board_id:
+        raise HTTPException(status_code=404, detail="saved view not found")
+    await BoardSavedViewService().delete(view_id, current_user, uow)
+    await uow.commit()
+    return RedirectResponse(f"/boards/{board_id}", status_code=303)
 
 
 async def require_board_access_for_workspace(user: dict, workspace_id: str, uow: UnitOfWork) -> None:
