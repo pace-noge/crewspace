@@ -3,10 +3,10 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `1e5d0a0` (M8.4)
-Handoff state: M8.4 pipeline-participant reference example committed
-(verified, independent review BLOCKERS: none) and pushed. M8 milestone
-complete (M8.1–M8.4 all DONE).
+Latest verified product commit before this handoff: `ff3b228` (M9.1)
+Handoff state: M9.1 structured production logging committed (verified,
+independent review BLOCKERS: none after blocker fix + re-review) and pushed.
+M9 in progress (M9.1 DONE, M9.2–M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -23,6 +23,27 @@ complete (M8.1–M8.4 all DONE).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
+- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1 DONE 7/7,
+  M9.2–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+
+## M9.1 — Structured production logging — verified
+
+Feature: a single config-driven stdlib `logging` setup
+(`CREWSPACE_LOG_LEVEL`, `CREWSPACE_LOG_FORMAT`, `CREWSPACE_LOG_JSON`) plus an
+access-log middleware emitting method/path/status/duration_ms/request_id for
+every HTTP request (including a status=500 line for unhandled exceptions).
+
+Code: `src/crewspace/logging_config.py` (`configure_logging`,
+`StructuredFormatter`, `format_access_line`); `Settings` logging knobs;
+`main.py` lifespan + `access_log` middleware. 7 tests in
+`tests/test_logging_config.py`.
+
+Verification: logging + security + app/agent/pipeline regressions green;
+compileall; git diff --check; migration-compat clean. Independent review
+BLOCKER (exception path omitted status) fixed RED→GREEN + re-reviewed;
+final BLOCKERS none. Two pre-existing unrelated failures confirmed on HEAD.
+
+Verified implementation commit: `ff3b228`.
 
 ## M8.4 — Pipeline-participant reference example — verified
 

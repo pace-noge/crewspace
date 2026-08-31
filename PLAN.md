@@ -403,6 +403,38 @@ Tracking rules:
 | M8.3 | Approval-aware reference agent path (M6.5 gate exercised remotely) | DONE | 7/7 | M6.5, M8.1 |
 | M8.4 | Pipeline-participant reference example (planner→coder→reviewer) | DONE | 7/7 | M6.6, M8.1 |
 
+------------------------------------------------------------------------------
+M9 — Production Hardening and Live Deployment                    [L–XL]  PLANNED
+------------------------------------------------------------------------------
+Goal:
+  Bring Crewspace from a dev-grade FastAPI app to a deployable, operable live
+  service: structured production logging, hardened runtime configuration,
+  liveness/readiness observability, containerization, a backup/restore seam,
+  and a release runbook — each slice under the same verified-slice discipline
+  as M6/M7/M8.
+
+Canonical detailed plan: `PLAN_M9_PRODUCTION.md`.
+
+Tracking rules:
+  - Same verified-slice discipline as M6/M7/M8: RED → GREEN, bounded test gate,
+    migration-compat guard (pure DTO where applicable), compileall,
+    `git diff --check`, added-line security scan, and an independent fail-closed
+    review before a `[verified]` commit + push.
+  - Never weaken existing fail-closed guards (config binds loopback-only with
+    dev creds; migration drift still fails); no new secrets in committed files.
+  - Append objective test + commit evidence to the M9 progress log in
+    `PLAN_M9_PRODUCTION.md`.
+
+| Slice | Deliverable | Status | Progress |
+|------:|-------------|--------|----------|
+| M9.1 | Structured production logging | DONE | 7/7 |
+| M9.2 | Runtime config hardening + validation | PLANNED | 0/5 |
+| M9.3 | Health / readiness endpoints + DB/migration check | PLANNED | 0/5 |
+| M9.4 | Containerization (Dockerfile + docker-compose, non-root) | PLANNED | 0/5 |
+| M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
+| M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
+| M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
+
 M6 Progress log (append-only, newest first):
   - 2026-08-24 — M6.2 durable change-set governance GREEN: logical repositories
     are authorized many-to-many per team; coding runs bind team, repository,
