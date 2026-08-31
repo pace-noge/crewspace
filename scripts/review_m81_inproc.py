@@ -68,9 +68,25 @@ if 'generation' not in source:
     blockers.append("no generation guard against cross-reconnect terminal frames")
 if not re.search(r'if gen != runtime\.generation', source):
     blockers.append("generation guard not enforced before sending terminal frame")
-# completed ids de-dup (re-negotiated session must not re-answer)
-if 'completed_run_ids' not in source or 'completed_message_ids' not in source:
-    blockers.append("no completed-id idempotence set")
+# terminal/in-flight ids de-dup (re-negotiated session must not re-answer or
+# double-execute a run); request ids are tracked independently of run ids.
+for required in (
+    'terminal_run_ids',
+    'terminal_request_ids',
+    'in_flight_run_ids',
+    'completed_message_ids',
+    'claim_coding_run',
+):
+    if required not in source:
+        blockers.append(f"missing terminal/in-flight dedup state: {required}")
+runtime = agent.AgentRuntime()
+if not runtime.claim_coding_run("run_review", "req_review"):
+    blockers.append("first coding-run claim rejected")
+if runtime.claim_coding_run("run_review", "req_duplicate"):
+    blockers.append("duplicate in-flight coding-run claim accepted")
+runtime.add_terminal("run_review", "req_review")
+if not runtime.is_terminal("run_review") or not runtime.request_is_terminal("req_review"):
+    blockers.append("terminal run/request identity is incomplete")
 # server rejects replayed/reordered/cross-reconnect frames -> agent must comply
 if 'session_id' not in conn or 'seq' not in conn:
     blockers.append("server not verifying session/seq (contract mismatch)")
@@ -80,6 +96,11 @@ if 'replay' not in proto.lower() and 'reconnect' not in proto.lower():
 # --- 4. Cancellation terminates subprocess and signed ack -------------------
 if 'coding_run_cancel' not in source or 'proc.terminate()' not in source:
     blockers.append("no cancellation subprocess handling")
+if 'runtime.mark_cancelled(run_id)' not in source or \
+   not re.search(r'if runtime\.is_cancelled\(run_id\):', source):
+    blockers.append("cancelled runs are not suppressed before terminal capture/send")
+if 'task.cancel()' not in source:
+    blockers.append("cancel handler does not cancel the registered task")
 if 'coding_workspace_action' not in source:
     blockers.append("no governed workspace action handling")
 
@@ -88,6 +109,25 @@ if 'agent_activity' not in source:
     blockers.append("no agent_activity publishing")
 if 'active_runs' not in source:
     blockers.append("agent_activity missing active_runs")
+for value in ("0", "false", "no", ""):
+    import os
+    previous = os.environ.get("AGENT_AUTONOMOUS")
+    os.environ["AGENT_AUTONOMOUS"] = value
+    try:
+        if agent.autonomous_enabled():
+            blockers.append(f"AGENT_AUTONOMOUS={value!r} incorrectly enables autonomous work")
+    finally:
+        if previous is None:
+            os.environ.pop("AGENT_AUTONOMOUS", None)
+        else:
+            os.environ["AGENT_AUTONOMOUS"] = previous
+
+# Long chat/card work must be dispatched as background tasks so the frame pump
+# continues observing disconnects and can reconnect immediately.
+if not re.search(r'create_task\(run_chat\(', source):
+    blockers.append("chat work still blocks the socket receive pump")
+if not re.search(r'create_task\(\s*_handle_card_created', source):
+    blockers.append("card-created work still blocks the socket receive pump")
 
 # --- 6. Example stays free of app/sqlalchemy imports (pure remote process) ---
 t = ast.parse(source)

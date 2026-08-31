@@ -40,11 +40,12 @@ async def test_agent_cancel_terminates_tracked_subprocess_and_acks():
     sleep_bin = "sleep" if os.name != "nt" else "timeout"
     cmd = [sleep_bin, "30"] if os.name != "nt" else ["timeout", "30"]
     proc = await asyncio.create_subprocess_exec(*cmd)
-    active_procs = {"run_x": proc}
+    runtime = agent_mod.AgentRuntime()
+    runtime.active_procs["run_x"] = proc
 
     ws = _FakeWebSocket()
     frame = {"type": "coding_run_cancel", "request_id": "req_x", "run_id": "run_x"}
-    await agent_mod._handle_coding_run_cancel(active_procs, frame, _FakeSigner(), ws.send)
+    await agent_mod._handle_coding_run_cancel(runtime, frame, _FakeSigner(), ws.send)
 
     # Subprocess was terminated.
     assert proc.returncode is not None
@@ -57,17 +58,24 @@ async def test_agent_cancel_terminates_tracked_subprocess_and_acks():
     assert ack["run_id"] == "run_x"
     assert ack["status"] == "cancelled"
     assert ack["sig"] == "test-sig"
+    # The run is recorded terminal + cancelled so finish_coding_run suppresses it.
+    assert runtime.is_cancelled("run_x")
+    assert runtime.is_terminal("run_x")
     # The tracked subprocess is gone (registry is cleared by _run_claude on wait-return).
 
 
 @pytest.mark.asyncio
 async def test_agent_cancel_is_idempotent_without_live_proc():
     ws = _FakeWebSocket()
+    runtime = agent_mod.AgentRuntime()
     frame = {"type": "coding_run_cancel", "request_id": "req_y", "run_id": "run_missing"}
-    await agent_mod._handle_coding_run_cancel({}, frame, _FakeSigner(), ws.send)
+    await agent_mod._handle_coding_run_cancel(runtime, frame, _FakeSigner(), ws.send)
 
     import json
 
     ack = ws.sent[0]
     assert ack["status"] == "cancelled"
     assert ack["run_id"] == "run_missing"
+    # Even with no live proc, the run is recorded terminal + cancelled.
+    assert runtime.is_cancelled("run_missing")
+    assert runtime.is_terminal("run_missing")

@@ -236,3 +236,47 @@ M8 Progress log (append-only, newest first)
   cancellation subprocess handling, signed agent_activity, sqlalchemy-free, and
   server-side session/seq + AGENT_PROTOCOL replay/reconnect rules). In-process
   verdict: BLOCKERS: none.
+
+### M8.1 review-fix: complete terminal/dedup/cancellation/pump lifecycle
+
+  Code:
+  - examples/claude_code_agent.py:
+    - `AgentRuntime` gains `terminal_run_ids`, `terminal_request_ids`,
+      `in_flight_run_ids`, `cancelled_run_ids`, `in_flight_message_ids`,
+      `background_tasks`, and `recycle_generation()` (cancels stale work on
+      reconnect).
+    - `claim_coding_run(run_id, request_id)` atomically rejects terminal or
+      in-flight duplicates; `add_terminal()` marks run+request terminal
+      without popping running_tasks (callers manage task lifecycle).
+    - `_handle_coding_run_cancel(runtime, ...)` now marks cancelled + terminal,
+      cancels the registered asyncio task, then sends the ack — so
+      `finish_coding_run` can never emit a change set after the cancel.
+    - `finish_coding_run` checks `is_cancelled` before capture/send;
+      `add_terminal` called before signing (no interleaved duplicate).
+    - Chat dispatch (`run_chat`) runs as a background task via
+      `create_task(run_chat(...))` with `in_flight_message_ids` dedup — a
+      long subprocess no longer blocks the receive pump.
+    - `card_created` dispatch is also a background task.
+    - `autonomous_enabled()` parses `AGENT_AUTONOMOUS` via an allow-list
+      (`{"1","true","yes","on"}`); `"0"`, `"false"`, `"no"`, `""` all
+      disable.
+  - tests/test_claude_code_agent_cancel.py: tests now pass an `AgentRuntime`
+    (not a plain dict) to `_handle_coding_run_cancel`; assertions verify
+    `is_cancelled` + `is_terminal`.
+  - tests/test_claude_code_agent_cancel_e2e.py: server now asserts the
+    cancelled run is terminal-quiet after the ack (no terminal change set);
+    allocation fixture creates a real repo so the run actually executes.
+  - tests/test_claude_code_agent_m81_review.py (new): 8 regressions for the
+    four review findings — cancel-suppress, dedup, request-id tracking,
+    task-cancellation, autonomous-enabled parse, and long-chat pump
+    independence.
+  - scripts/review_m81_inproc.py: updated to assert terminal/in-flight dedup,
+    cancel suppression, task cancellation, autonomous-enabled correctness,
+    and background dispatch of chat/card.
+
+  Verification: tests/test_claude_code_agent_m81_review.py (8) red then green.
+  Focused gate (m81_review + m81 + cancel + cancel_e2e) green (11);
+  broader gate (management + agent_connections + agent_routing) green (100+);
+  security green (20). compileall, `git diff --check` clean. In-process
+  review scripts/review_m81_inproc.py updated for the four review findings
+  and reports BLOCKERS: none.

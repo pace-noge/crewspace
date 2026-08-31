@@ -141,12 +141,86 @@ class AgentRuntime:
         self.generation = 0
         # Idempotence across reconnects: once a request/message is answered we
         # never answer it again, so a re-negotiated session cannot duplicate work.
+        # terminal_* are the authoritative dedup sets (a terminal run/request can
+        # never execute or emit again); completed_* back them for reply tracking.
         self.completed_message_ids: set[str] = set()
-        self.completed_run_ids: set[str] = set()
+        self.in_flight_message_ids: set[str] = set()
+        self.terminal_run_ids: set[str] = set()
+        self.terminal_request_ids: set[str] = set()
+        self.in_flight_run_ids: set[str] = set()
+        self.cancelled_run_ids: set[str] = set()
+        # Background tasks that must outlive a single pump iteration but still be
+        # cancelled when the owning connection is replaced (generation bump).
+        self.background_tasks: set[asyncio.Task] = set()
 
     def add_autonomous(self, delta: int) -> int:
         self.autonomous_runs = max(0, min(self.max_concurrency, self.autonomous_runs + delta))
         return self.autonomous_runs
+
+    def claim_coding_run(self, run_id: str, request_id: str) -> bool:
+        """Atomically claim an inbound coding_run.
+
+        Returns True the first time a run is claimed; False if the run is already
+        terminal (success/failure/cancel) or already in flight — so a replayed or
+        duplicate frame can NEVER double-execute or double-emit a terminal frame.
+        """
+        if run_id in self.terminal_run_ids or run_id in self.in_flight_run_ids:
+            return False
+        self.in_flight_run_ids.add(run_id)
+        return True
+
+    def add_terminal(self, run_id: str, request_id: str) -> None:
+        """Record a terminal outcome for a run/request regardless of branch
+        (success, failure, or cancellation). After this the run can never execute
+        or emit again, and in-flight state is cleared.
+
+        NOTE: does NOT pop running_tasks — that is the responsibility of the
+        caller (finish_coding_run / _handle_coding_run_cancel) which may need
+        the task handle for cancellation or capture before clearing."""
+        self.terminal_run_ids.add(run_id)
+        self.terminal_request_ids.add(request_id)
+        self.in_flight_run_ids.discard(run_id)
+
+    def mark_cancelled(self, run_id: str) -> None:
+        self.cancelled_run_ids.add(run_id)
+
+    def is_cancelled(self, run_id: str) -> bool:
+        return run_id in self.cancelled_run_ids
+
+    def is_terminal(self, run_id: str) -> bool:
+        return run_id in self.terminal_run_ids
+
+    def request_is_terminal(self, request_id: str) -> bool:
+        return request_id in self.terminal_request_ids
+
+    def recycle_generation(self) -> None:
+        """When a new connection opens (generation bump), stop work started on
+        the old connection. Those tasks hold a stale socket/session and cannot
+        deliver; cancelling them avoids wasted subprocess work and leaks. The
+        per-task `gen != runtime.generation` guard already blocks any send. Any
+        in-flight run is forced terminal so a replay can never re-execute it."""
+        for t in tuple(self.background_tasks):
+            if not t.done():
+                t.cancel()
+            self.background_tasks.discard(t)
+        for run_id in list(self.in_flight_run_ids):
+            task = self.running_tasks.get(run_id)
+            if task is not None and not task.done():
+                task.cancel()
+            self.terminal_run_ids.add(run_id)
+            self.in_flight_run_ids.discard(run_id)
+            self.running_tasks.pop(run_id, None)
+
+
+# Explicit boolean parse (truthiness bug: os.environ.get("0") is truthy, so
+# "AGENT_AUTONOMOUS=0" silently ENABLED autonomous work). Only accepted true
+# values enable it; everything else, including the documented default "0",
+# disables.
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def autonomous_enabled() -> bool:
+    return os.environ.get("AGENT_AUTONOMOUS", "0").strip().lower() in _TRUTHY
 
 
 # --------------------------------------------------------------------------
@@ -219,18 +293,25 @@ def _workspace_action_response(allocator: GitWorktreeAllocator, frame: dict) -> 
 
 
 async def _handle_coding_run_cancel(
-    active_procs: dict[str, asyncio.subprocess.Process],
+    runtime: AgentRuntime,
     frame: dict,
     signer: "Signer",
     send,
 ) -> None:
-    """Terminate the subprocess for a run and acknowledge cancellation.
+    """Terminate the (sub)process for a run, cancel its task, and record terminal.
 
-    Idempotent: if no live subprocess is tracked for the run id, we still send
-    the signed acknowledgement so the control plane's cancel is always answered.
+    Idempotent: if no live subprocess/task is tracked for the run id we still
+    send the signed acknowledgement so the control plane's cancel is always
+    answered. Critically, the run is marked cancelled + terminal BEFORE any task
+    completes, so `finish_coding_run` can never emit a change set after the
+    cancellation ack (the protocol says to stop sending further change sets).
     """
     run_id = frame.get("run_id", "")
-    proc = active_procs.get(run_id)
+    request_id = frame.get("request_id", "")
+    runtime.mark_cancelled(run_id)
+    runtime.add_terminal(run_id, request_id)
+
+    proc = runtime.active_procs.get(run_id)
     if proc is not None and proc.returncode is None:
         try:
             proc.terminate()
@@ -241,10 +322,15 @@ async def _handle_coding_run_cancel(
                 await proc.wait()
         except ProcessLookupError:
             pass
+
+    task = runtime.running_tasks.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+
     ack = signer.sign_frame(
         {
             "type": "coding_run_ack",
-            "request_id": frame.get("request_id", ""),
+            "request_id": request_id,
             "run_id": run_id,
             "status": "cancelled",
         }
@@ -287,7 +373,7 @@ async def _handle_card_created(
     short autonomous prompt, then decrements and reports back to 0. Without the
     flag (default, thin bridge) this is a no-op.
     """
-    if not os.environ.get("AGENT_AUTONOMOUS"):
+    if not autonomous_enabled():
         return
     card = frame.get("card", {})
     title = card.get("title", "")
@@ -316,6 +402,7 @@ async def _run_connection(
     """
     runtime.generation += 1
     gen = runtime.generation
+    runtime.recycle_generation()
     send_lock = asyncio.Lock()
 
     async def send(frame: dict) -> None:
@@ -339,6 +426,16 @@ async def _run_connection(
     print(f"[agent] connected as {agent_id}", flush=True)
 
     async def finish_coding_run(task: asyncio.Task, request_id: str, workspace, run_id: str) -> None:
+        """Emit exactly one terminal frame for a non-cancelled run.
+
+        Cancellation is recorded before the subprocess/task is stopped. The
+        callback therefore checks cancellation BEFORE capturing or signing a
+        change set, so no terminal completion can race after a cancel ack.
+        """
+        runtime.running_tasks.pop(run_id, None)
+        if runtime.is_cancelled(run_id):
+            runtime.add_terminal(run_id, request_id)
+            return
         try:
             result = task.result()
             change_set = await asyncio.to_thread(
@@ -363,6 +460,7 @@ async def _run_connection(
                 "change_set": change_set.model_dump(mode="json"),
             }
         except asyncio.CancelledError:
+            runtime.add_terminal(run_id, request_id)
             return
         except Exception as exc:
             response = {
@@ -370,26 +468,20 @@ async def _run_connection(
                 "request_id": request_id,
                 "error": f"{type(exc).__name__}: {exc}"[-4096:],
             }
-        runtime.running_tasks.pop(run_id, None)
+        # Mark terminal BEFORE sending so a duplicate/replayed coding_run cannot
+        # interleave and execute while this frame is in flight.
+        runtime.add_terminal(run_id, request_id)
         # If the connection that launched this run is gone, the app has already
         # reconciled the run to interrupted. Never sign with the new session and
-        # write it to the dead old socket; that would lose the result while also
-        # poisoning duplicate suppression.
+        # write it to the dead old socket (cross-reconnect frames are rejected).
         if gen != runtime.generation:
             return
         await send(signer.sign_frame(response))
-        runtime.completed_run_ids.add(run_id)
 
-    async for raw in ws:
-        frame = json.loads(raw)
-        ftype = frame.get("type")
-
-        if ftype == "chat":
-            # The app pushed a chat message that @mentioned this agent.
+    async def run_chat(frame: dict, message_id: str) -> None:
+        """Handle one chat @mention without blocking the receive pump."""
+        try:
             text = frame["text"]
-            message_id = frame.get("message_id", "")
-            if message_id in runtime.completed_message_ids:
-                continue  # re-negotiated session replaying a finished reply
             print(f"[agent] prompt: {text}", flush=True)
 
             async def send_progress(delta: str) -> None:
@@ -406,18 +498,48 @@ async def _run_connection(
                 result = await _run_claude(text, on_progress=send_progress)
             except Exception as exc:  # never leave the app waiting forever
                 result = f"⚠️ agent error: {exc}"
+            # A reconnect may have replaced this generation; if so the response
+            # would carry the new session but be written to the dead old socket.
+            # Drop it — the app reconciled the message on disconnect.
+            if gen != runtime.generation:
+                return
             reply = signer.sign_frame(
                 {"type": "reply", "message_id": message_id, "text": result}
             )
             await send(reply)
             runtime.completed_message_ids.add(message_id)
             print("[agent] replied", flush=True)
+        finally:
+            runtime.in_flight_message_ids.discard(message_id)
+            for t in tuple(runtime.background_tasks):
+                if t is not asyncio.current_task() and not t.done():
+                    continue
+                runtime.background_tasks.discard(t)
+
+    async for raw in ws:
+        frame = json.loads(raw)
+        ftype = frame.get("type")
+
+        if ftype == "chat":
+            # The app pushed a chat message that @mentioned this agent. Run it as
+            # a background task so the receive pump keeps observing socket
+            # closure (a long silent subprocess must not postpone reconnection).
+            message_id = frame.get("message_id", "")
+            if message_id in runtime.completed_message_ids:
+                continue  # re-negotiated session replaying a finished reply
+            if message_id in runtime.in_flight_message_ids:
+                continue  # already handling this message
+            runtime.in_flight_message_ids.add(message_id)
+            bt = asyncio.create_task(run_chat(frame, message_id))
+            runtime.background_tasks.add(bt)
 
         elif ftype == "coding_run":
             request_id = frame["request_id"]
             run_id = frame["run_id"]
-            if run_id in runtime.completed_run_ids:
-                continue  # re-negotiated session replaying a finished run
+            # Reject replayed or duplicate runs atomically: a terminal or
+            # already-running id never re-executes or double-emits.
+            if not runtime.claim_coding_run(run_id, request_id):
+                continue
             try:
                 workspace = await asyncio.to_thread(
                     allocator.allocate,
@@ -425,6 +547,7 @@ async def _run_connection(
                     run_id=run_id,
                 )
             except Exception as exc:
+                runtime.add_terminal(run_id, request_id)
                 await send(
                     signer.sign_frame(
                         {
@@ -454,7 +577,7 @@ async def _run_connection(
 
         elif ftype == "coding_run_cancel":
             await _handle_coding_run_cancel(
-                runtime.active_procs, frame, signer, send
+                runtime, frame, signer, send
             )
 
         elif ftype == "coding_workspace_action":
@@ -471,7 +594,12 @@ async def _run_connection(
             await send(signer.sign_frame(response))
 
         elif ftype == "card_created":
-            await _handle_card_created(runtime, frame, signer, send)
+            # Dispatch as a background task: autonomous subprocess work must not
+            # block the receive pump from observing socket closure.
+            bt = asyncio.create_task(
+                _handle_card_created(runtime, frame, signer, send)
+            )
+            runtime.background_tasks.add(bt)
 
         elif ftype == "tool_result":
             # We don't request app tools in this example; nothing to do.
