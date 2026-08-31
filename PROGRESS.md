@@ -3,10 +3,10 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `ff3b228` (M9.1)
-Handoff state: M9.1 structured production logging committed (verified,
-independent review BLOCKERS: none after blocker fix + re-review) and pushed.
-M9 in progress (M9.1 DONE, M9.2–M9.7 PLANNED).
+Latest verified product commit before this handoff: `f304223` (M9.2)
+Handoff state: M9.2 runtime config hardening committed (verified,
+independent review BLOCKERS: none) and pushed.
+M9 in progress (M9.1–M9.2 DONE, M9.3–M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -23,8 +23,25 @@ M9 in progress (M9.1 DONE, M9.2–M9.7 PLANNED).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
-- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1 DONE 7/7,
-  M9.2–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.2 DONE 7/7,
+  M9.3–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+
+## M9.2 — Runtime config hardening + validation — verified
+
+Feature: fail-fast field validators on Settings so misconfigured production
+deployments reject invalid values at startup instead of running silently.
+
+Code: `src/crewspace/config.py` — port_in_range (1..65535),
+reply_timeout_positive (> 0), host_not_empty, database_url backend check
+(sqlite/postgresql only), llm warning. 7 tests in
+`tests/test_config_validation.py`.
+
+Verification: config + security + logging regressions green (34 passed);
+compileall; git diff --check; migration-compat clean. Independent review
+BLOCKERS none. Two non-blockers: broad pytest.raises(Exception) (could tighten
+to pydantic.ValidationError), test count 7 but one test covers 3 port cases.
+
+Verified implementation commit: `f304223`.
 
 ## M9.1 — Structured production logging — verified
 

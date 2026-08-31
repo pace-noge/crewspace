@@ -428,7 +428,7 @@ Tracking rules:
 | Slice | Deliverable | Status | Progress |
 |------:|-------------|--------|----------|
 | M9.1 | Structured production logging | DONE | 7/7 |
-| M9.2 | Runtime config hardening + validation | PLANNED | 0/5 |
+| M9.2 | Runtime config hardening + validation | DONE | 7/7 |
 | M9.3 | Health / readiness endpoints + DB/migration check | PLANNED | 0/5 |
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | PLANNED | 0/5 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |

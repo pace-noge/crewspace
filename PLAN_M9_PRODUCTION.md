@@ -20,7 +20,7 @@ review before a `[verified]` commit + push.
 | Slice | Deliverable | Status | Progress |
 |------:|-------------|--------|----------|
 | M9.1 | Structured production logging | DONE | 7/7 |
-| M9.2 | Runtime config hardening + validation | PLANNED | 0/5 |
+| M9.2 | Runtime config hardening + validation | DONE | 7/7 |
 | M9.3 | Health / readiness endpoints + DB/migration check | PLANNED | 0/5 |
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | PLANNED | 0/5 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
@@ -213,4 +213,25 @@ Acceptance:
   checks clean (no sqlalchemy import, no secrets, no dangerous patterns).
 
   Verified implementation commit: `ff3b228`.
+  Progress: 7/7 complete.
+
+- M9.2 — Runtime config hardening + validation — [verified] committed + pushed.
+
+  Feature: tighten `Settings` so a misconfigured production deployment fails
+  fast at startup with a clear message instead of silently running with
+  weak/invalid values.
+
+  Code:
+  - src/crewspace/config.py: `port_in_range` field_validator (1..65535),
+    `reply_timeout_positive` (> 0), `host_not_empty`; database_url backend
+    check (sqlite/postgresql only); llm warning when `agent=llm` without key.
+  - tests/test_config_validation.py (7 tests): valid production settings,
+    dev defaults, port range, reply timeout, db backend, empty host, llm
+    warning.
+
+  Verification: config + security + logging regressions green (34 passed);
+  compileall; git diff --check; migration-compat clean (head 20260831_01).
+  Independent review BLOCKERS none.
+
+  Verified implementation commit: `f304223`.
   Progress: 7/7 complete.
