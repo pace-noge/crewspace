@@ -3,11 +3,11 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest implementation commit before this handoff: `6a698c3` (M9.4, 6/7)
-Handoff state: M9.4 OCI/Compose artifacts committed and independently reviewed
-(BLOCKERS: none); final real container build/startup verification is blocked by
-the absence of an OCI engine on this host.
-M9 in progress (M9.1–M9.3 DONE, M9.4 VERIFY-BLOCKED 6/7, M9.5–M9.7 PLANNED).
+Latest verified implementation commit before this handoff: `6a698c3` (M9.4)
+Handoff state: M9.4 OCI/Compose artifacts committed, independently reviewed
+(BLOCKERS: none), and verified through real Docker SQLite and PostgreSQL
+topologies.
+M9 in progress (M9.1–M9.4 DONE, M9.5–M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -24,11 +24,11 @@ M9 in progress (M9.1–M9.3 DONE, M9.4 VERIFY-BLOCKED 6/7, M9.5–M9.7 PLANNED).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
-- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.3 DONE 7/7,
-  M9.4 VERIFY-BLOCKED 6/7, M9.5–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
+- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.4 DONE 7/7,
+  M9.5–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
   canonical detailed plan.
 
-## M9.4 — Portable OCI deployment artifacts — verify-blocked 6/7
+## M9.4 — Portable OCI deployment artifacts — verified 7/7
 
 Feature: multi-stage Python 3.14 image, UID/GID 10001 non-root runtime,
 Docker/Podman-compatible Compose deployment, persistent SQLite, optional
@@ -43,10 +43,14 @@ config + security gate 45 passed; compileall, migration drift, diff, and added-l
 security checks clean. A production-style local Uvicorn process returned 200 from
 both probes at revision `20260831_01`. Independent review BLOCKERS none.
 
-Blocker: Docker, Podman, Buildah, Nerdctl, and Compose providers are absent;
-passwordless package installation is unavailable. A real image build and Compose
-startup have not been claimed. Install Podman + a Compose provider, then run the
-final build/startup/readiness gate before marking M9.4 DONE 7/7.
+Final Docker verification: Docker 29.7.2 + Compose 5.4.0 built the committed
+image. Runtime inspection confirmed UID/GID 10001, port 8000, Uvicorn command,
+package/templates/static assets, and Alembic files. SQLite Compose reached
+healthy, returned 200 from both probes, wrote the named volume as 10001:10001,
+and preserved all three seeded members through container recreation. The
+PostgreSQL profile reached healthy for both services with zero app restarts; the
+app used `postgresql+asyncpg://…@db:5432/crewspace`, and `/ready` reported exact
+head `20260831_01`. Verification resources were removed afterward.
 
 Implementation commit: `6a698c3`.
 

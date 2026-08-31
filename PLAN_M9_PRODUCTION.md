@@ -22,7 +22,7 @@ review before a `[verified]` commit + push.
 | M9.1 | Structured production logging | DONE | 7/7 |
 | M9.2 | Runtime config hardening + validation | DONE | 7/7 |
 | M9.3 | Health / readiness endpoints + DB/migration check | DONE | 7/7 |
-| M9.4 | Containerization (Dockerfile + docker-compose, non-root) | VERIFY-BLOCKED | 6/7 |
+| M9.4 | Containerization (Dockerfile + docker-compose, non-root) | DONE | 7/7 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
 | M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
 | M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
@@ -185,8 +185,7 @@ Acceptance:
 
 ## M9 Progress log (append-only, newest first)
 
-- M9.4 — Portable OCI deployment artifacts — implementation committed; final
-  container-engine verification blocked.
+- M9.4 — Portable OCI deployment artifacts — [verified] committed + pushed.
 
   Feature: multi-stage Python 3.14-slim image with a UID/GID 10001 non-root
   runtime; Docker/Podman-compatible Compose topology with persistent SQLite,
@@ -209,13 +208,19 @@ Acceptance:
   Uvicorn startup returned 200 from `/health` and `/ready` at Alembic revision
   `20260831_01`. Independent review: BLOCKERS none.
 
-  Limitation: this host has no Docker, Podman, Buildah, Nerdctl, or Compose
-  provider, and installing Podman requires interactive sudo. Therefore no real
-  OCI image build or Compose startup was claimed. Final item 7 remains blocked
-  until `podman build` plus `podman compose up` and `/ready` verification run.
+  Final Docker verification: Docker 29.7.2 + Compose 5.4.0 successfully built
+  the committed image. Image inspection and a real container confirmed UID/GID
+  10001, port 8000, exec-form Uvicorn command, importable package, templates,
+  static files, Alembic config, and migration assets. SQLite Compose reached
+  healthy, returned 200 from `/health` and `/ready`, created the DB as
+  10001:10001, and retained all three seeded members across container removal
+  and recreation. The optional PostgreSQL profile also reached healthy for both
+  services with zero app restarts; the app used `postgresql+asyncpg` at
+  `db:5432/crewspace` and `/ready` reported exact head `20260831_01`. All isolated
+  verification containers, volumes, networks, and temporary images were removed.
 
   Implementation commit: `6a698c3`.
-  Progress: 6/7 complete; VERIFY-BLOCKED.
+  Progress: 7/7 complete.
 
 - M9.3 — Health / readiness endpoints — [verified] committed + pushed.
 
