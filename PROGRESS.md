@@ -3,9 +3,10 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `aee4e73` (M8.3)
-Handoff state: M8.3 approval-aware reference agent path committed (verified,
-independent review BLOCKERS: none) and pushed. M8.4 still PLANNED.
+Latest verified product commit before this handoff: `1e5d0a0` (M8.4)
+Handoff state: M8.4 pipeline-participant reference example committed
+(verified, independent review BLOCKERS: none) and pushed. M8 milestone
+complete (M8.1–M8.4 all DONE).
 
 ## Current milestone state
 
@@ -20,9 +21,27 @@ independent review BLOCKERS: none) and pushed. M8.4 still PLANNED.
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
-- M8 — Remote Agent Reference Implementations — is in progress (M8.1 DONE 7/7,
-  M8.2 DONE 7/7, M8.3 DONE 7/7; M8.4 PLANNED). `PLAN_M8_REMOTE_AGENT.md` is the canonical
-  detailed plan.
+- M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
+  `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
+
+## M8.4 — Pipeline-participant reference example — verified
+
+Feature: demonstrates the M6.6 multi-agent delivery pipeline with distinct
+agent roles (planner/coder/reviewer/tester/human_approval) passing structured
+handoff artifacts via versioned `HandoffContract` types, not free chat. The
+reviewer receives independent, tamper-evident `ChangeSetEvidence`. The flow
+reaches a verified, human-approved change set, honoring the NO-AUTO-advance
+human_approval gate.
+
+Code: `examples/pipeline_participant.py` — `Planner`, `Coder`, `Reviewer`,
+`Tester`, `HumanApprover` role classes + `run_delivery_pipeline` orchestrator;
+9 tests in `tests/test_pipeline_participant.py`.
+
+Verification: pipeline + approval regressions green (33 passed); security
+20/20; compileall, git diff --check, migration-compat clean. Independent
+review BLOCKERS none. In-process review BLOCKERS none.
+
+Verified implementation commit: `1e5d0a0`.
 
 ## M8.3 — Approval-aware reference agent path — verified
 

@@ -179,6 +179,35 @@ Acceptance:
 --------------------------------------------------------------------------------
 M8 Progress log (append-only, newest first)
 --------------------------------------------------------------------------------
+- M8.4 — Pipeline-participant reference example — [verified] committed + pushed.
+
+  Feature: demonstrates the M6.6 multi-agent delivery pipeline with distinct
+  agent roles (planner/coder/reviewer/tester/human_approval) passing structured
+  handoff artifacts via versioned `HandoffContract` types, not free chat. The
+  reviewer receives independent, tamper-evident `ChangeSetEvidence`. The flow
+  reaches a verified, human-approved change set, honoring the NO-AUTO-advance
+  human_approval gate.
+
+  Code:
+  - examples/pipeline_participant.py: `Planner`, `Coder`, `Reviewer`, `Tester`,
+    `HumanApprover` role classes, each driving `DeliveryPipeline` transitions
+    and artifact attachment; `run_delivery_pipeline` orchestrates the full
+    planner -> coder -> reviewer -> tester -> human_approval flow and returns
+    role outputs (incl. immutable `ChangeSetEvidence`) for inspection.
+  - tests/test_pipeline_participant.py (9 tests): distinct-role versioned
+    contracts, immutable ChangeSetEvidence, input-gated stage eligibility,
+    failed/cancelled stages not silently advancing or duplicating, capped
+    retries purging stale outputs, human_approval NO-AUTO-advance gate,
+    cancelled pipelines blocking downstream work, denied approval not
+    overridable, and a real-repo E2E reaching a verified change set.
+
+  Verification: pipeline + approval regressions green (33 passed); security
+  20/20; compileall, git diff --check, migration-compat clean (head
+  `20260831_01`). Independent fail-closed review: BLOCKERS none (22 tests
+  passed, zero forbidden imports). In-process review BLOCKERS none.
+
+  Verified implementation commit: `1e5d0a0`.
+
 - M8.3 — Approval-aware reference agent path — [verified] committed + pushed.
 
   Feature: a reference remote coding agent exercises the M6.5 run-scoped
