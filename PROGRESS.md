@@ -3,9 +3,10 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `c7309e8` (M7.7)
-Handoff state: this PROGRESS.md commit and `origin/master` are synchronized.
-Worktree at handoff: clean
+Latest verified product commit before this handoff: `51bacf1` (M8.1)
+Handoff state: M8.1 implementation is committed; the progress-recording commit
+and push follow this entry.
+Worktree at handoff: PROGRESS.md update pending commit
 
 ## Current milestone state
 
@@ -20,6 +21,40 @@ Worktree at handoff: clean
   and carries the append-only per-slice progress log. Every slice documents its
   user-visible Feature and concrete Code touchpoints, then follows the verified
   RED→GREEN/review/commit/push workflow.
+- M8 — Remote Agent Reference Implementations — is in progress (M8.1 DONE 7/7;
+  M8.2–M8.4 PLANNED). `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
+
+## M8.1 — Modern reference remote coding agent — verified
+
+Feature: modernized `examples/claude_code_agent.py` into a self-healing remote
+coding agent. It negotiates protocol v1 and only the capabilities it actually
+implements (`progress`, `coding_workspace`, `cancellation`); reconnects after a
+socket drop with a fresh one-use claim and new signed session; suppresses
+duplicate completed replies/change sets; and uses a per-connection generation
+guard so an in-flight run cannot emit a terminal frame under a replacement
+session. Optional `AGENT_AUTONOMOUS=1` reacts to `card_created` and publishes
+signed `agent_activity` with the exact busy/release lifecycle (`active_runs` 1 →
+0). Cancellation still terminates the tracked subprocess with a signed ack;
+governed workspace responses remain path-free.
+
+Code touches: `examples/claude_code_agent.py` (`AgentRuntime`, reconnectable
+`_run_connection`, fresh-claim reconnect loop, generation guard,
+`_handle_card_created`/`_publish_activity`); its README; honest wire-contract
+updates in `docs/AGENT_PROTOCOL.md`; `tests/test_claude_code_agent_m81.py` (E2E
+reconnect, honest capabilities, signed `[1, 0]` activity lifecycle);
+`tests/test_management.py`; and `scripts/review_m81_inproc.py`.
+
+Verification: the M8.1 tests were written first and observed RED for missing
+reconnect/activity, then GREEN; strengthening activity to `[1, 0]` caught and
+fixed a real zero-suppression bug. Final focused gate: 6/6 M8.1 + cancellation
+tests pass; broader agent/change-set/presence and management/connections/routing
+groups pass; security 20/20; compileall, `git diff --check`, AST sqlalchemy-free,
+and `makemigrations --check` at `20260831_01` pass. The delegated independent
+reviewer stalled repeatedly re-running the broad management group without a
+verdict, so the documented in-process fallback ran
+`scripts/review_m81_inproc.py`: `BLOCKERS: none`, `NON-BLOCKERS: none`.
+
+Verified implementation commit: `51bacf1`.
 
 ## M7.7 — Board operating-surface integration POC — verified
 
