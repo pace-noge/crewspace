@@ -3,10 +3,8 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified product commit before this handoff: `51bacf1` (M8.1)
-Handoff state: M8.1 implementation is committed; the progress-recording commit
-and push follow this entry.
-Worktree at handoff: PROGRESS.md update pending commit
+Latest verified product commit before this handoff: `72e9889` (M8.1 review-fix)
+Handoff state: M8.1 review-fix committed and pushed. M8.2–M8.4 still PLANNED.
 
 ## Current milestone state
 
@@ -55,6 +53,29 @@ verdict, so the documented in-process fallback ran
 `scripts/review_m81_inproc.py`: `BLOCKERS: none`, `NON-BLOCKERS: none`.
 
 Verified implementation commit: `51bacf1`.
+
+### M8.1 review-fix — terminal dedup, cancel suppression, pump independence
+
+A fresh independent reviewer (the second dispatch, with a 2-targeted-test
+budget and a `test_management.py` ban) returned `BLOCKERS: 4, VERDICT: FAIL`.
+All four were confirmed, fixed with TDD regressions, and re-reviewed.
+
+BLOCKERS addressed:
+1. Cancellation race: cancel now marks run terminal + cancels task before ack;
+   `finish_coding_run` checks `is_cancelled` before capture/send.
+2. Terminal dedup complete: `claim_coding_run()` rejects terminal/in-flight
+   duplicates; allocation failure marks terminal before `coding_run_failed`.
+3. Socket pump independence: chat + card_created dispatch as background tasks
+   (`create_task()`); long subprocess no longer blocks reconnect.
+4. `AGENT_AUTONOMOUS` truthiness bug: `autonomous_enabled()` allow-list parse;
+   `"0"/"false"/"no"/""` all disable.
+
+Review-fix focused gate: 11 passed (m81_review 8 + m81 3); broader gate 100+
+(management + connections + routing); security 20; compileall + diff-check
+clean. In-process review `scripts/review_m81_inproc.py` updated and reports
+BLOCKERS: none.
+
+Review-fix commit: `72e9889` (pushed).
 
 ## M7.7 — Board operating-surface integration POC — verified
 
