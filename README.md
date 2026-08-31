@@ -60,6 +60,41 @@ Then open:
 - `http://127.0.0.1:8000/`            → chat in #general
 - `http://127.0.0.1:8000/board/board_main` → the "Roadmap" board
 
+### Run with Docker or Podman
+
+The OCI image is multi-stage and runs as the non-root `crewspace` user
+(UID/GID 10001). Compose defaults to persistent SQLite storage. Set production
+credentials before starting it; Compose rejects missing values:
+
+```bash
+export CREWSPACE_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export CREWSPACE_SEED_ADMIN_PASSWORD="replace-with-a-strong-password"
+
+docker compose up --build -d
+# or, with Podman's Docker-compatible Compose provider:
+podman compose up --build -d
+```
+
+Open `http://127.0.0.1:8000/`. Liveness is available at `/health`; the Compose
+healthcheck uses `/ready`, which verifies database connectivity and that the
+database migration revision exactly matches the deployed Alembic head.
+
+SQLite data persists in the `crewspace-data` named volume. To use the optional
+PostgreSQL service instead, provide the database password and URL and enable the
+`postgres` profile:
+
+```bash
+export POSTGRES_PASSWORD="replace-with-another-strong-password"
+export CREWSPACE_DATABASE_URL="postgresql+asyncpg://crewspace:${POSTGRES_PASSWORD}@db:5432/crewspace"
+
+docker compose --profile postgres up --build -d
+# or:
+podman compose --profile postgres up --build -d
+```
+
+Do not commit these values or place them in the image. A local `.env` file may
+be used by Compose and is excluded by `.dockerignore` and Git.
+
 ## Talk to the agent (in chat)
 ```
 @crewspace help

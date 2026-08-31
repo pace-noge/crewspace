@@ -1,0 +1,51 @@
+services:
+  app:
+    build: .
+    user: "10001:10001"
+    ports:
+      - "8000:8000"
+    environment:
+      CREWSPACE_HOST: "0.0.0.0"
+      CREWSPACE_PORT: 8000
+      CREWSPACE_DATABASE_URL: "${CREWSPACE_DATABASE_URL:-sqlite+aiosqlite:////app/data/crewspace.db}"
+      CREWSPACE_SECRET: "${CREWSPACE_SECRET:?Set CREWSPACE_SECRET}"
+      CREWSPACE_SEED_ADMIN_PASSWORD: "${CREWSPACE_SEED_ADMIN_PASSWORD:?Set CREWSPACE_SEED_ADMIN_PASSWORD}"
+      CREWSPACE_LOG_FORMAT: "${CREWSPACE_LOG_FORMAT:-json}"
+      CREWSPACE_LOG_LEVEL: "${CREWSPACE_LOG_LEVEL:-INFO}"
+      CREWSPACE_LLM_API_KEY: "${CREWSPACE_LLM_API_KEY:-}"
+      CREWSPACE_LLM_BASE_URL: "${CREWSPACE_LLM_BASE_URL:-}"
+      CREWSPACE_LLM_MODEL: "${CREWSPACE_LLM_MODEL:-free}"
+    volumes:
+      - crewspace-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    restart: unless-stopped
+
+  db:
+    image: postgres:17-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-crewspace}"
+      POSTGRES_USER: "${POSTGRES_USER:-crewspace}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-}"
+    volumes:
+      - crewspace-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  crewspace-data:
+  crewspace-postgres:
