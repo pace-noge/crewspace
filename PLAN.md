@@ -431,7 +431,7 @@ Tracking rules:
 | M9.2 | Runtime config hardening + validation | DONE | 7/7 |
 | M9.3 | Health / readiness endpoints + DB/migration check | DONE | 7/7 |
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | DONE | 7/7 |
-| M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
+| M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | DONE | 5/5 |
 | M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
 | M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
 

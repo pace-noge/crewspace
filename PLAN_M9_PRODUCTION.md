@@ -23,7 +23,7 @@ review before a `[verified]` commit + push.
 | M9.2 | Runtime config hardening + validation | DONE | 7/7 |
 | M9.3 | Health / readiness endpoints + DB/migration check | DONE | 7/7 |
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | DONE | 7/7 |
-| M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | PLANNED | 0/5 |
+| M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | DONE | 5/5 |
 | M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
 | M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
 
@@ -184,6 +184,34 @@ Acceptance:
 ---
 
 ## M9 Progress log (append-only, newest first)
+
+- M9.5 — Atomic backup / restore seam — [verified] committed.
+
+  Feature: synchronous `crewspace-manage backup [--out PATH]` and
+  `crewspace-manage restore SNAPSHOT` commands for file-backed SQLite. Backup
+  uses SQLite's online backup API, integrity-checks a same-directory temporary
+  database, fsyncs it, atomically publishes it with `os.replace`, and fsyncs the
+  parent directory. Default destinations are collision-proof atomic
+  reservations. Restore is documented offline-only, validates before replacing,
+  preserves full permission bits, and removes stale WAL/SHM sidecars.
+
+  Failure behavior is fail-closed: missing/corrupt files, same-path/symlink/hard-
+  link aliases, filesystem errors, and in-memory SQLite produce clean errors;
+  PostgreSQL is rejected with explicit `pg_dump`/`psql` guidance. Tests drove the
+  real synchronous CLI and prove round trips, failure preservation, mode bits,
+  default-name collisions, and backend guards.
+
+  Verification: initial RED 7 failures because commands were absent; final
+  focused suite 14 passed; bounded backup + management + config + security gate
+  46 passed; compileall, migration drift at head `20260831_01`, diff, and
+  added-line security checks clean. A live open-WAL proof captured committed data
+  and returned `PRAGMA integrity_check=ok`. Initial independent review found
+  hard-link alias, full-mode preservation, and default-name collision blockers;
+  each received a RED regression and fix. Final re-review: BLOCKERS none,
+  NON-BLOCKERS none, VERDICT PASS.
+
+  Implementation commit: `98f0821`.
+  Progress: 5/5 complete.
 
 - M9.4 — Portable OCI deployment artifacts — [verified] committed + pushed.
 

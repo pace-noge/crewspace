@@ -3,11 +3,11 @@
 Last updated: 2026-08-31 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified implementation commit before this handoff: `6a698c3` (M9.4)
-Handoff state: M9.4 OCI/Compose artifacts committed, independently reviewed
-(BLOCKERS: none), and verified through real Docker SQLite and PostgreSQL
-topologies.
-M9 in progress (M9.1–M9.4 DONE, M9.5–M9.7 PLANNED).
+Latest verified implementation commit before this handoff: `98f0821` (M9.5)
+Handoff state: M9.5 atomic backup/restore commands committed after RED→GREEN,
+bounded gates, live WAL proof, and independent fail-closed re-review
+(BLOCKERS: none; NON-BLOCKERS: none).
+M9 in progress (M9.1–M9.5 DONE, M9.6–M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -24,9 +24,32 @@ M9 in progress (M9.1–M9.4 DONE, M9.5–M9.7 PLANNED).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
-- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.4 DONE 7/7,
-  M9.5–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
+- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.5 DONE,
+  M9.6–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
   canonical detailed plan.
+
+## M9.5 — Atomic backup / restore seam — verified 5/5
+
+Feature: synchronous management commands provide live-consistent SQLite backup
+and offline atomic restore. Backup uses the SQLite online backup API, integrity
+checks, same-directory temporary files, file/directory fsync, atomic replacement,
+and collision-proof default path reservations. Restore validates before replacing,
+preserves full permission mode bits, and removes stale WAL/SHM sidecars.
+
+Failure paths are clean and fail-closed for missing/corrupt files, same-path and
+hard-link aliases, filesystem errors, in-memory SQLite, and PostgreSQL (with
+`pg_dump`/`psql` guidance). README documents uv and Compose operations and the
+offline restore requirement.
+
+Verification: RED 7 missing-command failures → final focused 14 passed; bounded
+backup + management + config + security gate 46 passed; compileall, migration
+drift at `20260831_01`, diff, and added-line security scans clean. A live open-WAL
+proof captured committed data with integrity `ok`. Initial independent review
+found three blockers (hard-link aliases, incomplete mode bits, default-name
+collision); each was reproduced RED and fixed. Final re-review: BLOCKERS none,
+NON-BLOCKERS none, VERDICT PASS.
+
+Implementation commit: `98f0821`.
 
 ## M9.4 — Portable OCI deployment artifacts — verified 7/7
 
