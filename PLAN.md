@@ -433,7 +433,7 @@ Tracking rules:
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | DONE | 7/7 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | DONE | 5/5 |
 | M9.6 | Release runbook + deployment docs | DONE | 5/5 |
-| M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
+| M9.7 | Cohesive ops acceptance gate | DONE | 5/5 |
 
 M6 Progress log (append-only, newest first):
   - 2026-08-24 — M6.2 durable change-set governance GREEN: logical repositories

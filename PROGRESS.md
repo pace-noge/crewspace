@@ -3,10 +3,9 @@
 Last updated: 2026-09-01 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified implementation commit before this handoff: `8e4105f` (M9.6)
-Handoff state: M9.6 deployment + release runbooks committed after RED→GREEN,
-bounded gates, and independent fail-closed review (BLOCKERS: none).
-M9 in progress (M9.1–M9.6 DONE, M9.7 PLANNED).
+Latest verified implementation commit before this handoff: `b276bdf` (M9.7)
+Handoff state: M9 cohesive ops acceptance gate committed after bounded gates
+and independent fail-closed review (BLOCKERS: none). M9 is COMPLETE (7/7).
 
 ## Current milestone state
 
@@ -23,9 +22,25 @@ M9 in progress (M9.1–M9.6 DONE, M9.7 PLANNED).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
-- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.6 DONE,
-  M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
-  canonical detailed plan.
+- M9 — Production Hardening and Live Deployment — COMPLETE (M9.1–M9.7 all DONE).
+  `PLAN_M9_PRODUCTION.md` is the canonical detailed plan.
+
+## M9.7 — Cohesive ops acceptance gate — verified 5/5
+
+Feature: `tests/test_ops_acceptance.py`, a single bounded suite (22 tests)
+proving every M9 slice's key invariant end to end: structured logging
+(M9.1), config validation fail-closed guards (M9.2), health/readiness at the
+exact migration head (M9.3), multistage non-root image and persistent Compose
+with `/ready` healthcheck and optional postgres profile (M9.4), real-CLI
+backup/restore round trip with PostgreSQL guidance (M9.5), and runbook docs
+security/env-drift/verified-flow coverage (M9.6).
+
+Verification: cohesive suite 22 passed; bounded regression across all seven M9
+test files 75 passed; compileall, migration drift at `20260831_01`, diff, and
+adjudicated added-line security checks clean. Independent fail-closed review:
+BLOCKERS none, NON-BLOCKERS none, VERDICT PASS.
+
+Implementation commit: `b276bdf`. M9 is complete (7/7 slices).
 
 ## M9.6 — Release runbook + deployment docs — verified 5/5
 

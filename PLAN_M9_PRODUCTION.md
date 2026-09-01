@@ -25,7 +25,7 @@ review before a `[verified]` commit + push.
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | DONE | 7/7 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | DONE | 5/5 |
 | M9.6 | Release runbook + deployment docs | DONE | 5/5 |
-| M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
+| M9.7 | Cohesive ops acceptance gate | DONE | 5/5 |
 
 ## Cross-cutting invariants (apply on EVERY slice)
 
@@ -184,6 +184,32 @@ Acceptance:
 ---
 
 ## M9 Progress log (append-only, newest first)
+
+- M9.7 — Cohesive ops acceptance gate — [verified] committed.
+
+  Feature: one bounded acceptance suite (`tests/test_ops_acceptance.py`, 22
+  tests) proving the entire ops surface end to end. It exercises the key
+  invariant from every M9 slice in a single standalone file: M9.1 structured
+  logging (JSON/text formatter, access line, settings knobs, configure_logging
+  honoring mode), M9.2 config validation (non-loopback dev-credential fail-
+  closed, production pass, backend/port guards), M9.3 health/readiness
+  (`/health` live without DB; `/ready` 200 with migrations=head and the exact
+  migration revision), M9.4 deployment artifacts (multistage non-root image,
+  persistent Compose with `/ready` healthcheck, optional postgres profile),
+  M9.5 backup/restore (real CLI integrity-clean snapshot, backup → mutate →
+  restore round trip, PostgreSQL `pg_dump`/`psql` guidance), and M9.6 runbook
+  docs (security-critical env vars covered, non-loopback dev-default warning,
+  env-drift guard, RELEASING.md verified-slice flow). Reuses the package-level
+  `client` fixture for the migrated temp-DB readiness check.
+
+  Verification: RED not applicable (acceptance-only slice over shipped
+  behavior); cohesive suite 22 passed; bounded regression combining all seven
+  M9 test files 75 passed; compileall, migration drift at head `20260831_01`,
+  diff, and adjudicated added-line security checks clean. Independent
+  fail-closed review: BLOCKERS none, NON-BLOCKERS none, VERDICT PASS.
+
+  Implementation commit: `b276bdf`.
+  Progress: 5/5 complete.
 
 - M9.6 — Release runbook + deployment docs — [verified] committed.
 
