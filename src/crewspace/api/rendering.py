@@ -11,6 +11,26 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
 
+def cancel_url(request, fallback: str = "/management") -> str:
+    """Return a safe same-origin path for a form's Cancel action."""
+    from urllib.parse import urlparse
+
+    ref = request.headers.get("referer")
+    if not ref:
+        return fallback
+    parsed = urlparse(ref)
+    if parsed.scheme or parsed.netloc:
+        if (
+            parsed.scheme != request.url.scheme
+            or parsed.netloc != request.url.netloc
+        ):
+            return fallback
+    elif not parsed.path.startswith("/") or parsed.path.startswith("//"):
+        return fallback
+    path = parsed.path or "/"
+    return f"{path}?{parsed.query}" if parsed.query else path
+
+
 async def navigation_context(uow, current_user: dict) -> dict:
     """Build the workspace/channel tree shown in the shared sidebar."""
     teams = await uow.teams.list_teams_for_member(current_user["id"])

@@ -17,7 +17,7 @@ from ...config import Settings, get_settings
 from ...security import new_session_id, sign_session, unsign_session
 from ...domain.ports import UnitOfWork
 from ..deps import SESSION_COOKIE, CurrentUserDep, CurrentUserOptionalDep, UowDep
-from ..rendering import navigation_context, templates
+from ..rendering import cancel_url, navigation_context, templates
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -121,6 +121,7 @@ async def agent_register_page(
             "current_user": current_user,
             "is_superadmin": current_user["role"] == "superadmin",
             "agents": await uow.auth.list_members(kind="agent"),
+            "cancel_url": cancel_url(request, "/management"),
             **await navigation_context(uow, current_user),
         },
     )

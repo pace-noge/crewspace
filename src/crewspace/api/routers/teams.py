@@ -15,7 +15,7 @@ from ...application.tools import build_registry
 from ...infrastructure.mcp_client import build_external_discovery_client
 from ...domain.identifiers import BUILTIN_ASSISTANT_ID
 from ..deps import CurrentUserDep, UowDep, WorkspaceServiceDep
-from ..rendering import navigation_context, templates
+from ..rendering import cancel_url, navigation_context, templates
 from ..connection import agent_manager
 
 router = APIRouter(prefix="/management", tags=["management"])
@@ -167,10 +167,8 @@ async def delete_entity_page(
     kind, entity = await _lifecycle_entity(collection, entity_id, current_user, uow)
     if kind == "agent" and entity_id == BUILTIN_ASSISTANT_ID:
         raise HTTPException(status_code=403, detail="The builtin assistant cannot be deleted")
-    # Return the user to the page they came from when they cancel, rather than
-    # always landing on Team Management. Only trust same-origin paths.
-    referer = request.headers.get("referer")
-    back = referer if referer and referer.startswith("/") else "/management"
+    # Return to the page the action was opened from; reject foreign referers.
+    back = cancel_url(request, "/management")
     return templates.TemplateResponse(
         request=request, name="delete_confirm.html",
         context={
@@ -438,6 +436,7 @@ async def add_human_page(
             "teams": teams,
             "choose_team": choose_team,
             "automatic_team": teams[0] if not choose_team else None,
+            "cancel_url": cancel_url(request, "/management"),
             **await navigation_context(uow, current_user),
         },
     )
@@ -784,6 +783,7 @@ async def agent_settings_page(
         context={
             "request": request,
             "current_user": current_user,
+            "cancel_url": cancel_url(request, "/management"),
             **policy,
             **await navigation_context(uow, current_user),
         },

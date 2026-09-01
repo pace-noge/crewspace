@@ -574,6 +574,20 @@ def test_permanent_delete_cancel_returns_to_referrer(client):
     assert '<a class="cancel" href="/management">Cancel</a>' in no_ref.text
 
 
+def test_agent_register_cancel_returns_to_referrer(client):
+    """Cancelling agent registration returns to the page you came from, not Team Management."""
+    # Arrive as if we clicked "Register agent" from the general channel.
+    page = client.get(
+        "/auth/agents/register",
+        headers={"Referer": "/channels/chan_general"},
+    )
+    assert page.status_code == 200
+    assert '<a class="cancel" href="/channels/chan_general">Cancel</a>' in page.text
+    # No referer (e.g. direct navigation) safely falls back to Team Management.
+    no_ref = client.get("/auth/agents/register")
+    assert '<a class="cancel" href="/management">Cancel</a>' in no_ref.text
+
+
 def test_superadmin_can_delete_workspace_cascade(client):
     response = client.post(
         "/management/workspaces/ws_default/delete",

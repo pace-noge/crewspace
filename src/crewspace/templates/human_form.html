@@ -21,7 +21,7 @@
     {% else %}
     <p>Will be added to {{ automatic_team.name }}.</p>
     {% endif %}
-    <div class="actions"><a class="cancel" href="/management">Cancel</a><button class="primary" type="submit">Add human</button></div>
+    <div class="actions"><a class="cancel" href="{{ cancel_url }}">Cancel</a><button class="primary" type="submit">Add human</button></div>
   </form>
 </section></div>
 {% endblock %}
