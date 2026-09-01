@@ -211,6 +211,16 @@ class MessageReactionModel(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class ChannelReadStateModel(Base):
+    """Per-member read cursor for a channel/DM: the latest message timestamp the
+    member has opened. Messages newer than this (from others) are 'unread'."""
+
+    __tablename__ = "channel_read_state"
+    channel_id: Mapped[str] = mapped_column(ForeignKey("channel.id", ondelete="CASCADE"), primary_key=True)
+    member_id: Mapped[str] = mapped_column(ForeignKey("member.id", ondelete="CASCADE"), primary_key=True)
+    last_read_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class DirectConversationModel(Base):
     __tablename__ = "direct_conversation"
     __table_args__ = (

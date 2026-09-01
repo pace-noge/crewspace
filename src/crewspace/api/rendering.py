@@ -44,6 +44,7 @@ async def navigation_context(uow, current_user: dict) -> dict:
     return {
         "workspace_navigation": navigation,
         "direct_messages": await uow.channels.list_direct_for_member(current_user["id"]),
+        "unread_counts": await uow.chat.unread_counts(current_user["id"]),
         "boards_menu": await _boards_menu(uow, current_user),
         "can_add_human": current_user["role"] in {"superadmin", "engineering_manager"}
         or leads_team,

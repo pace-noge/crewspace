@@ -27,6 +27,8 @@
     .dot-connected { background: #a6e3a1; }
     .dot-local { background: #89b4fa; }
     .dot-disconnected { background: #f38ba8; }
+    .unread-dot { display: inline-block; font-size: 10px; color: var(--accent, #89b4fa); line-height: 1; margin-right: 3px; flex-shrink: 0; }
+    .unread-dot[hidden] { display: none; }
     .badge { display: inline-flex; padding: 2px 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 11px; text-transform: capitalize; }
     .badge.agent { color: var(--agent); }
     .workspace-nav { margin-top: 6px; }
@@ -66,7 +68,7 @@
   </style>
   {% block head %}{% endblock %}
 </head>
-<body>
+<body{% if channel_id is defined %} data-channel-id="{{ channel_id }}"{% endif %}>
   <nav class="sidebar">
     <div class="brand">🧩 Crewspace<small>Humans and agents, working together</small></div>
 
@@ -86,7 +88,9 @@
         </div>
         {% for nav_channel in workspace_item.channels %}
         <div class="channel-row">
-          <a class="nav-link {% if channel_id is defined and channel_id == nav_channel.id %}active{% endif %}" href="/channels/{{ nav_channel.id }}"># {{ nav_channel.name }}</a>
+          <a class="nav-link {% if channel_id is defined and channel_id == nav_channel.id %}active{% endif %}" href="/channels/{{ nav_channel.id }}" data-channel-id="{{ nav_channel.id }}">
+            <span class="unread-dot" data-channel-id="{{ nav_channel.id }}" hidden>●</span>
+            # {{ nav_channel.name }}</a>
           <a class="sidebar-action quick-action" href="/channels/{{ nav_channel.id }}?compose=1" aria-label="Start a message in {{ nav_channel.name }}" title="Start a message">+</a>
           {% if can_manage %}<details class="action-menu sidebar-action"><summary aria-label="Channel actions">•••</summary><div class="menu-popover"><a href="/channels/{{ nav_channel.id }}">Open channel</a><a href="/management/channels/{{ nav_channel.id }}">Manage channel</a><a href="/management/channels/{{ nav_channel.id }}/members">Manage members</a><form method="post" action="/management/channels/{{ nav_channel.id }}/archive"><button type="submit">Archive channel</button></form></div></details>{% endif %}
         </div>
@@ -98,7 +102,7 @@
 
     <div class="nav-group">Direct messages</div>
     {% for direct in direct_messages or [] %}
-      <a class="nav-link {% if channel_id is defined and channel_id == direct.channel_id %}active{% endif %}" href="/channels/{{ direct.channel_id }}"><span class="ico">{{ direct.avatar or ("🤖" if direct.kind == "agent" else "🧑") }}</span> {{ direct.name }}</a>
+      <a class="nav-link {% if channel_id is defined and channel_id == direct.channel_id %}active{% endif %}" href="/channels/{{ direct.channel_id }}" data-channel-id="{{ direct.channel_id }}"><span class="unread-dot" data-channel-id="{{ direct.channel_id }}" hidden>●</span><span class="ico">{{ direct.avatar or ("🤖" if direct.kind == "agent" else "🧑") }}</span> {{ direct.name }}</a>
     {% endfor %}
 
     <div class="nav-group">Tools</div>
@@ -216,6 +220,46 @@
         ws.onclose = () => setTimeout(connectPresence, 1000);
       }
       connectPresence();
+    })();
+
+    // Unread indicators: poll for per-channel/DM unread counts and render the
+    // sidebar dot. The current channel (if any) is marked read immediately.
+    // Uses a self-scheduling loop so mark-read and fetch never overlap.
+    (function () {
+      const dots = () => document.querySelectorAll(".unread-dot");
+      const CHANNEL = document.body.dataset.channelId || null;
+      const POLL_MS = 3000;
+
+      function patch(counts) {
+        dots().forEach((dot) => {
+          const id = dot.dataset.channelId;
+          if (counts[id] > 0 && id !== CHANNEL) {
+            dot.hidden = false;
+            dot.title = counts[id] + " unread";
+          } else {
+            dot.hidden = true;
+          }
+        });
+      }
+
+      async function pollOnce() {
+        // Mark current channel read first, then fetch counts. Sequential — no overlap.
+        if (CHANNEL) {
+          try {
+            await fetch(`/api/unread/${CHANNEL}/mark-read`, { method: "POST" });
+          } catch (_) { /* offline; skip */ }
+        }
+        try {
+          const resp = await fetch("/api/unread", {
+            headers: { Accept: "application/json" },
+          });
+          if (!resp.ok) return;
+          patch(await resp.json());
+        } catch (_) { /* transient */ }
+        setTimeout(pollOnce, POLL_MS);
+      }
+
+      pollOnce();
     })();
   </script>
   <script src="/static/htmx.min.js"></script>

@@ -251,6 +251,47 @@ class SqlAlchemyChatRepository:
             )
         return await self.list_reactions(message_id, member_id)
 
+    async def mark_read(self, channel_id: str, member_id: str) -> None:
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        # Enforce membership here as defense in depth, not only at the API
+        # boundary. This also prevents orphan cursors when SQLite FK checks are
+        # disabled on a low-level connection.
+        await self._conn.execute(
+            """INSERT INTO channel_read_state (channel_id, member_id, last_read_at)
+               SELECT ?, ?, ?
+               WHERE EXISTS (
+                   SELECT 1 FROM channel_member
+                   WHERE channel_id = ? AND member_id = ?
+                     AND is_invitation_pending = 0
+               )
+               ON CONFLICT (channel_id, member_id)
+               DO UPDATE SET last_read_at = excluded.last_read_at""",
+            (channel_id, member_id, now, channel_id, member_id),
+        )
+
+    async def unread_counts(self, member_id: str) -> dict[str, int]:
+        # For each channel the member belongs to, count messages newer than the
+        # read cursor. A channel with NO cursor yet counts ALL messages (baseline);
+        # the UI marks a channel read on first open, so old history never floods.
+        cur = await self._conn.execute(
+            """
+            SELECT cm.channel_id AS channel_id,
+                   COUNT(m.id) AS n
+            FROM channel_member cm
+            LEFT JOIN channel_read_state rs
+                   ON rs.channel_id = cm.channel_id AND rs.member_id = cm.member_id
+            LEFT JOIN message m
+                   ON m.channel_id = cm.channel_id
+                  AND (rs.last_read_at IS NULL OR m.created_at > rs.last_read_at)
+                  AND m.author_id != cm.member_id
+            WHERE cm.member_id = ? AND cm.is_invitation_pending = 0
+            GROUP BY cm.channel_id
+            HAVING COUNT(m.id) > 0
+            """,
+            (member_id,),
+        )
+        return {row["channel_id"]: int(row["n"]) for row in await cur.fetchall()}
+
 
 class SqlAlchemyAuthRepository:
     """Members (humans + agents), RBAC roles, and sessions."""

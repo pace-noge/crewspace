@@ -98,6 +98,16 @@ class ChatRepository(Protocol):
     async def toggle_reaction(self, message_id: str, member_id: str, emoji: str) -> list[dict]:
         ...
 
+    async def mark_read(self, channel_id: str, member_id: str) -> None:
+        """Record that the member has opened the channel at this moment."""
+        ...
+
+    async def unread_counts(self, member_id: str) -> dict[str, int]:
+        """Return {channel_id: count} of messages newer than the member's cursor,
+        across every channel the member belongs to. Channels with no read cursor yet
+        count all messages (baseline on first open)."""
+        ...
+
 
 @runtime_checkable
 class BoardRepository(Protocol):

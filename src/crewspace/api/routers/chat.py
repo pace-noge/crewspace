@@ -18,6 +18,37 @@ from ..connection import manager
 from ..deps import ChatServiceDep, CurrentUserDep, UowDep, WorkspaceServiceDep
 
 router = APIRouter(prefix="/channels", tags=["chat"])
+router_api = APIRouter(prefix="/api", tags=["unread"])
+
+
+# ── Unread indicators ────────────────────────────────────────────────────────────
+
+
+@router_api.get("/unread")
+async def get_unread_counts(
+    uow: UowDep,
+    current_user: CurrentUserDep,
+) -> dict[str, int]:
+    """Return {channel_id: count} of unread messages for the current member."""
+    return await uow.chat.unread_counts(current_user["id"])
+
+
+@router_api.post("/unread/{channel_id}/mark-read")
+async def mark_channel_read(
+    channel_id: str,
+    uow: UowDep,
+    current_user: CurrentUserDep,
+) -> dict[str, str]:
+    """Record that the current member has opened this channel (clears its unread count)."""
+    member_id = current_user["id"]
+    if not await uow.channels.can_member_access(channel_id, member_id):
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await uow.chat.mark_read(channel_id, member_id)
+    await uow.commit()
+    return {"channel_id": channel_id, "status": "ok"}
+
+
+# ── Chat history ────────────────────────────────────────────────────────────────
 
 
 async def _broadcast_workflow_message(message) -> None:
