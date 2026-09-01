@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 import uuid
 from typing import Any
 
-from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, PLANNER_AGENT_ID
+from ..domain.identifiers import DEFAULT_BOARD_ID, DEFAULT_CHANNEL_ID, BUILTIN_ASSISTANT_ID
 from ..domain.entities import Board
 from ..domain.ports import UnitOfWork
 from ..domain.entities import CardRunLink, ColumnWorkflowRule
@@ -81,8 +81,8 @@ class ChatService:
         return [to_message(m) for m in await uow.chat.list_thread(thread_id)]
 
     async def announce(self, channel_id: str, body: str, uow: UnitOfWork) -> MessageDTO:
-        """Post a planner/system announcement to chat (persisted + returned for broadcast)."""
-        msg = await uow.chat.add_message(channel_id, PLANNER_AGENT_ID, body)
+        """Post a builtin Crewspace announcement (persisted + returned for broadcast)."""
+        msg = await uow.chat.add_message(channel_id, BUILTIN_ASSISTANT_ID, body)
         return to_message(msg)
 
     async def post_and_respond(

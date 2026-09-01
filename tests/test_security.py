@@ -402,3 +402,22 @@ def test_agent_private_key_response_escapes_name_and_disables_caching(client):
     assert "&lt;script id=&#34;stolen&#34;&gt;" in response.text
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["referrer-policy"] == "no-referrer"
+
+
+def test_card_activity_announcement_is_attributed_to_builtin_agent(client):
+    """Board activity in #general should be attributed to the builtin agent, not planner."""
+    from crewspace.domain.identifiers import BUILTIN_ASSISTANT_ID
+
+    create = client.post(
+        "/boards/board_main/cards",
+        data={"column_id": "col_todo", "title": "Activity author test card"},
+    )
+    assert create.status_code == 200
+
+    messages = client.get("/channels/chan_general/messages").json()
+    activity = [
+        m for m in messages
+        if "Activity author test card" in (m.get("body") or "")
+    ]
+    assert activity, "expected an activity announcement in #general"
+    assert activity[-1]["author_id"] == BUILTIN_ASSISTANT_ID

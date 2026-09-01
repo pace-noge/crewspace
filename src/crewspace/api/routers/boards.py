@@ -316,7 +316,7 @@ async def create_card(
     board = await svc.get_board(board_id, uow)
     if board is None:
         raise HTTPException(status_code=404, detail="board not found")
-    # Announce the new card in chat (planner), so board changes are visible there.
+    # Announce through the builtin Crewspace agent so board changes are visible in chat.
     col_name = {c.id: c.name for c in board.columns}
     ann = await chat_svc.announce(
         DEFAULT_CHANNEL_ID,

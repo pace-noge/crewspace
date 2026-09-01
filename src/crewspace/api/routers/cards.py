@@ -42,7 +42,7 @@ async def move_card(
     board = await svc.get_board(board_id, uow)
     if board is None:
         raise HTTPException(status_code=404, detail="board not found")
-    # Announce the move in chat (planner), crediting the actor.
+    # Announce the move through the builtin Crewspace agent, crediting the actor.
     col_name = {c.id: c.name for c in board.columns}
     old_name = col_name.get(old_column_id, old_column_id or "?")
     new_name = col_name.get(card.column_id, card.column_id)
