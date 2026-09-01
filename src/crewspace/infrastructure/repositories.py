@@ -280,7 +280,7 @@ class SqlAlchemyAuthRepository:
 
     async def get_member_by_name(self, name: str) -> MappingRow | None:
         cur = await self._conn.execute(
-            f"SELECT {self._member_columns()} FROM member WHERE name = ? AND archived_at IS NULL", (name,)
+            f"SELECT {self._member_columns()} FROM member WHERE LOWER(name) = LOWER(?) AND archived_at IS NULL", (name,)
         )
         return await cur.fetchone()
 

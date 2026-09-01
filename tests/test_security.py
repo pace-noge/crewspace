@@ -146,6 +146,37 @@ def test_successful_login_redirects_home_and_login_page_does_not_trap_session(
     assert login_page.headers["location"] == "/"
 
 
+def test_login_username_is_case_insensitive(anonymous_client):
+    """Logging in with a different username case must succeed."""
+    anonymous_client.headers["Origin"] = "http://testserver"
+    response = anonymous_client.post(
+        "/auth/login",
+        data={"username": "bIlAl", "password": "admin123"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert response.cookies.get("crewspace_session")
+
+
+def test_register_username_case_insensitive_duplicate_rejected(anonymous_client):
+    """Registering a username that differs only by case is rejected (409)."""
+    anonymous_client.headers["Origin"] = "http://testserver"
+    r1 = anonymous_client.post(
+        "/auth/register",
+        data={"username": "UniqueCaseUser", "password": "pw-case"},
+        follow_redirects=False,
+    )
+    assert r1.status_code == 303
+    r2 = anonymous_client.post(
+        "/auth/register",
+        data={"username": "uniquecaseuser", "password": "pw-case-2"},
+        follow_redirects=False,
+    )
+    assert r2.status_code == 409
+    assert "taken" in r2.text.lower()
+
+
 def test_outsider_cannot_read_or_toggle_channel_reactions(client):
     with client.websocket_connect("/channels/chan_general/ws") as ws:
         ws.send_json({"body": "Private reaction target"})
