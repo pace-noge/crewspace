@@ -24,7 +24,7 @@ review before a `[verified]` commit + push.
 | M9.3 | Health / readiness endpoints + DB/migration check | DONE | 7/7 |
 | M9.4 | Containerization (Dockerfile + docker-compose, non-root) | DONE | 7/7 |
 | M9.5 | `crewspace-manage backup` / `restore` seam (atomic) | DONE | 5/5 |
-| M9.6 | Release runbook + deployment docs | PLANNED | 0/5 |
+| M9.6 | Release runbook + deployment docs | DONE | 5/5 |
 | M9.7 | Cohesive ops acceptance gate | PLANNED | 0/5 |
 
 ## Cross-cutting invariants (apply on EVERY slice)
@@ -184,6 +184,32 @@ Acceptance:
 ---
 
 ## M9 Progress log (append-only, newest first)
+
+- M9.6 — Release runbook + deployment docs — [verified] committed.
+
+  Feature: `docs/DEPLOYMENT.md` (prereqs, full config matrix, uv/Compose
+  deployment, reverse-proxy + TLS, backup/restore, upgrade, rollback) and
+  `docs/RELEASING.md` (versioning, milestone tracking, the verified-slice
+  RED→GREEN→gate→review→commit flow, tagged-release procedure with actual
+  repo tag conventions). The config matrix covers all 14 CREWSPACE_ env vars
+  with their real defaults and a fail-closed non-loopback warning that
+  matches `Settings.validate_config` exactly.
+
+  A CI env-drift test (`tests/test_docs_deploy_release.py`) parses
+  DEPLOYMENT.md for `CREWSPACE_*` names and asserts every one is a
+  valid Settings field (AST scan of `config.py`), so future config additions
+  cannot silently break the deployment docs. Tests also assert both files
+  exist, security-critical vars are covered, the non-loopback warning is
+  present, versioning/tagging/verified-slice are described, and nothing is
+  schema-changing.
+
+  Verification: RED 7 failures (docs absent) → GREEN 7 passed; bounded
+  gate (deploy, config, health, containerization) 32 passed; compileall,
+  migration drift at head `20260831_01`, and clean diff checks. Independent
+  review: BLOCKERS none, NON-BLOCKERS none, VERDICT PASS.
+
+  Implementation commit: `8e4105f`.
+  Progress: 5/5 complete.
 
 - M9.5 — Atomic backup / restore seam — [verified] committed.
 

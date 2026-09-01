@@ -1,13 +1,12 @@
 # Crewspace — Session Progress (fresh-session handoff)
 
-Last updated: 2026-08-31 (WIB)
+Last updated: 2026-09-01 (WIB)
 Repository: `/home/bilal/Projects/Learning/python/crewspace`
 Branch: `master` → `origin/master`
-Latest verified implementation commit before this handoff: `98f0821` (M9.5)
-Handoff state: M9.5 atomic backup/restore commands committed after RED→GREEN,
-bounded gates, live WAL proof, and independent fail-closed re-review
-(BLOCKERS: none; NON-BLOCKERS: none).
-M9 in progress (M9.1–M9.5 DONE, M9.6–M9.7 PLANNED).
+Latest verified implementation commit before this handoff: `8e4105f` (M9.6)
+Handoff state: M9.6 deployment + release runbooks committed after RED→GREEN,
+bounded gates, and independent fail-closed review (BLOCKERS: none).
+M9 in progress (M9.1–M9.6 DONE, M9.7 PLANNED).
 
 ## Current milestone state
 
@@ -24,9 +23,34 @@ M9 in progress (M9.1–M9.5 DONE, M9.6–M9.7 PLANNED).
   RED→GREEN/review/commit/push workflow.
 - M8 — Remote Agent Reference Implementations — DONE (M8.1–M8.4 all 7/7).
   `PLAN_M8_REMOTE_AGENT.md` is the canonical detailed plan.
-- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.5 DONE,
-  M9.6–M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
+- M9 — Production Hardening and Live Deployment — IN PROGRESS (M9.1–M9.6 DONE,
+  M9.7 PLANNED). `PLAN_M9_PRODUCTION.md` is the
   canonical detailed plan.
+
+## M9.6 — Release runbook + deployment docs — verified 5/5
+
+Feature: production deployment runbook (`docs/DEPLOYMENT.md`) and release
+procedure (`docs/RELEASING.md`) with verified-slice workflow documentation.
+The deployment runbook covers prerequisites, a complete 14-variable config
+matrix (with real defaults cross-checked against `config.py`), uv/Compose
+deployment, reverse-proxy + TLS, backup/restore, upgrades, and rollback.
+The non-loopback bind warning is verified against `Settings.validate_config`
+error message. The release procedure records the actual tag conventions from
+git history (`milestone-m6.7` → `a2bec64`, `milestone-m6.8` → `6b734bc`).
+
+An env-drift test guards that every `CREWSPACE_*` name in DEPLOYMENT.md is a
+real Settings field (AST parse of `config.py`), so future config additions
+fail the test before they silently break the docs. Additional tests assert
+both files exist, security vars are covered, the non-loopback warning is
+present, versioning/tagging/verified-slice are described, and nothing is
+schema-changing.
+
+Verification: RED 7 failures → GREEN 7 passed; bounded deploy/config/health/
+containerization gate 32 passed; compileall, migration drift at `20260831_01`,
+diff, and adjudicated added-line security checks clean. Independent review:
+BLOCKERS none, NON-BLOCKERS none, VERDICT PASS.
+
+Implementation commit: `8e4105f`.
 
 ## M9.5 — Atomic backup / restore seam — verified 5/5
 
